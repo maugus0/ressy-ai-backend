@@ -1,0 +1,50 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.env
+.env
+
+# VS Code
+.vscode/
+
+# Jupyter Notebooks
+.ipynb_checkpoints
+
+# macOS
+.DS_Store
+
+# Logs
+*.log
+
+# Test and coverage
+htmlcov/
+.coverage
+.tox/
+.pytest_cache/
+
+# Docker
+*.db
+
+# Environment
+.env*
+
+# Build
+build/
+dist/
+*.egg-info/
+
+# Others
+*.sqlite3
+
+# Ignore config secrets
+app/config.json
+
+# Ignore virtual environments
+venv/
+ENV/
+
+# Ignore requirements lock files
+requirements.lock
+venv/
