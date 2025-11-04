@@ -9,7 +9,7 @@ import ssl
 import certifi
 from dotenv import load_dotenv
 
-from app.routes import auth, calls, admin
+from app.routes import auth, calls, admin, users, menu, restaurants, specials, orders, order_history, transcripts, FAQs
 from app.utils.security import JWTManager
 from app.services.deepgram_service import DeepGramService  # ADD THIS
 from app.models.database import CallDatabase  # ADD THIS
@@ -28,9 +28,20 @@ app.add_middleware(
 )
 
 # Include routers
+# app.include_router(auth.router, prefix="/api/auth", tags=["authentication"])
+# app.include_router(calls.router, prefix="/api/calls", tags=["calls"])
+# app.include_router(admin.router, prefix="/api/admin", tags=["admin"])
 app.include_router(auth.router, prefix="/api/auth", tags=["authentication"])
 app.include_router(calls.router, prefix="/api/calls", tags=["calls"])
 app.include_router(admin.router, prefix="/api/admin", tags=["admin"])
+app.include_router(users.router, prefix="/api/users", tags=["users"])
+app.include_router(menu.router, prefix="/api/menu", tags=["menu"])
+app.include_router(restaurants.router, prefix="/api/restaurants", tags=["restaurants"])
+app.include_router(specials.router, prefix="/api/specials", tags=["specials"])
+app.include_router(orders.router, prefix="/api/orders", tags=["orders"])
+app.include_router(order_history.router, prefix="/api/order-history", tags=["order-history"])
+app.include_router(transcripts.router, prefix="/api/transcripts", tags=["transcripts"])
+app.include_router(FAQs.router, prefix="/api/faqs", tags=["faqs"])
 
 # ADD THIS: Global services
 deepgram_service = DeepGramService()
@@ -76,38 +87,99 @@ async def sts_sender(sts_ws, audio_queue):
         await sts_ws.send(chunk)
 
 
+# async def sts_receiver(sts_ws, twilio_ws, streamsid_queue, call_id=None, user_id=None):
+#     print("sts_receiver started")
+#     streamsid = await streamsid_queue.get()
+#     start_time = asyncio.get_event_loop().time()  # ADDED
+    
+#     async for message in sts_ws:
+#         if isinstance(message, str):
+#             decoded = json.loads(message)
+#             print(f"DeepGram Message: {decoded}")
+            
+#             # ADDED: Store transcripts in database
+#             if decoded.get("type") == "Results" and decoded.get("results"):
+#                 transcript = decoded["results"].get("transcript", "")
+#                 if transcript and call_id:
+#                     call_db.store_transcript(call_id, transcript, decoded.get("is_final", False))
+            
+#             await handle_text_message(decoded, twilio_ws, sts_ws, streamsid)
+#             continue
+
+#         # Audio → Twilio
+#         media_message = {
+#             "event": "media",
+#             "streamSid": streamsid,
+#             "media": {"payload": base64.b64encode(message).decode("ascii")}
+#         }
+#         await twilio_ws.send_json(media_message)
+    
+#     # ADDED: Calculate call duration and cost
+#     end_time = asyncio.get_event_loop().time()
+#     duration_seconds = int(end_time - start_time)
+#     if call_id and user_id:
+#         total_cost = call_db.update_call_cost(call_id, duration_seconds)
+
+
+from datetime import datetime
+import base64
+import json
+
 async def sts_receiver(sts_ws, twilio_ws, streamsid_queue, call_id=None, user_id=None):
     print("sts_receiver started")
     streamsid = await streamsid_queue.get()
-    start_time = asyncio.get_event_loop().time()  # ADDED
-    
+    start_time = asyncio.get_event_loop().time()
+    message_seq = 0  # Track transcript sequence
+
     async for message in sts_ws:
         if isinstance(message, str):
             decoded = json.loads(message)
             print(f"DeepGram Message: {decoded}")
-            
-            # ADDED: Store transcripts in database
-            if decoded.get("type") == "Results" and decoded.get("results"):
-                transcript = decoded["results"].get("transcript", "")
-                if transcript and call_id:
-                    call_db.store_transcript(call_id, transcript, decoded.get("is_final", False))
-            
+
+            # 1️⃣ Forward audio events to Twilio so agent can speak
+            if decoded.get("type") in ["ConversationAudio", "AgentAudioDone"]:
+                audio_payload = decoded.get("audio", "")
+                if audio_payload:
+                    media_message = {
+                        "event": "media",
+                        "streamSid": streamsid,
+                        "media": {"payload": audio_payload}
+                    }
+                    await twilio_ws.send_json(media_message)
+
+            # 2️⃣ Always handle text messages (your existing logic)
             await handle_text_message(decoded, twilio_ws, sts_ws, streamsid)
+
+            # 3️⃣ Store transcripts for user & agent messages
+            if decoded.get("type") in ["ConversationText", "History"]:
+                role = decoded.get("role")
+                text = decoded.get("content")
+                if text and call_id:
+                    message_seq += 1
+                    transcript_item = {
+                        "call_id": call_id,
+                        "message_sequence": message_seq,
+                        "speaker": role,
+                        "message": text,
+                        "timestamp": datetime.utcnow().isoformat()
+                    }
+                    print(f"[DDB] put transcript: call_id={call_id} seq={message_seq} speaker={role}")
+                    call_db._with_retries(call_db.db.transcripts_table.put_item, Item=transcript_item)
             continue
 
-        # Audio → Twilio
+        # 4️⃣ Forward any raw audio binary (if any) to Twilio
         media_message = {
             "event": "media",
             "streamSid": streamsid,
             "media": {"payload": base64.b64encode(message).decode("ascii")}
         }
         await twilio_ws.send_json(media_message)
-    
-    # ADDED: Calculate call duration and cost
+
+    # Calculate call duration & cost at the end
     end_time = asyncio.get_event_loop().time()
     duration_seconds = int(end_time - start_time)
     if call_id and user_id:
-        total_cost = call_db.update_call_cost(call_id, duration_seconds)
+        call_db.update_call_cost(call_id, duration_seconds)
 
 
 async def twilio_receiver(twilio_ws, audio_queue, streamsid_queue):

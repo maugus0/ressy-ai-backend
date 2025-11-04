@@ -9,6 +9,7 @@ from app.config.settings import settings
 
 # ------------------- DynamoDB Manager -------------------
 class DynamoDBManager:
+    """Main AWS DynamoDB connection and table registry."""
     def __init__(self):
         self.dynamodb = boto3.resource(
             'dynamodb',
@@ -29,8 +30,8 @@ class DynamoDBManager:
         self.users_table = self.dynamodb.Table(settings.USERS_TABLE)
 
 
-# ------------------- Call Database -------------------
-class CallDatabase:
+# ------------------- Base Retry Helper -------------------
+class BaseDynamoManager:
     def __init__(self):
         self.db = DynamoDBManager()
 
@@ -47,14 +48,16 @@ class CallDatabase:
         if last_err:
             raise last_err
 
-    # ---------- Create a new call record ----------
+
+# ------------------- Call Management -------------------
+class CallDatabase(BaseDynamoManager):
     def create_call_session(self, user_id, twilio_sid, deepgram_session_id, restaurant_id=None):
         call_id = str(uuid.uuid4())
         item = {
             'call_id': call_id,
-            'metadata': 'CALL_METADATA',
+            'CALL_METADATA': 'dummy',
             'user_id': user_id,
-            'restaurant_id': restaurant_id,
+            'restaurant_id': restaurant_id or "unknown_restaurant",
             'twilio_call_sid': twilio_sid,
             'deepgram_request_id': deepgram_session_id,
             'call_status': 'in_progress',
@@ -68,14 +71,13 @@ class CallDatabase:
         self._with_retries(self.db.calls_table.put_item, Item=item)
         return call_id
 
-    # ---------- Update call duration & cost ----------
     def update_call_cost(self, call_id, duration_seconds):
         cost_per_second = Decimal('0.00009833')
         total_cost = Decimal(str(duration_seconds)) * cost_per_second
 
         print(f"[DDB] update call: call_id={call_id} duration={duration_seconds} cost={total_cost}")
         self._with_retries(self.db.calls_table.update_item,
-            Key={'call_id': call_id, 'metadata': 'CALL_METADATA'},
+            Key={'CALL_METADATA': 'dummy', 'call_id': call_id},
             UpdateExpression='SET call_duration = :dur, cost = :cost, call_status = :status, ended_at = :end',
             ExpressionAttributeValues={
                 ':dur': duration_seconds,
@@ -86,7 +88,6 @@ class CallDatabase:
         )
         return total_cost
 
-    # ---------- Store live transcript ----------
     def store_transcript(self, call_id, text, is_final=False):
         transcript_id = str(uuid.uuid4())
         item = {
@@ -100,10 +101,10 @@ class CallDatabase:
         self._with_retries(self.db.transcripts_table.put_item, Item=item)
         return transcript_id
 
-    # ---------- Get all calls for a user ----------
     def get_user_calls(self, user_id, limit=50):
         try:
-            response = self._with_retries(self.db.calls_table.query,
+            response = self._with_retries(
+                self.db.calls_table.query,
                 IndexName='user_id-index',
                 KeyConditionExpression=Key('user_id').eq(user_id),
                 Limit=limit,
@@ -113,28 +114,20 @@ class CallDatabase:
         except Exception:
             try:
                 items = []
-                resp = self.db.calls_table.scan(
-                    FilterExpression=Attr('user_id').eq(user_id)
-                )
+                resp = self.db.calls_table.scan(FilterExpression=Attr('user_id').eq(user_id))
                 items.extend(resp.get('Items', []))
                 items.sort(key=lambda x: x.get('started_at', ''), reverse=True)
                 return items[:limit]
             except Exception:
                 return []
 
-    # ---------- Get transcripts for a call ----------
     def get_call_transcripts(self, call_id):
-        response = self.db.transcripts_table.query(
-            KeyConditionExpression=Key('call_id').eq(call_id)
-        )
+        response = self.db.transcripts_table.query(KeyConditionExpression=Key('call_id').eq(call_id))
         return response.get('Items', [])
 
 
-# ------------------- User Database -------------------
-class UserDatabase:
-    def __init__(self):
-        self.db = DynamoDBManager()
-
+# ------------------- User Management -------------------
+class UserDatabase(BaseDynamoManager):
     def create_user(self, restaurant_id, email, role='staff', permissions=None):
         user_id = str(uuid.uuid4())
         item = {
@@ -156,3 +149,31 @@ class UserDatabase:
             KeyConditionExpression=Key('restaurant_id').eq(restaurant_id)
         )
         return response.get('Items', [])
+
+
+# ------------------- Generic Table Utility -------------------
+class GenericTableManager(BaseDynamoManager):
+    """Reusable for Restaurants, Menus, Specials, Orders, FAQs."""
+    def create_item(self, table, item):
+        self._with_retries(table.put_item, Item=item)
+
+    def get_item(self, table, key):
+        resp = table.get_item(Key=key)
+        return resp.get('Item', {})
+
+    def update_item(self, table, key, data):
+        data['updated_at'] = datetime.utcnow().isoformat()
+        self._with_retries(
+            table.update_item,
+            Key=key,
+            UpdateExpression='SET ' + ', '.join(f'#{k}=:{k}' for k in data.keys()),
+            ExpressionAttributeNames={f'#{k}': k for k in data.keys()},
+            ExpressionAttributeValues={f':{k}': v for k, v in data.items()}
+        )
+
+    def delete_item(self, table, key):
+        self._with_retries(table.delete_item, Key=key)
+
+    def scan_table(self, table):
+        resp = self._with_retries(table.scan)
+        return resp.get('Items', [])
