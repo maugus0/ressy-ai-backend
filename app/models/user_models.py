@@ -37,7 +37,7 @@ class UserManager:
             raise Exception("User already exists") from e
     
     def authenticate_user(self, email, password):
-        # First try querying by the GSI 'email-index'
+
         try:
             response = self.db.users_table.query(
                 IndexName='email-index',
@@ -45,7 +45,7 @@ class UserManager:
             )
             items = response.get('Items') or []
         except Exception:
-            # Fallback: scan if GSI not present (useful for local/dev)
+
             try:
                 response = self.db.users_table.scan(
                     FilterExpression=Attr('email').eq(email)
@@ -54,7 +54,6 @@ class UserManager:
             except Exception:
                 items = []
 
-        # Debug trace
         print(f"[Auth] Region={settings.AWS_REGION} email={email} items_found={len(items)}")
 
         if not items:

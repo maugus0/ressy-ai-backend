@@ -1,5 +1,3 @@
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.middleware.cors import CORSMiddleware
 import asyncio
 import base64
 import json
@@ -7,14 +5,19 @@ import websockets
 import os
 import ssl
 import certifi
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
+from app.utils.security import verify_cognito_token
+from datetime import datetime
+from app.routes import auth, calls, admin, users, menu, restaurants, specials, orders, order_history, transcripts, FAQs
+from app.services.deepgram_service import DeepGramService 
+from app.models.database import CallDatabase 
+from pathlib import Path
 
-from app.routes import auth, calls, admin
-from app.utils.security import JWTManager
-from app.services.deepgram_service import DeepGramService  # ADD THIS
-from app.models.database import CallDatabase  # ADD THIS
+env_path = Path(__file__).parent / ".env"
+load_dotenv(dotenv_path=env_path)
 
-load_dotenv()
 
 app = FastAPI(title="Voice Agent API", version="1.0.0")
 
@@ -27,16 +30,23 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Include routers
-app.include_router(auth.router, prefix="/api/auth", tags=["authentication"])
-app.include_router(calls.router, prefix="/api/calls", tags=["calls"])
-app.include_router(admin.router, prefix="/api/admin", tags=["admin"])
+app.include_router(auth.router, prefix="/api/v1/auth", tags=["auth"])
+app.include_router(calls.router, prefix="/api/v1/calls", tags=["calls"])
+app.include_router(admin.router, prefix="/api/v1/admin", tags=["admin"])
+app.include_router(users.router, prefix="/api/v1/users", tags=["users"])
+app.include_router(menu.router, prefix="/api/v1/menu", tags=["menu"])
+app.include_router(restaurants.router, prefix="/api/v1/restaurants", tags=["restaurants"])
+app.include_router(specials.router, prefix="/api/v1/specials", tags=["specials"])
+app.include_router(orders.router, prefix="/api/v1/orders", tags=["orders"])
+app.include_router(order_history.router, prefix="/api/v1/order-history", tags=["order-history"])
+app.include_router(transcripts.router, prefix="/api/v1/transcripts", tags=["transcripts"])
+app.include_router(FAQs.router, prefix="/api/v1/faqs", tags=["faqs"])
 
-# ADD THIS: Global services
 deepgram_service = DeepGramService()
 call_db = CallDatabase()
 
-# ---------------- DeepGram STS helpers ----------------
+
+# DeepGram STS helpers
 def sts_connect():
     api_key = os.getenv('DEEPGRAM_API_KEY')
     if not api_key:
@@ -46,13 +56,12 @@ def sts_connect():
 
     return websockets.connect(
         "wss://agent.deepgram.com/v1/agent/converse",
-        subprotocols=["token", api_key],
+        extra_headers={"Authorization": f"Token {api_key}"},
         ssl=ssl_context
     )
 
 
 def load_config():
-    # Resolve config.json next to this file
     base_dir = os.path.dirname(os.path.abspath(__file__))
     cfg_path = os.path.join(base_dir, "config.json")
     with open(cfg_path, "r", encoding="utf-8") as f:
@@ -75,39 +84,56 @@ async def sts_sender(sts_ws, audio_queue):
         chunk = await audio_queue.get()
         await sts_ws.send(chunk)
 
-
 async def sts_receiver(sts_ws, twilio_ws, streamsid_queue, call_id=None, user_id=None):
     print("sts_receiver started")
     streamsid = await streamsid_queue.get()
-    start_time = asyncio.get_event_loop().time()  # ADDED
-    
+    start_time = asyncio.get_event_loop().time()
+    message_seq = 0 
+
     async for message in sts_ws:
         if isinstance(message, str):
             decoded = json.loads(message)
             print(f"DeepGram Message: {decoded}")
-            
-            # ADDED: Store transcripts in database
-            if decoded.get("type") == "Results" and decoded.get("results"):
-                transcript = decoded["results"].get("transcript", "")
-                if transcript and call_id:
-                    call_db.store_transcript(call_id, transcript, decoded.get("is_final", False))
-            
+
+            if decoded.get("type") in ["ConversationAudio", "AgentAudioDone"]:
+                audio_payload = decoded.get("audio", "")
+                if audio_payload:
+                    media_message = {
+                        "event": "media",
+                        "streamSid": streamsid,
+                        "media": {"payload": audio_payload}
+                    }
+                    await twilio_ws.send_json(media_message)
+
             await handle_text_message(decoded, twilio_ws, sts_ws, streamsid)
+
+            if decoded.get("type") in ["ConversationText", "History"]:
+                role = decoded.get("role")
+                text = decoded.get("content")
+                if text and call_id:
+                    message_seq += 1
+                    transcript_item = {
+                        "call_id": call_id,
+                        "message_sequence": message_seq,
+                        "speaker": role,
+                        "message": text,
+                        "timestamp": datetime.utcnow().isoformat()
+                    }
+                    print(f"[DDB] put transcript: call_id={call_id} seq={message_seq} speaker={role}")
+                    call_db._with_retries(call_db.db.transcripts_table.put_item, Item=transcript_item)
             continue
 
-        # Audio → Twilio
         media_message = {
             "event": "media",
             "streamSid": streamsid,
             "media": {"payload": base64.b64encode(message).decode("ascii")}
         }
         await twilio_ws.send_json(media_message)
-    
-    # ADDED: Calculate call duration and cost
+
     end_time = asyncio.get_event_loop().time()
     duration_seconds = int(end_time - start_time)
     if call_id and user_id:
-        total_cost = call_db.update_call_cost(call_id, duration_seconds)
+        call_db.update_call_cost(call_id, duration_seconds)
 
 
 async def twilio_receiver(twilio_ws, audio_queue, streamsid_queue):
@@ -138,16 +164,15 @@ async def twilio_receiver(twilio_ws, audio_queue, streamsid_queue):
             break
 
 
-# ---------------- WebSocket Endpoint ----------------
+# WebSocket Endpoint
 @app.websocket("/twilio")
 async def twilio_websocket(websocket: WebSocket):
     await websocket.accept()
     user_id = "demo-user"
-    # Optional JWT token support: /twilio?token=<jwt>
     try:
         token = websocket.query_params.get("token")
         if token:
-            payload = JWTManager().verify_token(token)
+            payload = verify_cognito_token(token)
             user_id = payload.get("sub", user_id)
     except Exception as e:
         print(f"[WS] token verification failed, using fallback user_id. Error: {e}")
@@ -165,7 +190,6 @@ async def twilio_websocket(websocket: WebSocket):
             await sts_ws.send(json.dumps(config_message))
             print("📤 Sent full config to DeepGram")
 
-            # ADDED: Create call session
             try:
                 call_id = call_db.create_call_session(user_id, "twilio-demo", "deepgram-demo")
                 print(f"📞 Call session created: {call_id}")
@@ -189,7 +213,7 @@ async def twilio_websocket(websocket: WebSocket):
         print("🔌 Twilio connection closed")
 
 
-# ---------------- Health Routes ----------------
+# Health Route
 @app.get("/")
 async def root():
     return {"message": "Voice Agent API running", "status": "healthy"}
