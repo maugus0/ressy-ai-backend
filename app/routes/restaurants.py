@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
-from app.utils.security import get_current_active_user
+from app.utils.security import get_current_active_user, require_role
 from app.models.database import DynamoDBManager
 import uuid, datetime
 
@@ -7,10 +7,8 @@ router = APIRouter()
 db = DynamoDBManager()
 
 # ---------- CREATE ----------
-@router.post("/", summary="Create a new restaurant (Admin only)")
+@router.post("/", dependencies=[Depends(require_role(["admin"]))], summary="Create a new restaurant (Admin only)")
 async def create_restaurant(data: dict, current_user: dict = Depends(get_current_active_user)):
-    if current_user.get("role") != "admin":
-        raise HTTPException(403, "Not authorized")
     restaurant_id = str(uuid.uuid4())
     item = {
         "restaurant_id": restaurant_id,
@@ -23,26 +21,20 @@ async def create_restaurant(data: dict, current_user: dict = Depends(get_current
     return {"message": "Restaurant created successfully", "restaurant_id": restaurant_id}
 
 # ---------- READ ALL ----------
-@router.get("/", summary="List all restaurants (Admin only)")
+@router.get("/", dependencies=[Depends(require_role(["admin"]))], summary="List all restaurants (Admin only)")
 async def list_restaurants(current_user: dict = Depends(get_current_active_user)):
-    if current_user.get("role") != "admin":
-        raise HTTPException(403, "Not authorized")
     resp = db.restaurants_table.scan()
     return resp.get("Items", [])
 
 # ---------- READ ONE ----------
-@router.get("/{restaurant_id}", summary="Get restaurant details (Admin only)")
+@router.get("/{restaurant_id}", dependencies=[Depends(require_role(["admin"]))], summary="Get restaurant details (Admin only)")
 async def get_restaurant(restaurant_id: str, current_user: dict = Depends(get_current_active_user)):
-    if current_user.get("role") != "admin":
-        raise HTTPException(403, "Not authorized")
     resp = db.restaurants_table.get_item(Key={"restaurant_id": restaurant_id, "SK": "METADATA"})
     return resp.get("Item", {})
 
 # ---------- UPDATE ----------
-@router.put("/{restaurant_id}", summary="Update restaurant info (Admin only)")
+@router.put("/{restaurant_id}", dependencies=[Depends(require_role(["admin"]))], summary="Update restaurant info (Admin only)")
 async def update_restaurant(restaurant_id: str, data: dict, current_user: dict = Depends(get_current_active_user)):
-    if current_user.get("role") != "admin":
-        raise HTTPException(403, "Not authorized")
     data["updated_at"] = datetime.datetime.utcnow().isoformat()
     db.restaurants_table.update_item(
         Key={"restaurant_id": restaurant_id, "SK": "METADATA"},
@@ -53,9 +45,7 @@ async def update_restaurant(restaurant_id: str, data: dict, current_user: dict =
     return {"message": "Restaurant updated successfully"}
 
 # ---------- DELETE ----------
-@router.delete("/{restaurant_id}", summary="Delete restaurant (Admin only)")
+@router.delete("/{restaurant_id}", dependencies=[Depends(require_role(["admin"]))], summary="Delete restaurant (Admin only)")
 async def delete_restaurant(restaurant_id: str, current_user: dict = Depends(get_current_active_user)):
-    if current_user.get("role") != "admin":
-        raise HTTPException(403, "Not authorized")
     db.restaurants_table.delete_item(Key={"restaurant_id": restaurant_id, "SK": "METADATA"})
     return {"message": "Restaurant deleted"}

@@ -15,7 +15,7 @@ class DeepGramService:
         ssl_context = ssl.create_default_context(cafile=certifi.where())
         return websockets.connect(
             "wss://agent.deepgram.com/v1/agent/converse",
-            subprotocols=["token", self.api_key],
+            subprotocols=["token", self.api_key], #type: ignore
             ssl=ssl_context
         )
     

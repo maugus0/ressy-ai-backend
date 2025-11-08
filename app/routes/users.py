@@ -1,15 +1,13 @@
 from fastapi import APIRouter, Depends, HTTPException
-from app.utils.security import get_current_active_user
+from app.utils.security import get_current_active_user, require_role
 from app.models.database import UserDatabase
 
 router = APIRouter()
 user_db = UserDatabase()
 
 # CREATE
-@router.post("/")
+@router.post("/", dependencies=[Depends(require_role(["admin"]))])
 async def create_user(data: dict, current_user: dict = Depends(get_current_active_user)):
-    if current_user.get("role") != "admin":
-        raise HTTPException(403, "Not authorized")
     user_id = user_db.create_user(
         restaurant_id=data["restaurant_id"],
         email=data["email"],
@@ -19,17 +17,13 @@ async def create_user(data: dict, current_user: dict = Depends(get_current_activ
     return {"message": "User created successfully", "user_id": user_id}
 
 # READ ALL
-@router.get("/{restaurant_id}")
+@router.get("/{restaurant_id}", dependencies=[Depends(require_role(["admin"]))])
 async def list_users(restaurant_id: str, current_user: dict = Depends(get_current_active_user)):
-    if current_user.get("role") != "admin":
-        raise HTTPException(403, "Not authorized")
     return user_db.get_users_by_restaurant(restaurant_id)
 
 # UPDATE
-@router.put("/{user_id}")
+@router.put("/{user_id}", dependencies=[Depends(require_role(["admin"]))])
 async def update_user(user_id: str, data: dict, current_user: dict = Depends(get_current_active_user)):
-    if current_user.get("role") != "admin":
-        raise HTTPException(403, "Not authorized")
     from app.models.database import DynamoDBManager
     db = DynamoDBManager()
     db.users_table.update_item(
@@ -41,10 +35,9 @@ async def update_user(user_id: str, data: dict, current_user: dict = Depends(get
     return {"message": "User updated"}
 
 # DELETE
-@router.delete("/{user_id}")
+@router.delete("/{user_id}", dependencies=[Depends(require_role(["admin"]))])
 async def delete_user(user_id: str, current_user: dict = Depends(get_current_active_user)):
-    if current_user.get("role") != "admin":
-        raise HTTPException(403, "Not authorized")
+
     from app.models.database import DynamoDBManager
     db = DynamoDBManager()
     db.users_table.delete_item(Key={"user_id": user_id})

@@ -1,19 +1,14 @@
 from fastapi import APIRouter, Depends, HTTPException
-from app.utils.security import get_current_active_user
+from app.utils.security import get_current_active_user, require_role
 from app.models.database import DynamoDBManager
 import uuid, datetime
 
 router = APIRouter()
 db = DynamoDBManager()
 
-def _check_role(role):
-    if role not in ["admin", "manager"]:
-        raise HTTPException(403, "Not authorized")
-
 # CREATE
-@router.post("/{restaurant_id}")
+@router.post("/{restaurant_id}", dependencies=[Depends(require_role(["admin"]))])
 async def create_menu(restaurant_id: str, data: dict, current_user: dict = Depends(get_current_active_user)):
-    _check_role(current_user.get("role"))
     menu_id = str(uuid.uuid4())
     item = {
         "restaurant_id": restaurant_id,
@@ -26,9 +21,8 @@ async def create_menu(restaurant_id: str, data: dict, current_user: dict = Depen
     return {"message": "Menu created successfully", "menu_id": menu_id}
 
 # READ ALL
-@router.get("/{restaurant_id}")
+@router.get("/{restaurant_id}", dependencies=[Depends(require_role(["admin", "client"]))])
 async def list_menus(restaurant_id: str, current_user: dict = Depends(get_current_active_user)):
-    _check_role(current_user.get("role"))
     resp = db.menus_table.query(
         IndexName="restaurant_id-menu_id-index",
         KeyConditionExpression="restaurant_id = :rid",
@@ -37,16 +31,14 @@ async def list_menus(restaurant_id: str, current_user: dict = Depends(get_curren
     return resp.get("Items", [])
 
 # READ ONE
-@router.get("/{restaurant_id}/{menu_id}")
+@router.get("/{restaurant_id}/{menu_id}", dependencies=[Depends(require_role(["admin", "client"]))])
 async def get_menu(restaurant_id: str, menu_id: str, current_user: dict = Depends(get_current_active_user)):
-    _check_role(current_user.get("role"))
     resp = db.menus_table.get_item(Key={"restaurant_id": restaurant_id, "menu_id": menu_id})
     return resp.get("Item", {})
 
 # UPDATE
-@router.put("/{restaurant_id}/{menu_id}")
+@router.put("/{restaurant_id}/{menu_id}", dependencies=[Depends(require_role(["admin", "client"]))])
 async def update_menu(restaurant_id: str, menu_id: str, data: dict, current_user: dict = Depends(get_current_active_user)):
-    _check_role(current_user.get("role"))
     data["updated_at"] = datetime.datetime.utcnow().isoformat()
     db.menus_table.update_item(
         Key={"restaurant_id": restaurant_id, "menu_id": menu_id},
@@ -57,8 +49,7 @@ async def update_menu(restaurant_id: str, menu_id: str, data: dict, current_user
     return {"message": "Menu updated successfully"}
 
 # DELETE
-@router.delete("/{restaurant_id}/{menu_id}")
+@router.delete("/{restaurant_id}/{menu_id}", dependencies=[Depends(require_role(["admin"]))])
 async def delete_menu(restaurant_id: str, menu_id: str, current_user: dict = Depends(get_current_active_user)):
-    _check_role(current_user.get("role"))
     db.menus_table.delete_item(Key={"restaurant_id": restaurant_id, "menu_id": menu_id})
     return {"message": "Menu deleted successfully"}

@@ -5,13 +5,20 @@ from datetime import datetime
 from decimal import Decimal
 from boto3.dynamodb.conditions import Key, Attr
 from app.config.settings import settings
+from dotenv import load_dotenv
+import os
+from typing import Any
 
 
-# ------------------- DynamoDB Manager -------------------
+
+dotenv_path = os.path.join(os.path.dirname(__file__), "..", ".env")
+load_dotenv(dotenv_path)
+
+# Dynamo Manager
 class DynamoDBManager:
     """Main AWS DynamoDB connection and table registry."""
     def __init__(self):
-        self.dynamodb = boto3.resource(
+        self.dynamodb: Any = boto3.resource(
             'dynamodb',
             region_name=settings.AWS_REGION,
             aws_access_key_id=os.getenv('AWS_ACCESS_KEY_ID'),
@@ -29,8 +36,6 @@ class DynamoDBManager:
         self.faqs_table = self.dynamodb.Table(settings.FAQS_TABLE)
         self.users_table = self.dynamodb.Table(settings.USERS_TABLE)
 
-
-# ------------------- Base Retry Helper -------------------
 class BaseDynamoManager:
     def __init__(self):
         self.db = DynamoDBManager()
@@ -49,7 +54,7 @@ class BaseDynamoManager:
             raise last_err
 
 
-# ------------------- Call Management -------------------
+# CallDb
 class CallDatabase(BaseDynamoManager):
     def create_call_session(self, user_id, twilio_sid, deepgram_session_id, restaurant_id=None):
         call_id = str(uuid.uuid4())
@@ -89,6 +94,16 @@ class CallDatabase(BaseDynamoManager):
         return total_cost
 
     def store_transcript(self, call_id, text, is_final=False):
+        if not is_final:
+            return None  # skip partial results
+        existing_items = self.db.transcripts_table.scan(
+        FilterExpression=Key('call_id').eq(call_id) & Attr('text').eq(text) & Attr('is_final').eq(True)).get('Items', [])
+
+        if existing_items:
+            # Transcript already exists, return its id
+            return existing_items[0]['transcript_id']
+
+
         transcript_id = str(uuid.uuid4())
         item = {
             'transcript_id': transcript_id,
@@ -110,7 +125,7 @@ class CallDatabase(BaseDynamoManager):
                 Limit=limit,
                 ScanIndexForward=False
             )
-            return response.get('Items', [])
+            return response.get('Items', []) # type: ignore
         except Exception:
             try:
                 items = []
@@ -124,9 +139,39 @@ class CallDatabase(BaseDynamoManager):
     def get_call_transcripts(self, call_id):
         response = self.db.transcripts_table.query(KeyConditionExpression=Key('call_id').eq(call_id))
         return response.get('Items', [])
+    
+    def get_calls_by_restaurant(self, restaurant_id, limit=50):
+        """Fetch calls filtered by restaurant_id."""
+        try:
+            response = self._with_retries(
+                self.db.calls_table.query,
+                IndexName='restaurant_id-index',
+                KeyConditionExpression=Key('restaurant_id').eq(restaurant_id),
+                Limit=limit,
+                ScanIndexForward=False
+            )
+            return response.get('Items', []) # type: ignore
+        except Exception:
+            # fallback to full scan if query fails
+            items = []
+            resp = self.db.calls_table.scan(FilterExpression=Attr('restaurant_id').eq(restaurant_id))
+            items.extend(resp.get('Items', []))
+            items.sort(key=lambda x: x.get('started_at', ''), reverse=True)
+            return items[:limit]
+        
+    def get_all_calls(self, limit=50):
+        try:
+            response = self._with_retries(
+                self.db.calls_table.scan  # Use scan because no GSI for all calls
+            )
+            items = response.get('Items', []) #type: ignore
+            items.sort(key=lambda x: x.get('started_at', ''), reverse=True)
+            return items[:limit]
+        except Exception:
+            return []
 
 
-# ------------------- User Management -------------------
+# User
 class UserDatabase(BaseDynamoManager):
     def create_user(self, restaurant_id, email, role='staff', permissions=None):
         user_id = str(uuid.uuid4())
@@ -151,7 +196,7 @@ class UserDatabase(BaseDynamoManager):
         return response.get('Items', [])
 
 
-# ------------------- Generic Table Utility -------------------
+# Generic Table Utility
 class GenericTableManager(BaseDynamoManager):
     """Reusable for Restaurants, Menus, Specials, Orders, FAQs."""
     def create_item(self, table, item):
@@ -176,4 +221,4 @@ class GenericTableManager(BaseDynamoManager):
 
     def scan_table(self, table):
         resp = self._with_retries(table.scan)
-        return resp.get('Items', [])
+        return resp.get('Items', []) # type: ignore
