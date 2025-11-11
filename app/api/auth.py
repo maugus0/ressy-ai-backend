@@ -27,3 +27,4 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends()):
             detail="Incorrect email or password"
         )
     return {"access_token": token, "token_type": "bearer"}
+

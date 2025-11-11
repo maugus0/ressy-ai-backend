@@ -1,5 +1,5 @@
 from app.models.user_models import UserManager
-from app.utils.security import verify_cognito_token
+from app.middleware.auth_middleware import verify_cognito_token
 
 class AuthService:
     def __init__(self):

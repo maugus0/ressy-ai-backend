@@ -3,12 +3,14 @@ import uuid
 from datetime import datetime
 from decimal import Decimal
 from boto3.dynamodb.conditions import Key, Attr
-from app.models.database import DynamoDBManager
-from app.config.settings import settings
+from app.repositories.base import BaseRepository
+from app.config import settings
 
 class UserManager:
     def __init__(self):
-        self.db = DynamoDBManager()
+        # Create a temporary base repository to access DynamoDB
+        self.base_repo = BaseRepository()
+        self.users_table = self.base_repo.dynamodb.Table(settings.USERS_TABLE)
     
     def create_user(self, email, password, role='client', company_name: str = ""):
         user_id = str(uuid.uuid4())
@@ -28,7 +30,7 @@ class UserManager:
         }
         
         try:
-            self.db.users_table.put_item(
+            self.users_table.put_item(
                 Item=item,
                 ConditionExpression='attribute_not_exists(email)'
             )
@@ -39,7 +41,7 @@ class UserManager:
     def authenticate_user(self, email, password):
 
         try:
-            response = self.db.users_table.query(
+            response = self.users_table.query(
                 IndexName='email-index',
                 KeyConditionExpression=Key('email').eq(email)
             )
@@ -47,7 +49,7 @@ class UserManager:
         except Exception:
 
             try:
-                response = self.db.users_table.scan(
+                response = self.users_table.scan(
                     FilterExpression=Attr('email').eq(email)
                 )
                 items = response.get('Items') or []
@@ -71,7 +73,7 @@ class UserManager:
         return None
     
     def update_user_cost(self, user_id, cost):
-        self.db.users_table.update_item(
+        self.users_table.update_item(
             Key={'user_id': user_id},
             UpdateExpression='ADD total_cost :cost',
             ExpressionAttributeValues={':cost': Decimal(str(cost))}
