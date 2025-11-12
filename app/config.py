@@ -31,7 +31,7 @@ class Settings:
     # Database Tables
     RESTAURANTS_TABLE: str = "Restaurants" 
     MENUS_TABLE: str = "Menus"
-    SPECIALS_TABLE: str = "Spceials"
+    SPECIALS_TABLE: str = "Specials"
     CALLS_TABLE: str = "Calls"
     ORDERS_TABLE: str = "Orders"
     ORDER_HISTORY_TABLE: str = "OrderHistory"
