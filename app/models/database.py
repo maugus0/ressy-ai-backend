@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from decimal import Decimal
 from boto3.dynamodb.conditions import Key, Attr
-from app.config.settings import settings
+from app.config import settings
 from dotenv import load_dotenv
 import os
 from typing import Any
