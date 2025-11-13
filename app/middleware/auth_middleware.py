@@ -1,10 +1,11 @@
 # app/middleware/auth_middleware.py
+from functools import lru_cache
+from typing import Dict
+
 import jwt
+import requests
 from fastapi import HTTPException, status, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-import requests
-from typing import Dict
-from functools import lru_cache
 
 security = HTTPBearer()
 
@@ -15,12 +16,14 @@ COGNITO_APP_CLIENT_ID = "YOUR_APP_CLIENT_ID"
 
 JWKS_URL = f"https://cognito-idp.{COGNITO_REGION}.amazonaws.com/{COGNITO_USERPOOL_ID}/.well-known/jwks.json"
 
+
 @lru_cache()
 def get_jwks():
     response = requests.get(JWKS_URL)
     if response.status_code != 200:
         raise HTTPException(status_code=500, detail="Failed to fetch Cognito JWKS")
     return response.json()
+
 
 def verify_cognito_token(token: str) -> Dict:
     """Verify Cognito JWT token."""
@@ -61,10 +64,11 @@ def get_current_active_user(payload: dict = Depends(get_current_user)) -> dict:
 
 def require_role(roles: list[str]):
     """Require specific role(s) for access."""
+
     def role_checker(payload: dict = Depends(get_current_active_user)):
-        user_roles = payload.get("cognito:groups", []) 
+        user_roles = payload.get("cognito:groups", [])
         if not any(role in user_roles for role in roles):
             raise HTTPException(status_code=403, detail="Not authorized")
         return payload
-    return role_checker
 
+    return role_checker

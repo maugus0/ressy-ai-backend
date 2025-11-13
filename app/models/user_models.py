@@ -1,23 +1,26 @@
-import bcrypt
 import uuid
 from datetime import datetime
 from decimal import Decimal
+
+import bcrypt
 from boto3.dynamodb.conditions import Key, Attr
-from app.repositories.base import BaseRepository
+
 from app.config import settings
+from app.repositories.base import BaseRepository
+
 
 class UserManager:
     def __init__(self):
         # Create a temporary base repository to access DynamoDB
         self.base_repo = BaseRepository()
-        self.users_table = self.base_repo.dynamodb.Table(settings.USERS_TABLE)
-    
+        # self.users_table = self.base_repo.dynamodb.Table(settings.USERS_TABLE)
+
     def create_user(self, email, password, role='client', company_name: str = ""):
         user_id = str(uuid.uuid4())
-        
+
         salt = bcrypt.gensalt()
         hashed_password = bcrypt.hashpw(password.encode('utf-8'), salt)
-        
+
         item = {
             'user_id': user_id,
             'email': email,
@@ -28,7 +31,7 @@ class UserManager:
             'is_active': True,
             'total_cost': Decimal('0.00')
         }
-        
+
         try:
             self.users_table.put_item(
                 Item=item,
@@ -37,7 +40,7 @@ class UserManager:
             return user_id
         except Exception as e:
             raise Exception("User already exists") from e
-    
+
     def authenticate_user(self, email, password):
 
         try:
@@ -71,7 +74,7 @@ class UserManager:
         if ok:
             return user
         return None
-    
+
     def update_user_cost(self, user_id, cost):
         self.users_table.update_item(
             Key={'user_id': user_id},

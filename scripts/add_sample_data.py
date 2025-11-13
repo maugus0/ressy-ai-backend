@@ -1,14 +1,16 @@
 """
 Script to add sample data (restaurant, menu items, FAQs).
 """
-import mysql.connector
-from mysql.connector import Error
-import os
-from dotenv import load_dotenv
 import json
+import os
+
+import mysql.connector
+from dotenv import load_dotenv
+from mysql.connector import Error
 
 # Load environment variables
 load_dotenv()
+
 
 def get_connection():
     """Get MySQL connection."""
@@ -25,15 +27,16 @@ def get_connection():
         print(f"Error connecting to MySQL: {e}")
         raise
 
+
 def add_sample_restaurant(connection):
     """Add a sample restaurant."""
     try:
         cursor = connection.cursor()
-        
+
         # Check if restaurant already exists
         cursor.execute("SELECT id FROM Restaurants WHERE name = 'Sample Restaurant'")
         result = cursor.fetchone()
-        
+
         if result:
             restaurant_id = result[0]
             print(f"Restaurant already exists with id: {restaurant_id}")
@@ -45,16 +48,16 @@ def add_sample_restaurant(connection):
                     forward_minutes, backward_minutes, is_credit_card_required_for_reservation
                 ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """
-            
+
             twilio_details = json.dumps({"account_sid": "sample", "auth_token": "sample"})
             deepgram_details = json.dumps({"api_key": "sample"})
             open_table_details = json.dumps({"api_key": "sample"})
-            
+
             values = (
-                "Sample Restaurant",
+                "Ressy's Diner",
                 "123 Main St, City, State 12345",
                 "+1234567890",
-                "+1987654321",  # This is the Twilio number to match calls
+                "+14313404949",  # This is the Twilio number to match calls
                 twilio_details,
                 deepgram_details,
                 open_table_details,
@@ -62,24 +65,25 @@ def add_sample_restaurant(connection):
                 30,  # backward_minutes
                 False
             )
-            
+
             cursor.execute(query, values)
             connection.commit()
             restaurant_id = cursor.lastrowid
             print(f"Added restaurant with id: {restaurant_id}")
-        
+
         cursor.close()
         return restaurant_id
-        
+
     except Error as e:
         print(f"Error adding restaurant: {e}")
         raise
+
 
 def add_sample_menu_items(connection, restaurant_id):
     """Add sample menu items."""
     try:
         cursor = connection.cursor()
-        
+
         menu_items = [
             {
                 "category": "Appetizers",
@@ -182,14 +186,14 @@ def add_sample_menu_items(connection, restaurant_id):
                 "is_special": False
             }
         ]
-        
+
         query = """
             INSERT INTO Menus (
                 restaurant_id, category, sub_category, item_name, item_desc,
                 price, avg_prep_time, suggested_items, is_available, is_special
             ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """
-        
+
         added_count = 0
         for item in menu_items:
             try:
@@ -212,20 +216,21 @@ def add_sample_menu_items(connection, restaurant_id):
                 # Skip if already exists
                 if "Duplicate" not in str(e):
                     print(f"Error adding menu item {item['item_name']}: {e}")
-        
+
         connection.commit()
         cursor.close()
         print(f"Added {added_count} menu items")
-        
+
     except Error as e:
         print(f"Error adding menu items: {e}")
         raise
+
 
 def add_sample_faqs(connection, restaurant_id):
     """Add sample FAQs."""
     try:
         cursor = connection.cursor()
-        
+
         faqs = [
             {
                 "question": "What are your operating hours?",
@@ -233,11 +238,11 @@ def add_sample_faqs(connection, restaurant_id):
             },
             {
                 "question": "Do you offer delivery?",
-                "answer": "Yes, we offer delivery within a 5-mile radius. Delivery fee is $3.99."
+                "answer": "No, we do not offer delivery at the moment, but you can speak with our manager for any special requests."
             },
             {
                 "question": "Do you accept reservations?",
-                "answer": "Yes, we accept reservations for parties of 4 or more. You can make a reservation by calling us or through our website."
+                "answer": "Yes, we accept reservations for parties of 2 or more. You can make a reservation by calling us or through our website."
             },
             {
                 "question": "What payment methods do you accept?",
@@ -260,12 +265,12 @@ def add_sample_faqs(connection, restaurant_id):
                 "answer": "Yes, our restaurant is fully wheelchair accessible with ramps and accessible restrooms."
             }
         ]
-        
+
         query = """
             INSERT INTO FAQs (restaurant_id, question, answer)
             VALUES (%s, %s, %s)
         """
-        
+
         added_count = 0
         for faq in faqs:
             try:
@@ -276,35 +281,36 @@ def add_sample_faqs(connection, restaurant_id):
                 # Skip if already exists
                 if "Duplicate" not in str(e):
                     print(f"Error adding FAQ: {e}")
-        
+
         connection.commit()
         cursor.close()
         print(f"Added {added_count} FAQs")
-        
+
     except Error as e:
         print(f"Error adding FAQs: {e}")
         raise
 
+
 def main():
     """Main function to add sample data."""
     print("Adding sample data...")
-    
+
     connection = get_connection()
-    
+
     try:
         # Add restaurant
         restaurant_id = add_sample_restaurant(connection)
-        
+
         # Add menu items
         add_sample_menu_items(connection, restaurant_id)
-        
+
         # Add FAQs
         add_sample_faqs(connection, restaurant_id)
-        
+
         print("\nSample data added successfully!")
-        print(f"Twilio Number to use for testing: +1987654321")
+        print(f"Twilio Number to use for testing: +14313404949")
         print(f"Restaurant ID: {restaurant_id}")
-        
+
     except Error as e:
         print(f"Error adding sample data: {e}")
     finally:
@@ -312,6 +318,6 @@ def main():
             connection.close()
             print("Database connection closed")
 
+
 if __name__ == "__main__":
     main()
-

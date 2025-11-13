@@ -1,18 +1,20 @@
 """
 MySQL Call Repository for call session operations.
 """
+from typing import Optional, List, Dict
+
 from app.repositories.mysql_base import MySQLBaseRepository
-from typing import Optional
+
 
 class MySQLCallRepository(MySQLBaseRepository):
     """Repository for call data access in MySQL."""
-    
+
     def create_call_session(
-        self, 
-        user_id: str, 
-        twilio_sid: str, 
-        deepgram_session_id: str, 
-        restaurant_id: Optional[str] = None
+            self,
+            user_id: str,
+            twilio_sid: str,
+            deepgram_session_id: str,
+            restaurant_id: Optional[str] = None
     ) -> int:
         """
         Create a new call session and return call ID.
@@ -35,14 +37,14 @@ class MySQLCallRepository(MySQLBaseRepository):
         ))
         print(f"[MySQL] Created call session: call_id={call_id}, user_id={user_id}, restaurant_id={restaurant_id}")
         return call_id
-    
+
     def update_call_cost(self, call_id: int, duration_seconds: int) -> None:
         """
         Update call cost and duration, mark as completed.
         """
         cost_per_second = 0.00009833
         total_cost = duration_seconds * cost_per_second
-        
+
         query = """
             UPDATE Calls
             SET call_duration = %s,
@@ -54,14 +56,40 @@ class MySQLCallRepository(MySQLBaseRepository):
         """
         self._execute_update(query, (duration_seconds, total_cost, call_id))
         print(f"[MySQL] Updated call: call_id={call_id}, duration={duration_seconds}s, cost=${total_cost:.6f}")
-    
+
+    def get_user_calls(self, user_id: str, limit: int = 50) -> List[Dict]:
+        query = """
+            SELECT * FROM Calls
+            WHERE user_id = %s
+            ORDER BY started_at DESC
+            LIMIT %s
+        """
+        return self._execute_query(query, (user_id, limit))
+
+    def get_calls_by_restaurant(self, restaurant_id: str, limit: int = 50) -> List[Dict]:
+        query = """
+            SELECT * FROM Calls
+            WHERE restaurant_id = %s
+            ORDER BY started_at DESC
+            LIMIT %s
+        """
+        return self._execute_query(query, (restaurant_id, limit))
+
+    def get_all_calls(self, limit: int = 50) -> List[Dict]:
+        query = """
+            SELECT * FROM Calls
+            ORDER BY started_at DESC
+            LIMIT %s
+        """
+        return self._execute_query(query, (limit,))
+
     def store_transcript_message(
-        self, 
-        call_id: int, 
-        message_sequence: int, 
-        speaker: str, 
-        message: str, 
-        timestamp: str
+            self,
+            call_id: int,
+            message_sequence: int,
+            speaker: str,
+            message: str,
+            timestamp: str
     ) -> None:
         """
         Store individual transcript messages.
@@ -72,4 +100,3 @@ class MySQLCallRepository(MySQLBaseRepository):
         # This method is kept for compatibility but does nothing
         # The actual transcript is saved via MySQLTranscriptRepository.create_transcript
         pass
-

@@ -2,23 +2,29 @@
 MySQL Base Repository for database operations.
 This is a placeholder for MySQL operations - adapt based on your MySQL connection library.
 """
+import os
 from typing import Dict, List, Any
+
 import mysql.connector
 from mysql.connector import Error
-import os
+
 
 class MySQLBaseRepository:
     """Base repository for MySQL database operations."""
-    
+
     def __init__(self):
         self.connection = None
         self._connect()
+
     def __enter__(self):
         return self
+
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.close()
+
     def __del__(self):
         self.close()
+
     def _connect(self):
         """Establish MySQL connection."""
         try:
@@ -33,7 +39,7 @@ class MySQLBaseRepository:
         except Exception:
             # Ignore any errors when closing old connection
             pass
-        
+
         try:
             self.connection = mysql.connector.connect(
                 host=os.getenv('DB_HOST', os.getenv('MYSQL_HOST', 'localhost')),
@@ -45,7 +51,7 @@ class MySQLBaseRepository:
         except Error as e:
             print(f"Error connecting to MySQL: {e}")
             raise
-    
+
     def _ensure_connected(self):
         """Ensure database connection is active, reconnect if needed."""
         try:
@@ -57,7 +63,7 @@ class MySQLBaseRepository:
             print("[INFO] MySQL connection in invalid state, reconnecting...")
             self.connection = None
             self._connect()
-    
+
     def _execute_query(self, query: str, params: tuple = None) -> List[Dict[str, Any]]:
         """Execute SELECT query and return results."""
         self._ensure_connected()
@@ -70,7 +76,7 @@ class MySQLBaseRepository:
         except Error as e:
             print(f"Error executing query: {e}")
             raise
-    
+
     def _execute_insert(self, query: str, params: tuple = None) -> int:
         """Execute INSERT query and return last insert ID."""
         self._ensure_connected()
@@ -85,7 +91,7 @@ class MySQLBaseRepository:
             self.connection.rollback()
             print(f"Error executing insert: {e}")
             raise
-    
+
     def _execute_update(self, query: str, params: tuple = None) -> int:
         """Execute UPDATE query and return affected rows."""
         self._ensure_connected()
@@ -100,7 +106,7 @@ class MySQLBaseRepository:
             self.connection.rollback()
             print(f"Error executing update: {e}")
             raise
-    
+
     def close(self):
         """Close database connection."""
         try:
@@ -111,4 +117,3 @@ class MySQLBaseRepository:
             pass
         finally:
             self.connection = None
-

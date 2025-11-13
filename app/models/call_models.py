@@ -1,6 +1,7 @@
-from pydantic import BaseModel
 from typing import List, Optional
-from decimal import Decimal
+
+from pydantic import BaseModel
+
 
 class CallResponse(BaseModel):
     call_id: str
@@ -14,6 +15,7 @@ class CallResponse(BaseModel):
     from_number: Optional[str] = None
     outcome: Optional[str] = None
 
+
 class TranscriptResponse(BaseModel):
     transcript_id: str
     call_id: str
@@ -21,11 +23,13 @@ class TranscriptResponse(BaseModel):
     timestamp: str
     is_final: bool
 
+
 class AnalyticsResponse(BaseModel):
     total_calls: int
     total_cost: float
     total_duration_minutes: float
     average_call_duration: float
+
 
 class CallHistoryPage(BaseModel):
     items: List[CallResponse]
