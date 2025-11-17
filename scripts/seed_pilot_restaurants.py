@@ -37,7 +37,7 @@ def add_restaurant(connection, restaurant_data):
         
         if result:
             restaurant_id = result[0]
-            print(f"✓ Restaurant '{restaurant_data['name']}' already exists with id: {restaurant_id}")
+            print(f"[OK] Restaurant '{restaurant_data['name']}' already exists with id: {restaurant_id}")
             cursor.close()
             return restaurant_id
         
@@ -69,13 +69,13 @@ def add_restaurant(connection, restaurant_data):
         cursor.execute(query, values)
         connection.commit()
         restaurant_id = cursor.lastrowid
-        print(f"✓ Added restaurant '{restaurant_data['name']}' with id: {restaurant_id}")
+        print(f"[OK] Added restaurant '{restaurant_data['name']}' with id: {restaurant_id}")
         
         cursor.close()
         return restaurant_id
         
     except Error as e:
-        print(f"✗ Error adding restaurant {restaurant_data['name']}: {e}")
+        print(f"[ERROR] Error adding restaurant {restaurant_data['name']}: {e}")
         raise
 
 def add_menu_items(connection, restaurant_id, menu_items):
@@ -121,14 +121,14 @@ def add_menu_items(connection, restaurant_id, menu_items):
                 added_count += 1
             except Error as e:
                 if "Duplicate" not in str(e):
-                    print(f"  ✗ Error adding menu item '{item['item_name']}': {e}")
+                    print(f"  [ERROR] Error adding menu item '{item['item_name']}': {e}")
         
         connection.commit()
         cursor.close()
-        print(f"  ✓ Added {added_count} menu items (skipped {skipped_count} duplicates)")
+        print(f"  [OK] Added {added_count} menu items (skipped {skipped_count} duplicates)")
         
     except Error as e:
-        print(f"✗ Error adding menu items: {e}")
+        print(f"[ERROR] Error adding menu items: {e}")
         raise
 
 # Restaurant 1: Amici Italian Grill & Lounge
@@ -384,33 +384,285 @@ biryani_menu = [
     {"category": "Non-Alcoholic Drinks", "item_name": "Moonshine", "price": 8.00, "item_desc": "Non-alcoholic cocktail", "avg_prep_time": 4},
 ]
 
-# Restaurant 3: Coco Rico Cafe (limited menu data provided)
+# Restaurant 3: Coco Rico Cafe
 coco_rico_menu = [
-    # Note: Full menu not provided, adding placeholder items based on cafe style
-    {"category": "Beverages", "item_name": "Coffee", "price": 4.50, "avg_prep_time": 3},
-    {"category": "Beverages", "item_name": "Espresso", "price": 3.50, "avg_prep_time": 2},
-    {"category": "Beverages", "item_name": "Cappuccino", "price": 5.00, "avg_prep_time": 4},
-    {"category": "Beverages", "item_name": "Latte", "price": 5.50, "avg_prep_time": 4},
-    {"category": "Desserts", "item_name": "Pastries", "price": 6.00, "avg_prep_time": 2},
-    {"category": "Desserts", "item_name": "Cakes", "price": 8.00, "avg_prep_time": 2},
+    # Brunch Menu
+    {"category": "Brunch", "item_name": "Spinach Tomato Benedict", "price": 16.00, "avg_prep_time": 15},
+    {"category": "Brunch", "item_name": "Ham & Cheese Omelette", "price": 16.50, "avg_prep_time": 12},
+    {"category": "Brunch", "item_name": "Smoked Salmon Panini", "price": 20.50, "avg_prep_time": 10},
+    {"category": "Brunch", "item_name": "Grilled Ham & Cheese Sandwich", "price": 20.00, "avg_prep_time": 10},
+    {"category": "Brunch", "item_name": "Canadian Benedict", "price": 17.50, "avg_prep_time": 15},
+    {"category": "Brunch", "item_name": "Garden Fresh Omelette", "price": 16.00, "avg_prep_time": 12},
+    {"category": "Brunch", "item_name": "Belgian Waffles", "price": 17.50, "avg_prep_time": 12},
+    {"category": "Brunch", "item_name": "Smoked Salmon Omelette", "price": 20.00, "avg_prep_time": 12},
+    {"category": "Brunch", "item_name": "Robson St. Breakfast Special", "price": 15.00, "avg_prep_time": 10},
+    {"category": "Brunch", "item_name": "BELT Sandwich (Bacon, Egg, Lettuce, Tomato)", "price": 19.50, "avg_prep_time": 10},
+    {"category": "Brunch", "item_name": "Bacon & Cheese Omelette", "price": 17.75, "avg_prep_time": 12},
+    {"category": "Brunch", "item_name": "Smoked Salmon Benedict", "price": 20.00, "avg_prep_time": 15},
+    {"category": "Brunch", "item_name": "Cinnamon French Toast", "price": 17.50, "avg_prep_time": 12},
+    {"category": "Brunch", "item_name": "Brunch Burger", "price": 22.00, "avg_prep_time": 15},
+    {"category": "Brunch", "item_name": "Coco Rico Benedict", "price": 18.75, "avg_prep_time": 15},
+    {"category": "Brunch", "item_name": "Buttermilk Pancakes", "price": 17.00, "avg_prep_time": 12},
+    
+    # Dinner Menu - Tapas & Appetizers
+    {"category": "Tapas & Appetizers", "item_name": "Fish & Chips", "price": 20.00, "avg_prep_time": 15},
+    {"category": "Tapas & Appetizers", "item_name": "Spicy Meatballs", "price": 17.50, "avg_prep_time": 12},
+    {"category": "Tapas & Appetizers", "item_name": "Side of Fries", "price": 7.00, "avg_prep_time": 8},
+    {"category": "Tapas & Appetizers", "item_name": "Chicken Strips with Fries", "price": 18.50, "avg_prep_time": 12},
+    {"category": "Tapas & Appetizers", "item_name": "Poutine", "price": 13.50, "avg_prep_time": 10},
+    {"category": "Tapas & Appetizers", "item_name": "Chilli Chicken", "price": 17.00, "avg_prep_time": 12},
+    {"category": "Tapas & Appetizers", "item_name": "Chicken Wings", "price": 15.50, "avg_prep_time": 15},
+    {"category": "Tapas & Appetizers", "item_name": "Crispy Yam Fries", "price": 13.00, "avg_prep_time": 10},
+    {"category": "Tapas & Appetizers", "item_name": "Three Cheese Nachos", "price": 18.50, "avg_prep_time": 10},
+    {"category": "Tapas & Appetizers", "item_name": "Cauliflower Bites", "price": 15.50, "avg_prep_time": 10},
+    {"category": "Tapas & Appetizers", "item_name": "Fish Tacos", "price": 19.50, "avg_prep_time": 12},
+    {"category": "Tapas & Appetizers", "item_name": "Sliders", "price": 20.50, "avg_prep_time": 12},
+    {"category": "Tapas & Appetizers", "item_name": "Calamari", "price": 21.50, "avg_prep_time": 12},
+    {"category": "Tapas & Appetizers", "item_name": "Chicken Tikka Skewer", "price": 21.00, "avg_prep_time": 15},
+    {"category": "Tapas & Appetizers", "item_name": "Baked Garlic and Cheese Prawns", "price": 19.50, "avg_prep_time": 15},
+    {"category": "Tapas & Appetizers", "item_name": "Hummus", "price": 11.00, "avg_prep_time": 5},
+    {"category": "Tapas & Appetizers", "item_name": "Drunken Mussels and Chorizo", "price": 19.50, "avg_prep_time": 15},
+    
+    # Salads & Soup
+    {"category": "Salads & Soup", "item_name": "Citrus Caesar Salad", "price": 12.00, "avg_prep_time": 8},
+    {"category": "Salads & Soup", "item_name": "Maple Salmon Salad", "price": 23.00, "avg_prep_time": 15},
+    {"category": "Salads & Soup", "item_name": "Quinoa and Spinach Salad", "price": 18.00, "avg_prep_time": 10},
+    {"category": "Salads & Soup", "item_name": "Soup of the Day", "price": 8.00, "avg_prep_time": 8},
+    
+    # Rice Bowls
+    {"category": "Rice Bowls", "item_name": "Beef Stroganoff Rice Bowl", "price": 25.75, "avg_prep_time": 18},
+    {"category": "Rice Bowls", "item_name": "Butter Chicken Curry Rice Bowl", "price": 17.00, "avg_prep_time": 15},
+    {"category": "Rice Bowls", "item_name": "Madras Chicken Curry Rice Bowl", "price": 25.50, "avg_prep_time": 18},
+    {"category": "Rice Bowls", "item_name": "Chicken Teriyaki Rice Bowl", "price": 17.00, "avg_prep_time": 15},
+    
+    # Pastas & Pizzas
+    {"category": "Pastas & Pizzas", "item_name": "Garden Fresh Vegetable Pasta", "price": 18.50, "avg_prep_time": 15},
+    {"category": "Pastas & Pizzas", "item_name": "Creamy Pesto Chicken Penne", "price": 20.50, "avg_prep_time": 16},
+    {"category": "Pastas & Pizzas", "item_name": "Spicy Prawns Spaghettini", "price": 22.00, "avg_prep_time": 16},
+    {"category": "Pastas & Pizzas", "item_name": "Spaghetti Carbonara", "price": 20.50, "avg_prep_time": 16},
+    {"category": "Pastas & Pizzas", "item_name": "Chicken and Chorizo Penne", "price": 22.00, "avg_prep_time": 17},
+    {"category": "Pastas & Pizzas", "item_name": "Spinach & Feta Pizza", "price": 19.00, "avg_prep_time": 15},
+    {"category": "Pastas & Pizzas", "item_name": "BBQ Pulled Pork Pizza", "price": 20.25, "avg_prep_time": 16},
+    {"category": "Pastas & Pizzas", "item_name": "Hawaiian Pizza", "price": 19.75, "avg_prep_time": 15},
+    {"category": "Pastas & Pizzas", "item_name": "Coco Pizza (house special pizza)", "price": 21.00, "avg_prep_time": 16},
+    
+    # Sandwiches & Burgers
+    {"category": "Sandwiches & Burgers", "item_name": "Avocado & Brie Club Sandwich", "price": 20.00, "avg_prep_time": 10},
+    {"category": "Sandwiches & Burgers", "item_name": "Pulled Pork Panini", "price": 19.50, "avg_prep_time": 10},
+    {"category": "Sandwiches & Burgers", "item_name": "Roasted Beef Dip", "price": 19.50, "avg_prep_time": 12},
+    {"category": "Sandwiches & Burgers", "item_name": "Classic Beef Burger", "price": 20.50, "avg_prep_time": 12},
+    {"category": "Sandwiches & Burgers", "item_name": "Avocado Chicken Burger", "price": 20.50, "avg_prep_time": 12},
+    {"category": "Sandwiches & Burgers", "item_name": "Beyond Meat Burger", "price": 20.00, "avg_prep_time": 12},
+    {"category": "Sandwiches & Burgers", "item_name": "Swiss Mushroom Melt Burger", "price": 20.25, "avg_prep_time": 12},
+    {"category": "Sandwiches & Burgers", "item_name": "Chicken Burger", "price": 19.50, "avg_prep_time": 12},
+    
+    # Desserts
+    {"category": "Desserts", "item_name": "Brownie with Ice Cream", "price": 10.00, "avg_prep_time": 5},
+    
+    # Breakfast Specials (Weekday Mornings)
+    {"category": "Breakfast Specials", "item_name": "Canadian Benedict (Weekday Special)", "price": 13.25, "avg_prep_time": 15},
+    {"category": "Breakfast Specials", "item_name": "Robson Street Breakfast Special (Weekday Special)", "price": 10.75, "avg_prep_time": 10},
+    {"category": "Breakfast Specials", "item_name": "Canadian Ham & Cheese Omelette (Weekday Special)", "price": 13.75, "avg_prep_time": 12},
+    
+    # Non-Alcoholic Beverages
+    {"category": "Non-Alcoholic Beverages", "item_name": "Apple Juice", "price": 4.50, "avg_prep_time": 1},
+    {"category": "Non-Alcoholic Beverages", "item_name": "Orange Juice", "price": 4.50, "avg_prep_time": 1},
+    {"category": "Non-Alcoholic Beverages", "item_name": "Ginger Ale", "price": 4.00, "avg_prep_time": 1},
+    {"category": "Non-Alcoholic Beverages", "item_name": "Coca-Cola", "price": 4.00, "avg_prep_time": 1},
+    {"category": "Non-Alcoholic Beverages", "item_name": "Diet Coke", "price": 4.00, "avg_prep_time": 1},
+    {"category": "Non-Alcoholic Beverages", "item_name": "Sprite", "price": 4.00, "avg_prep_time": 1},
+    {"category": "Non-Alcoholic Beverages", "item_name": "Crush (Orange Soda)", "price": 4.00, "avg_prep_time": 1},
+    {"category": "Non-Alcoholic Beverages", "item_name": "Perrier (Sparkling Water)", "price": 4.75, "avg_prep_time": 1},
+    {"category": "Non-Alcoholic Beverages", "item_name": "Dasani Bottled Water", "price": 4.00, "avg_prep_time": 1},
+    {"category": "Non-Alcoholic Beverages", "item_name": "Iced Tea", "price": 5.00, "avg_prep_time": 2},
+    {"category": "Non-Alcoholic Beverages", "item_name": "Lemonade", "price": 5.00, "avg_prep_time": 2},
+    {"category": "Non-Alcoholic Beverages", "item_name": "Red Bull", "price": 5.25, "avg_prep_time": 1},
+    {"category": "Non-Alcoholic Beverages", "item_name": "Tea", "price": 3.50, "avg_prep_time": 3},
+    {"category": "Non-Alcoholic Beverages", "item_name": "Regular Coffee", "price": 3.50, "avg_prep_time": 3},
+    {"category": "Non-Alcoholic Beverages", "item_name": "Americano", "price": 5.00, "avg_prep_time": 3},
+    {"category": "Non-Alcoholic Beverages", "item_name": "Latte", "price": 5.50, "avg_prep_time": 4},
+    {"category": "Non-Alcoholic Beverages", "item_name": "Mocha", "price": 5.00, "avg_prep_time": 4},
+    {"category": "Non-Alcoholic Beverages", "item_name": "Cappuccino", "price": 5.25, "avg_prep_time": 4},
+    {"category": "Non-Alcoholic Beverages", "item_name": "Espresso", "price": 5.00, "avg_prep_time": 2},
+    {"category": "Non-Alcoholic Beverages", "item_name": "Hot Chocolate", "price": 5.25, "avg_prep_time": 3},
+    
+    # Alcoholic Beverages
+    {"category": "Alcoholic Beverages", "item_name": "Mimosa", "price": 10.00, "avg_prep_time": 3},
+    {"category": "Alcoholic Beverages", "item_name": "Caesar (classic Canadian cocktail)", "price": 13.00, "avg_prep_time": 4},
+    {"category": "Alcoholic Beverages", "item_name": "Bloody Mary", "price": 13.00, "avg_prep_time": 4},
 ]
 
-# Restaurant 4: House of Dosas (limited menu data provided)
+# Restaurant 4: House of Dosas
 house_of_dosas_menu = [
-    # Note: Full menu not provided, adding common dosa items
-    {"category": "Dosas", "item_name": "Plain Dosa", "price": 8.00, "avg_prep_time": 10},
-    {"category": "Dosas", "item_name": "Masala Dosa", "price": 10.00, "avg_prep_time": 12},
-    {"category": "Dosas", "item_name": "Onion Dosa", "price": 9.00, "avg_prep_time": 11},
-    {"category": "Dosas", "item_name": "Rava Dosa", "price": 11.00, "avg_prep_time": 12},
-    {"category": "Dosas", "item_name": "Paper Dosa", "price": 9.50, "avg_prep_time": 10},
-    {"category": "Dosas", "item_name": "Ghee Dosa", "price": 12.00, "avg_prep_time": 11},
-    {"category": "Dosas", "item_name": "Butter Dosa", "price": 11.50, "avg_prep_time": 11},
-    {"category": "Dosas", "item_name": "Mysore Masala Dosa", "price": 12.00, "avg_prep_time": 13},
-    {"category": "Dosas", "item_name": "Uttapam", "price": 10.00, "avg_prep_time": 12},
-    {"category": "Dosas", "item_name": "Idli", "price": 7.00, "avg_prep_time": 8},
-    {"category": "Dosas", "item_name": "Vada", "price": 6.00, "avg_prep_time": 8},
-    {"category": "Beverages", "item_name": "Chai", "price": 3.50, "avg_prep_time": 3},
-    {"category": "Beverages", "item_name": "Coffee", "price": 3.50, "avg_prep_time": 3},
+    # Appetizers - Starters
+    {"category": "Appetizers", "sub_category": "Starters", "item_name": "Cauliflower Fry", "price": 14.00, "item_desc": "Golden-fried cauliflower florets with a crispy crunch and a hint of spice", "avg_prep_time": 12},
+    {"category": "Appetizers", "sub_category": "Starters", "item_name": "Paneer 65", "price": 15.00, "item_desc": "A vibrant blend of spices coating tender bites of paneer", "avg_prep_time": 12},
+    {"category": "Appetizers", "sub_category": "Starters", "item_name": "Chicken 65", "price": 12.00, "item_desc": "A vibrant blend of spices coating tender bites of chicken", "avg_prep_time": 12},
+    {"category": "Appetizers", "sub_category": "Starters", "item_name": "Prawn 65", "price": 16.00, "item_desc": "A vibrant blend of spices coating tender bites of prawn", "avg_prep_time": 12},
+    {"category": "Appetizers", "sub_category": "Starters", "item_name": "Vegetable Pakora", "price": 11.00, "item_desc": "Crispy golden fritters with a hint of spice", "avg_prep_time": 10},
+    {"category": "Appetizers", "sub_category": "Starters", "item_name": "Fish Pakora", "price": 15.00, "item_desc": "Crispy golden fritters with a hint of spice", "avg_prep_time": 12},
+    {"category": "Appetizers", "sub_category": "Starters", "item_name": "Chicken Tikka", "price": 20.00, "item_desc": "Tender marinated chicken grilled with aromatic spices, served sizzling", "avg_prep_time": 18},
+    {"category": "Appetizers", "sub_category": "Starters", "item_name": "Spicy Butter Prawns", "price": 17.00, "item_desc": "Juicy prawns sautéed in a spiced butter sauce", "avg_prep_time": 12},
+    {"category": "Appetizers", "sub_category": "Starters", "item_name": "HOD Spicy Chicken", "price": 14.00, "item_desc": "Succulent chicken tossed in a bold, peppery spice mix", "avg_prep_time": 12},
+    {"category": "Appetizers", "sub_category": "Starters", "item_name": "Mutton Varuval", "price": 17.00, "item_desc": "Hearty spiced mutton stir-fry with aromatic deep spices", "avg_prep_time": 18},
+    {"category": "Appetizers", "sub_category": "Starters", "item_name": "Pepper Beef", "price": 17.00, "item_desc": "Tender beef infused with fiery peppercorn seasoning", "avg_prep_time": 15},
+    {"category": "Appetizers", "sub_category": "Starters", "item_name": "Kingfish Tava Fry", "price": 18.00, "item_desc": "Slice of king mackerel marinated in a zesty blend of South Indian herbs and spices, pan-fried", "avg_prep_time": 15},
+    
+    # Appetizers - Indo-Chinese
+    {"category": "Appetizers", "sub_category": "Indo-Chinese", "item_name": "Chilli Paneer", "price": 16.00, "item_desc": "Indo-Chinese style stir-fry with bell peppers, onions and chilies in a savory soy-chilli sauce", "avg_prep_time": 12},
+    {"category": "Appetizers", "sub_category": "Indo-Chinese", "item_name": "Chilli Cauliflower", "price": 14.00, "item_desc": "Indo-Chinese style stir-fry with bell peppers, onions and chilies in a savory soy-chilli sauce", "avg_prep_time": 12},
+    {"category": "Appetizers", "sub_category": "Indo-Chinese", "item_name": "Chilli Chicken", "price": 14.00, "item_desc": "Indo-Chinese style stir-fry with bell peppers, onions and chilies in a savory soy-chilli sauce", "avg_prep_time": 12},
+    {"category": "Appetizers", "sub_category": "Indo-Chinese", "item_name": "Chilli Fish", "price": 15.00, "item_desc": "Indo-Chinese style stir-fry with bell peppers, onions and chilies in a savory soy-chilli sauce", "avg_prep_time": 12},
+    {"category": "Appetizers", "sub_category": "Indo-Chinese", "item_name": "Chilli Shrimp", "price": 17.00, "item_desc": "Indo-Chinese style stir-fry with bell peppers, onions and chilies in a savory soy-chilli sauce", "avg_prep_time": 12},
+    {"category": "Appetizers", "sub_category": "Indo-Chinese", "item_name": "Vegetable Noodles", "price": 15.00, "item_desc": "Wok-tossed noodles with vegetables. Choice of Hakka or Szechuan style", "avg_prep_time": 12},
+    {"category": "Appetizers", "sub_category": "Indo-Chinese", "item_name": "Egg Noodles", "price": 15.00, "item_desc": "Wok-tossed noodles with egg. Choice of Hakka or Szechuan style", "avg_prep_time": 12},
+    {"category": "Appetizers", "sub_category": "Indo-Chinese", "item_name": "Chicken Noodles", "price": 16.00, "item_desc": "Wok-tossed noodles with chicken. Choice of Hakka or Szechuan style", "avg_prep_time": 12},
+    {"category": "Appetizers", "sub_category": "Indo-Chinese", "item_name": "Shrimp Noodles", "price": 18.00, "item_desc": "Wok-tossed noodles with shrimp. Choice of Hakka or Szechuan style", "avg_prep_time": 12},
+    {"category": "Appetizers", "sub_category": "Indo-Chinese", "item_name": "Vegetable Fried Rice", "price": 15.00, "item_desc": "Fried rice with vegetables, seasoned with soy and spices. Choice of Hakka or Szechuan style", "avg_prep_time": 12},
+    {"category": "Appetizers", "sub_category": "Indo-Chinese", "item_name": "Egg Fried Rice", "price": 15.00, "item_desc": "Fried rice with egg, seasoned with soy and spices. Choice of Hakka or Szechuan style", "avg_prep_time": 12},
+    {"category": "Appetizers", "sub_category": "Indo-Chinese", "item_name": "Chicken Fried Rice", "price": 16.00, "item_desc": "Fried rice with chicken, seasoned with soy and spices. Choice of Hakka or Szechuan style", "avg_prep_time": 12},
+    {"category": "Appetizers", "sub_category": "Indo-Chinese", "item_name": "Shrimp Fried Rice", "price": 18.00, "item_desc": "Fried rice with shrimp, seasoned with soy and spices. Choice of Hakka or Szechuan style", "avg_prep_time": 12},
+    
+    # Appetizers - Soups
+    {"category": "Appetizers", "sub_category": "Soups", "item_name": "Rasam", "price": 5.00, "item_desc": "A tangy South Indian tomato-tamarind broth with warming spices", "avg_prep_time": 8},
+    
+    # Dosa - Plain Varieties
+    {"category": "Dosa", "item_name": "Plain Dosa", "price": 10.00, "item_desc": "Crispy crêpe made from fermented rice & lentil batter, served with coconut chutney, tomato chutney, and sambar", "avg_prep_time": 10},
+    {"category": "Dosa", "item_name": "Onion Dosa", "price": 12.00, "item_desc": "Dosa spread with onion", "avg_prep_time": 11},
+    {"category": "Dosa", "item_name": "Mysore Dosa", "price": 12.00, "item_desc": "Dosa spread with spicy Mysore chutney", "avg_prep_time": 11},
+    {"category": "Dosa", "item_name": "Podi Dosa", "price": 14.00, "item_desc": "Dosa spread with podi powder", "avg_prep_time": 11},
+    {"category": "Dosa", "item_name": "Ghee Roast Dosa", "price": 14.00, "item_desc": "Dosa brushed with ghee", "avg_prep_time": 11},
+    
+    # Dosa - Masala Varieties
+    {"category": "Dosa", "item_name": "Masala Dosa", "price": 12.00, "item_desc": "Classic crispy dosa filled with spiced potato masala", "avg_prep_time": 12},
+    {"category": "Dosa", "item_name": "Onion Masala Dosa", "price": 13.00, "item_desc": "Dosa filled with spiced potato masala and onions", "avg_prep_time": 12},
+    {"category": "Dosa", "item_name": "Podi Masala Dosa", "price": 13.00, "item_desc": "Dosa filled with spiced potato masala and podi spice", "avg_prep_time": 12},
+    {"category": "Dosa", "item_name": "Ghee Roast Masala Dosa", "price": 16.00, "item_desc": "Dosa filled with spiced potato masala and brushed with ghee", "avg_prep_time": 12},
+    {"category": "Dosa", "item_name": "Mysore Masala Dosa", "price": 15.00, "item_desc": "A dosa spread with fiery Mysore chutney (made of chilies and lentils) and filled with spiced mashed potatoes. Available crispy or soft", "avg_prep_time": 13},
+    {"category": "Dosa", "item_name": "Paneer Masala Dosa", "price": 16.00, "item_desc": "Dosa filled with spiced cottage cheese (paneer) and savory potato masala", "avg_prep_time": 13},
+    {"category": "Dosa", "item_name": "Mixed Vegetable Dosa", "price": 15.00, "item_desc": "A golden dosa filled with a medley of sautéed vegetables seasoned with aromatic spices", "avg_prep_time": 13},
+    {"category": "Dosa", "item_name": "Cauliflower Dosa", "price": 15.00, "item_desc": "Thin, crispy dosa stuffed with spiced cauliflower florets", "avg_prep_time": 13},
+    {"category": "Dosa", "item_name": "Pav Bhaji Dosa", "price": 15.00, "item_desc": "A fusion dosa filled with Mumbai-style spicy mixed vegetable bhaji", "avg_prep_time": 13},
+    {"category": "Dosa", "item_name": "Eggplant Dosa", "price": 15.00, "item_desc": "Dosa filled with roasted eggplant masala, offering a smoky, spiced flavor", "avg_prep_time": 13},
+    {"category": "Dosa", "item_name": "Mushroom Dosa", "price": 15.00, "item_desc": "Crispy dosa packed with savory sautéed mushrooms and fragrant spices", "avg_prep_time": 13},
+    {"category": "Dosa", "item_name": "Palak Paneer Dosa", "price": 16.00, "item_desc": "Dosa filled with vibrant spiced spinach (palak) and paneer", "avg_prep_time": 13},
+    {"category": "Dosa", "item_name": "Palak Chicken Dosa", "price": 15.00, "item_desc": "Dosa filled with vibrant spiced spinach (palak) and chicken", "avg_prep_time": 13},
+    {"category": "Dosa", "item_name": "Palak Lamb Dosa", "price": 16.00, "item_desc": "Dosa filled with vibrant spiced spinach (palak) and lamb", "avg_prep_time": 13},
+    {"category": "Dosa", "item_name": "Palak Beef Dosa", "price": 16.00, "item_desc": "Dosa filled with vibrant spiced spinach (palak) and beef", "avg_prep_time": 13},
+    {"category": "Dosa", "item_name": "Palak Shrimp Dosa", "price": 17.00, "item_desc": "Dosa filled with vibrant spiced spinach (palak) and shrimp", "avg_prep_time": 13},
+    {"category": "Dosa", "item_name": "Set Dosa", "price": 15.00, "item_desc": "A set of three soft, fluffy dosas (thicker, pancake-style) served together", "avg_prep_time": 12},
+    {"category": "Dosa", "item_name": "Egg Masala Dosa", "price": 12.00, "item_desc": "Dosa filled with spiced egg scramble", "avg_prep_time": 12},
+    {"category": "Dosa", "item_name": "Chicken Masala Dosa", "price": 15.00, "item_desc": "Dosa filled with savory chicken masala", "avg_prep_time": 13},
+    {"category": "Dosa", "item_name": "Lamb Masala Dosa", "price": 16.00, "item_desc": "Dosa filled with spiced lamb curry", "avg_prep_time": 13},
+    {"category": "Dosa", "item_name": "Beef Masala Dosa", "price": 16.00, "item_desc": "Dosa filled with spiced beef curry", "avg_prep_time": 13},
+    {"category": "Dosa", "item_name": "Fish Masala Dosa", "price": 16.00, "item_desc": "Dosa stuffed with flavorful fish curry masala", "avg_prep_time": 13},
+    {"category": "Dosa", "item_name": "Shrimp Masala Dosa", "price": 17.00, "item_desc": "Dosa filled with seasoned shrimp masala", "avg_prep_time": 13},
+    {"category": "Dosa", "item_name": "Chicken Chettinad Dosa", "price": 16.00, "item_desc": "Dosa filled with chicken cooked Chettinad-style – a fiery blend of roasted spices, curry leaves, and coconut", "avg_prep_time": 14},
+    {"category": "Dosa", "item_name": "Lamb Chettinad Dosa", "price": 17.00, "item_desc": "Dosa filled with lamb cooked Chettinad-style – a fiery blend of roasted spices, curry leaves, and coconut", "avg_prep_time": 14},
+    {"category": "Dosa", "item_name": "Beef Chettinad Dosa", "price": 17.00, "item_desc": "Dosa filled with beef cooked Chettinad-style – a fiery blend of roasted spices, curry leaves, and coconut", "avg_prep_time": 14},
+    {"category": "Dosa", "item_name": "Shrimp Chettinad Dosa", "price": 17.00, "item_desc": "Dosa filled with shrimp cooked Chettinad-style – a fiery blend of roasted spices, curry leaves, and coconut", "avg_prep_time": 14},
+    {"category": "Dosa", "item_name": "Chicken Pepper Dosa", "price": 16.00, "item_desc": "Dosa filled with chicken prepared with cracked black pepper, garlic, and spices for a bold kick", "avg_prep_time": 13},
+    {"category": "Dosa", "item_name": "Lamb Pepper Dosa", "price": 17.00, "item_desc": "Dosa filled with lamb prepared with cracked black pepper, garlic, and spices for a bold kick", "avg_prep_time": 13},
+    {"category": "Dosa", "item_name": "Beef Pepper Dosa", "price": 17.00, "item_desc": "Dosa filled with beef prepared with cracked black pepper, garlic, and spices for a bold kick", "avg_prep_time": 13},
+    {"category": "Dosa", "item_name": "Shrimp Pepper Dosa", "price": 17.00, "item_desc": "Dosa filled with shrimp prepared with cracked black pepper, garlic, and spices for a bold kick", "avg_prep_time": 13},
+    {"category": "Dosa", "item_name": "Paneer Butter Dosa", "price": 16.00, "item_desc": "Dosa filled with paneer simmered in a rich, creamy butter curry (makhani) sauce", "avg_prep_time": 13},
+    {"category": "Dosa", "item_name": "Chicken Butter Dosa", "price": 17.00, "item_desc": "Dosa filled with chicken simmered in a rich, creamy butter curry (makhani) sauce", "avg_prep_time": 13},
+    {"category": "Dosa", "item_name": "Lamb Butter Dosa", "price": 18.00, "item_desc": "Dosa filled with lamb simmered in a rich, creamy butter curry (makhani) sauce", "avg_prep_time": 13},
+    {"category": "Dosa", "item_name": "Shrimp Butter Dosa", "price": 17.00, "item_desc": "Dosa filled with shrimp simmered in a rich, creamy butter curry (makhani) sauce", "avg_prep_time": 13},
+    
+    # Uthappam
+    {"category": "Uthappam", "item_name": "Onion Chilli Uthappam", "price": 14.00, "item_desc": "A savory rice-lentil pancake topped with caramelized onions and green chilies", "avg_prep_time": 12},
+    {"category": "Uthappam", "item_name": "Mixed Vegetables Uthappam", "price": 14.00, "item_desc": "Soft thick dosa topped with a colorful mix of diced vegetables", "avg_prep_time": 12},
+    {"category": "Uthappam", "item_name": "401 Uthappam", "price": 14.00, "item_desc": "Uthappam topped with onions, tomatoes, paneer, green chilies, and sweet peppers", "avg_prep_time": 12},
+    {"category": "Uthappam", "item_name": "Paneer Uthappam", "price": 17.00, "item_desc": "Thick dosa cooked with spiced paneer on top for added richness", "avg_prep_time": 13},
+    
+    # Curries
+    {"category": "Curries", "item_name": "Vegetable Korma", "price": 17.00, "item_desc": "A creamy, mildly spiced coconut-milk curry with mixed vegetables. Served with two sides: your first choice of rice or plain dosa, and second choice of parotta, plain/garlic naan, rice or another plain dosa", "avg_prep_time": 18},
+    {"category": "Curries", "item_name": "Chicken Korma", "price": 18.00, "item_desc": "A creamy, mildly spiced coconut-milk curry with tender chicken. Served with two sides: your first choice of rice or plain dosa, and second choice of parotta, plain/garlic naan, rice or another plain dosa", "avg_prep_time": 18},
+    {"category": "Curries", "item_name": "Paneer Butter Masala", "price": 20.00, "item_desc": "Soft paneer cubes in a rich, buttery tomato gravy. Served with two sides", "avg_prep_time": 16},
+    {"category": "Curries", "item_name": "Kadai Paneer", "price": 20.00, "item_desc": "Paneer stir-fried with bell peppers and onions in a bold spiced gravy. Served with two sides", "avg_prep_time": 16},
+    {"category": "Curries", "item_name": "Dal Makhani", "price": 18.00, "item_desc": "Slow-cooked creamy black lentils in a buttery spiced sauce. Served with two sides", "avg_prep_time": 20},
+    {"category": "Curries", "item_name": "Goat Curry", "price": 19.00, "item_desc": "Goat slow-cooked in a traditional South Indian curry sauce with coconut and spices. Served with two sides", "avg_prep_time": 25},
+    {"category": "Curries", "item_name": "Chicken Curry", "price": 15.00, "item_desc": "Chicken slow-cooked in a traditional South Indian curry sauce with coconut and spices. Served with two sides", "avg_prep_time": 20},
+    {"category": "Curries", "item_name": "Lamb Curry", "price": 20.00, "item_desc": "Lamb slow-cooked in a traditional South Indian curry sauce with coconut and spices. Served with two sides", "avg_prep_time": 25},
+    {"category": "Curries", "item_name": "Beef Curry", "price": 20.00, "item_desc": "Beef slow-cooked in a traditional South Indian curry sauce with coconut and spices. Served with two sides", "avg_prep_time": 25},
+    {"category": "Curries", "item_name": "Eggplant Masala", "price": 18.00, "item_desc": "Sautéed eggplant in a rich, tangy spiced tomato gravy. Served with two sides", "avg_prep_time": 15},
+    {"category": "Curries", "item_name": "Beef Masala", "price": 21.00, "item_desc": "Slow-cooked beef in a flavorful tomato-based curry sauce. Served with two sides", "avg_prep_time": 25},
+    {"category": "Curries", "item_name": "Vendakkai Masala", "price": 18.00, "item_desc": "Tender okra simmered in a spiced onion-tomato masala. Served with two sides", "avg_prep_time": 15},
+    {"category": "Curries", "item_name": "Palak Paneer", "price": 20.00, "item_desc": "Spinach curry blended with spices and paneer. Served with two sides", "avg_prep_time": 16},
+    {"category": "Curries", "item_name": "Palak Chicken", "price": 18.00, "item_desc": "Spinach curry blended with spices and chicken. Served with two sides", "avg_prep_time": 18},
+    {"category": "Curries", "item_name": "Palak Lamb", "price": 21.00, "item_desc": "Spinach curry blended with spices and lamb. Served with two sides", "avg_prep_time": 20},
+    {"category": "Curries", "item_name": "Chicken Sukka", "price": 20.00, "item_desc": "Dry-style roast of chicken with toasted spices and curry leaves. Served with two sides", "avg_prep_time": 18},
+    {"category": "Curries", "item_name": "Lamb Sukka", "price": 24.00, "item_desc": "Dry-style roast of lamb with toasted spices and curry leaves. Served with two sides", "avg_prep_time": 20},
+    {"category": "Curries", "item_name": "Butter Chicken", "price": 20.00, "item_desc": "Tandoori-grilled chicken simmered in the classic creamy tomato-butter sauce. Served with two sides", "avg_prep_time": 20},
+    {"category": "Curries", "item_name": "Butter Lamb", "price": 22.00, "item_desc": "Tandoori-grilled lamb simmered in the classic creamy tomato-butter sauce. Served with two sides", "avg_prep_time": 22},
+    {"category": "Curries", "item_name": "Butter Prawn", "price": 23.00, "item_desc": "Tandoori-grilled prawns simmered in the classic creamy tomato-butter sauce. Served with two sides", "avg_prep_time": 18},
+    {"category": "Curries", "item_name": "Chettinad Chicken Curry", "price": 18.00, "item_desc": "Traditional Chettinad-style curry with a bold blend of roasted spices in a tomato-onion gravy. Served with two sides", "avg_prep_time": 20},
+    {"category": "Curries", "item_name": "Chettinad Lamb Curry", "price": 20.00, "item_desc": "Traditional Chettinad-style curry with a bold blend of roasted spices in a tomato-onion gravy. Served with two sides", "avg_prep_time": 22},
+    {"category": "Curries", "item_name": "Chettinad Beef Curry", "price": 20.00, "item_desc": "Traditional Chettinad-style curry with a bold blend of roasted spices in a tomato-onion gravy. Served with two sides", "avg_prep_time": 22},
+    {"category": "Curries", "item_name": "Chettinad Prawn Curry", "price": 20.00, "item_desc": "Traditional Chettinad-style curry with a bold blend of roasted spices in a tomato-onion gravy. Served with two sides", "avg_prep_time": 18},
+    {"category": "Curries", "item_name": "Malabar Fish Curry", "price": 20.00, "item_desc": "Coastal-style curry of fish in a tangy tamarind and coconut-based gravy. Served with two sides", "avg_prep_time": 18},
+    {"category": "Curries", "item_name": "Prawn Pepper Masala", "price": 22.00, "item_desc": "Succulent prawns cooked with cracked black pepper, onions, and garlic in a robust spicy sauce. Served with two sides", "avg_prep_time": 18},
+    
+    # Kothu Parotta
+    {"category": "Kothu Parotta", "item_name": "Vegetable Kothu Parotta", "price": 15.00, "item_desc": "Shredded South Indian parotta bread stir-fried with vegetables, plus spices and curry sauce", "avg_prep_time": 12},
+    {"category": "Kothu Parotta", "item_name": "Egg Kothu Parotta", "price": 16.00, "item_desc": "Shredded South Indian parotta bread stir-fried with egg, plus spices and curry sauce", "avg_prep_time": 12},
+    {"category": "Kothu Parotta", "item_name": "Chicken Kothu Parotta", "price": 17.00, "item_desc": "Shredded South Indian parotta bread stir-fried with chicken, plus spices and curry sauce", "avg_prep_time": 14},
+    {"category": "Kothu Parotta", "item_name": "Lamb Kothu Parotta", "price": 17.00, "item_desc": "Shredded South Indian parotta bread stir-fried with lamb, plus spices and curry sauce", "avg_prep_time": 14},
+    {"category": "Kothu Parotta", "item_name": "Beef Kothu Parotta", "price": 17.00, "item_desc": "Shredded South Indian parotta bread stir-fried with beef, plus spices and curry sauce", "avg_prep_time": 14},
+    
+    # Parotta Dishes
+    {"category": "Parotta Dishes", "item_name": "Meat Parotta", "price": 18.00, "avg_prep_time": 15},
+    {"category": "Parotta Dishes", "item_name": "Egg Parotta", "price": 16.00, "avg_prep_time": 12},
+    {"category": "Parotta Dishes", "item_name": "2 Parotta with Veg Gravy", "price": 10.00, "avg_prep_time": 10},
+    {"category": "Parotta Dishes", "item_name": "2 Parotta with Chicken Gravy", "price": 10.00, "avg_prep_time": 10},
+    
+    # Sides
+    {"category": "Sides", "item_name": "Parotta", "price": 3.50, "avg_prep_time": 8},
+    {"category": "Sides", "item_name": "Plain Naan", "price": 3.50, "avg_prep_time": 5},
+    {"category": "Sides", "item_name": "Garlic Naan", "price": 4.50, "avg_prep_time": 6},
+    {"category": "Sides", "item_name": "Chutney (2oz)", "price": 0.50, "item_desc": "Coconut or tomato chutney", "avg_prep_time": 1},
+    {"category": "Sides", "item_name": "Chutney (4oz)", "price": 3.00, "item_desc": "Coconut or tomato chutney", "avg_prep_time": 1},
+    {"category": "Sides", "item_name": "Raita (2oz)", "price": 0.50, "avg_prep_time": 2},
+    {"category": "Sides", "item_name": "Raita (4oz)", "price": 4.00, "avg_prep_time": 2},
+    {"category": "Sides", "item_name": "Pickle (2oz)", "price": 1.00, "avg_prep_time": 1},
+    {"category": "Sides", "item_name": "Pickle (4oz)", "price": 4.00, "avg_prep_time": 1},
+    {"category": "Sides", "item_name": "Sambar (4oz)", "price": 0.50, "item_desc": "Lentil soup", "avg_prep_time": 3},
+    {"category": "Sides", "item_name": "Salna (4oz)", "price": 4.00, "item_desc": "Spicy gravy", "avg_prep_time": 3},
+    
+    # Biryani
+    {"category": "Biryani", "item_name": "Chennai Street Style Biryani - Kushka (plain)", "price": 15.00, "item_desc": "Bold, spicy biryani made with fragrant basmati rice", "avg_prep_time": 25},
+    {"category": "Biryani", "item_name": "Chennai Street Style Biryani - Vegetable", "price": 16.00, "item_desc": "Bold, spicy biryani made with fragrant basmati rice and vegetables", "avg_prep_time": 25},
+    {"category": "Biryani", "item_name": "Chennai Street Style Biryani - Egg", "price": 16.00, "item_desc": "Bold, spicy biryani made with fragrant basmati rice and egg", "avg_prep_time": 25},
+    {"category": "Biryani", "item_name": "Chennai Street Style Biryani - Chicken", "price": 16.00, "item_desc": "Bold, spicy biryani made with fragrant basmati rice and chicken", "avg_prep_time": 25},
+    {"category": "Biryani", "item_name": "Chennai Street Style Biryani - Lamb", "price": 17.00, "item_desc": "Bold, spicy biryani made with fragrant basmati rice and lamb", "avg_prep_time": 25},
+    {"category": "Biryani", "item_name": "Chennai Street Style Biryani - Beef", "price": 17.00, "item_desc": "Bold, spicy biryani made with fragrant basmati rice and beef", "avg_prep_time": 25},
+    {"category": "Biryani", "item_name": "Chennai Street Style Biryani - Goat", "price": 17.00, "item_desc": "Bold, spicy biryani made with fragrant basmati rice and goat", "avg_prep_time": 25},
+    {"category": "Biryani", "item_name": "Chennai Street Style Biryani - Prawn", "price": 18.00, "item_desc": "Bold, spicy biryani made with fragrant basmati rice and prawn", "avg_prep_time": 25},
+    
+    # Beverages - Cafe
+    {"category": "Beverages", "item_name": "Masala Chai (spiced tea)", "price": 4.50, "avg_prep_time": 3},
+    {"category": "Beverages", "item_name": "Coffee", "price": 4.50, "avg_prep_time": 3},
+    {"category": "Beverages", "item_name": "Indian-Style Cold Coffee", "price": 8.00, "avg_prep_time": 4},
+    {"category": "Beverages", "item_name": "Lassi - Mango", "price": 6.00, "avg_prep_time": 3},
+    {"category": "Beverages", "item_name": "Lassi - Sweet", "price": 6.00, "avg_prep_time": 3},
+    {"category": "Beverages", "item_name": "Lassi - Salted", "price": 6.00, "avg_prep_time": 3},
+    {"category": "Beverages", "item_name": "Lassi - Buttermilk", "price": 7.00, "avg_prep_time": 3},
+    {"category": "Beverages", "item_name": "Pop (Soft Drinks)", "price": 2.50, "item_desc": "Coke, Diet Coke, Ginger Ale, Orange Crush, Iced Tea, Root Beer, Sprite, or Club Soda", "avg_prep_time": 1},
+    {"category": "Beverages", "item_name": "Coconut Water", "price": 5.00, "avg_prep_time": 1},
+    
+    # Specialty Shakes
+    {"category": "Specialty Shakes", "item_name": "Chocolate Shake", "price": 7.00, "avg_prep_time": 4},
+    {"category": "Specialty Shakes", "item_name": "Vanilla Shake", "price": 7.00, "avg_prep_time": 4},
+    {"category": "Specialty Shakes", "item_name": "Strawberry Shake", "price": 7.00, "avg_prep_time": 4},
+    {"category": "Specialty Shakes", "item_name": "Mango Shake", "price": 7.00, "avg_prep_time": 4},
+    {"category": "Specialty Shakes", "item_name": "Oreo Shake", "price": 9.00, "avg_prep_time": 5},
+    {"category": "Specialty Shakes", "item_name": "KitKat Shake", "price": 9.00, "avg_prep_time": 5},
+    {"category": "Specialty Shakes", "item_name": "HOD's Exclusive Mango Shake", "price": 10.00, "item_desc": "Signature deluxe mango shake", "avg_prep_time": 5},
+    {"category": "Specialty Shakes", "item_name": "Caramel Shake", "price": 8.00, "avg_prep_time": 4},
+    {"category": "Specialty Shakes", "item_name": "Gulab Jamun Shake", "price": 10.00, "item_desc": "Blended with the classic Indian sweet", "avg_prep_time": 5},
+    {"category": "Specialty Shakes", "item_name": "Rasmalai Shake", "price": 10.00, "item_desc": "Inspired by the Indian dessert with cardamom & saffron", "avg_prep_time": 5},
+    {"category": "Specialty Shakes", "item_name": "Red Velvet Shake", "price": 10.00, "avg_prep_time": 5},
 ]
 
 def main():
@@ -454,7 +706,7 @@ def main():
     
     try:
         for restaurant_data in restaurants:
-            print(f"\n📋 Processing: {restaurant_data['name']}")
+            print(f"\n[INFO] Processing: {restaurant_data['name']}")
             print("-" * 60)
             
             # Add restaurant
@@ -465,14 +717,14 @@ def main():
             add_menu_items(connection, restaurant_id, restaurant_data['menu'])
         
         print("\n" + "=" * 60)
-        print("✓ All pilot restaurants and menus seeded successfully!")
+        print("[SUCCESS] All pilot restaurants and menus seeded successfully!")
         print("=" * 60)
         print("\nTwilio Numbers for testing:")
         for r in restaurants:
-            print(f"  • {r['name']}: {r['twilio_phone_number']}")
+            print(f"  - {r['name']}: {r['twilio_phone_number']}")
         
     except Error as e:
-        print(f"\n✗ Error seeding data: {e}")
+        print(f"\n[ERROR] Error seeding data: {e}")
         connection.rollback()
     finally:
         if connection.is_connected():
