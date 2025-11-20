@@ -2,7 +2,7 @@
 MySQL Order Repository for order operations.
 """
 from app.repositories.mysql_base import MySQLBaseRepository
-from typing import Dict, List
+from typing import Dict
 import json
 
 class MySQLOrderRepository(MySQLBaseRepository):

@@ -2,10 +2,9 @@
 MySQL Base Repository for database operations.
 This is a placeholder for MySQL operations - adapt based on your MySQL connection library.
 """
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any
 import mysql.connector
 from mysql.connector import Error
-from app.config import settings
 import os
 
 class MySQLBaseRepository:
@@ -14,7 +13,12 @@ class MySQLBaseRepository:
     def __init__(self):
         self.connection = None
         self._connect()
-    
+    def __enter__(self):
+        return self
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+    def __del__(self):
+        self.close()
     def _connect(self):
         """Establish MySQL connection."""
         try:

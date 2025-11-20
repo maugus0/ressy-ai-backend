@@ -2,9 +2,7 @@
 MySQL Call Repository for call session operations.
 """
 from app.repositories.mysql_base import MySQLBaseRepository
-from typing import Dict, Optional
-from datetime import datetime
-import uuid
+from typing import Optional
 
 class MySQLCallRepository(MySQLBaseRepository):
     """Repository for call data access in MySQL."""

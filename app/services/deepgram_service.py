@@ -1,7 +1,6 @@
 import websockets
 import ssl
 import certifi
-import json
 from app.config import settings
 from typing import List, Dict, Any
 

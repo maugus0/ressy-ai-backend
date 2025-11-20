@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS Restaurants (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     INDEX idx_name (name),
     INDEX idx_phone_number (phone_number),
+    INDEX idx_twilio_phone_number (twilio_phone_number),
     INDEX idx_created_at (created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
