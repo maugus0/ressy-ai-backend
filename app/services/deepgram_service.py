@@ -4,17 +4,17 @@ import certifi
 from app.config import settings
 from typing import List, Dict, Any
 
-class DeepGramService:
+class DeepgramService:
     def __init__(self, api_key: str = None):
         """
-        Initialize DeepGramService with optional API key.
+        Initialize DeepgramService with optional API key.
         If not provided, falls back to environment variable.
         """
         self.api_key = api_key or settings.DEEPGRAM_API_KEY
     
     def sts_connect(self, api_key: str = None):
         """
-        Create a DeepGram STS connection.
+        Create a Deepgram STS connection.
         
         Args:
             api_key: Optional API key to use. If not provided, uses instance api_key.

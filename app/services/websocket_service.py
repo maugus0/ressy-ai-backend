@@ -6,7 +6,7 @@ import websockets
 from datetime import datetime
 from typing import List, Dict, Optional, Any
 from fastapi import WebSocket, WebSocketDisconnect
-from app.services.deepgram_service import DeepGramService
+from app.services.deepgram_service import DeepgramService
 from app.services.data_extraction_service import DataExtractionService
 from app.repositories.mysql_call_repo import MySQLCallRepository
 from app.repositories.mysql_restaurant_repo import MySQLRestaurantRepository
@@ -18,7 +18,7 @@ from app.repositories.mysql_transcript_repo import MySQLTranscriptRepository
 
 class WebSocketService:
     def __init__(self):
-        self.deepgram_service = DeepGramService()
+        self.deepgram_service = DeepgramService()
         self.call_repo = MySQLCallRepository()
         self.data_extraction_service = DataExtractionService()
         self.restaurant_repo = MySQLRestaurantRepository()
@@ -240,7 +240,7 @@ class WebSocketService:
                 try:
                     if isinstance(message, str):
                         decoded = json.loads(message)
-                        print(f"DeepGram Message: {decoded}")
+                        print(f"Deepgram Message: {decoded}")
 
                         # Handle Deepgram audio messages
                         if decoded.get("type") in ["ConversationAudio", "AgentAudioDone"]:
@@ -672,7 +672,7 @@ class WebSocketService:
                     try:
                         print(f"[INFO] Attempting Deepgram connection with restaurant credentials...")
                         async with self.deepgram_service.sts_connect(api_key=deepgram_api_key) as sts_ws:
-                            print("[INFO] Connected to DeepGram STS using restaurant credentials")
+                            print("[INFO] Connected to Deepgram STS using restaurant credentials")
                             call_id, sts_sender_task, sts_receiver_task = await self._handle_deepgram_session(
                                 sts_ws, restaurant_name, menu_items, faqs, 
                                 user_id, restaurant_id, audio_queue, streamsid_queue, 
@@ -686,7 +686,7 @@ class WebSocketService:
                 
                 # Fallback: Use environment variable
                 async with self.deepgram_service.sts_connect() as sts_ws:
-                    print("[INFO] Connected to DeepGram STS using environment variable credentials")
+                    print("[INFO] Connected to Deepgram STS using environment variable credentials")
                     call_id, sts_sender_task, sts_receiver_task = await self._handle_deepgram_session(
                         sts_ws, restaurant_name, menu_items, faqs, 
                         user_id, restaurant_id, audio_queue, streamsid_queue, 
