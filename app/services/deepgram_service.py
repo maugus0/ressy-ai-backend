@@ -5,19 +5,35 @@ from app.config import settings
 from typing import List, Dict, Any
 
 class DeepGramService:
-    def __init__(self):
-        self.api_key = settings.DEEPGRAM_API_KEY
+    def __init__(self, api_key: str = None):
+        """
+        Initialize DeepGramService with optional API key.
+        If not provided, falls back to environment variable.
+        """
+        self.api_key = api_key or settings.DEEPGRAM_API_KEY
     
-    def sts_connect(self):
-        """Create a DeepGram STS connection."""
-        if not self.api_key:
-            raise ValueError("DEEPGRAM_API_KEY environment variable is not set")
+    def sts_connect(self, api_key: str = None):
+        """
+        Create a DeepGram STS connection.
+        
+        Args:
+            api_key: Optional API key to use. If not provided, uses instance api_key.
+                    Falls back to environment variable if instance api_key is None.
+        
+        Returns:
+            WebSocket connection to Deepgram STS
+        """
+        # Use provided api_key, then instance api_key, then env variable
+        effective_api_key = api_key or self.api_key or settings.DEEPGRAM_API_KEY
+        
+        if not effective_api_key:
+            raise ValueError("DEEPGRAM_API_KEY not provided and environment variable is not set")
 
         ssl_context = ssl.create_default_context(cafile=certifi.where())
 
         return websockets.connect(
             "wss://agent.deepgram.com/v1/agent/converse",
-            extra_headers={"Authorization": f"Token {self.api_key}"},
+            extra_headers={"Authorization": f"Token {effective_api_key}"},
             ssl=ssl_context
         )
     

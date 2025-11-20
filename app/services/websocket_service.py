@@ -494,6 +494,98 @@ class WebSocketService:
             import traceback
             traceback.print_exc()
 
+    async def _handle_deepgram_session(
+        self,
+        sts_ws,
+        restaurant_name: Optional[str],
+        menu_items: List[Dict[str, Any]],
+        faqs: List[Dict[str, Any]],
+        user_id: str,
+        restaurant_id: Optional[int],
+        audio_queue: asyncio.Queue,
+        streamsid_queue: asyncio.Queue,
+        websocket: WebSocket,
+        conversation_history: List[Dict[str, Any]],
+        disconnect_event: asyncio.Event,
+        receiver_task: asyncio.Task
+    ) -> tuple[Optional[int], Optional[asyncio.Task], Optional[asyncio.Task]]:
+        """
+        Handle Deepgram session setup and message processing.
+        
+        Returns:
+            Tuple of (call_id, sts_sender_task, sts_receiver_task)
+        """
+        # Build dynamic config with restaurant context
+        config_message = self.deepgram_service.load_config(
+            restaurant_name=restaurant_name,
+            menu_items=menu_items,
+            faqs=faqs
+        )
+        await sts_ws.send(json.dumps(config_message))
+        print("[INFO] Sent dynamic config to DeepGram with restaurant context")
+
+        call_id = None
+        try:
+            call_id = self.call_repo.create_call_session(
+                user_id, 
+                "twilio-demo", 
+                "deepgram-demo",
+                restaurant_id=str(restaurant_id) if restaurant_id else None
+            )
+            print(f"[INFO] Call session created: call_id={call_id}")
+        except Exception as e:
+            print(f"[ERROR] create_call_session error: {e}")
+            import traceback
+            traceback.print_exc()
+
+        # Create tasks for Deepgram operations
+        sts_sender_task = asyncio.create_task(self.sts_sender(sts_ws, audio_queue))
+        sts_receiver_task = asyncio.create_task(self.sts_receiver(
+            sts_ws, 
+            websocket, 
+            streamsid_queue, 
+            call_id, 
+            user_id,
+            conversation_history,
+            menu_items,
+            restaurant_id
+        ))
+
+        # Wait for disconnection event or any task to complete
+        try:
+            # Wait for either disconnection event or first task completion
+            done, pending = await asyncio.wait(
+                [
+                    asyncio.create_task(disconnect_event.wait()),
+                    sts_sender_task,
+                    sts_receiver_task,
+                    receiver_task
+                ],
+                return_when=asyncio.FIRST_COMPLETED
+            )
+            print(f"[INFO] Disconnection detected. Done: {len(done)}, Pending: {len(pending)}")
+            
+            # Cancel remaining tasks
+            for task in pending:
+                if not task.done():
+                    task.cancel()
+            
+            # Wait for cancellation with timeout
+            if pending:
+                try:
+                    await asyncio.wait_for(
+                        asyncio.gather(*pending, return_exceptions=True),
+                        timeout=1.0
+                    )
+                except asyncio.TimeoutError:
+                    print("[WARNING] Timeout waiting for tasks to cancel")
+        except Exception as e:
+            print(f"[ERROR] Error in wait: {e}")
+            import traceback
+            traceback.print_exc()
+        
+        return call_id, sts_sender_task, sts_receiver_task
+
     async def twilio_websocket_handler(self, websocket: WebSocket, user_id: str = "demo-user"):
         """Main WebSocket handler for Twilio connections with multitenancy."""
         await websocket.accept()
@@ -527,6 +619,7 @@ class WebSocketService:
             # Store in outer scope for finally block access
             
             # Wait for Twilio number from start event (receiver is now running)
+            deepgram_api_key = None
             try:
                 twilio_number = await asyncio.wait_for(twilio_number_queue.get(), timeout=5.0)
                 print(f"📱 Twilio number received: {twilio_number}")
@@ -537,6 +630,27 @@ class WebSocketService:
                     restaurant_id = restaurant.get("id")
                     restaurant_name = restaurant.get("name", "Restaurant")
                     print(f"🏪 Restaurant found: {restaurant_name} (id={restaurant_id})")
+                    
+                    # Extract Deepgram API key from restaurant details
+                    deepgram_details = restaurant.get("deepgram_details")
+                    if deepgram_details:
+                        if isinstance(deepgram_details, str):
+                            try:
+                                deepgram_details = json.loads(deepgram_details)
+                            except json.JSONDecodeError:
+                                print(f"⚠️ Failed to parse deepgram_details JSON for restaurant {restaurant_id}")
+                                deepgram_details = None
+                        
+                        if isinstance(deepgram_details, dict):
+                            deepgram_api_key = deepgram_details.get("api_key") or deepgram_details.get("apiKey")
+                            if deepgram_api_key:
+                                print(f"🔑 Using Deepgram API key from restaurant {restaurant_id} details")
+                            else:
+                                print(f"⚠️ No API key found in deepgram_details for restaurant {restaurant_id}")
+                        else:
+                            print(f"⚠️ deepgram_details is not a valid dictionary for restaurant {restaurant_id}")
+                    else:
+                        print(f"⚠️ No deepgram_details found for restaurant {restaurant_id}, will use env variable")
                     
                     # Fetch menu items (only available)
                     menu_items = self.menu_repo.get_available_items_by_restaurant(restaurant_id)
@@ -551,79 +665,34 @@ class WebSocketService:
                 print("⚠️ Twilio number not received within timeout, proceeding with default config")
             
             # Use async with to ensure Deepgram connection is properly closed
+            # Try restaurant credentials first, fallback to env variable if it fails
             try:
-                async with self.deepgram_service.sts_connect() as sts_ws:
-                    print("[INFO] Connected to DeepGram STS")
-                    
-                    # Build dynamic config with restaurant context
-                    config_message = self.deepgram_service.load_config(
-                        restaurant_name=restaurant_name,
-                        menu_items=menu_items,
-                        faqs=faqs
-                    )
-                    await sts_ws.send(json.dumps(config_message))
-                    print("[INFO] Sent dynamic config to DeepGram with restaurant context")
-
+                # First attempt: Use restaurant credentials if available
+                if deepgram_api_key:
                     try:
-                        call_id = self.call_repo.create_call_session(
-                            user_id, 
-                            "twilio-demo", 
-                            "deepgram-demo",
-                            restaurant_id=str(restaurant_id) if restaurant_id else None
-                        )
-                        print(f"[INFO] Call session created: call_id={call_id}")
-                    except Exception as e:
-                        print(f"[ERROR] create_call_session error: {e}")
-                        import traceback
-                        traceback.print_exc()
-                        call_id = None
-
-                    # Create tasks for Deepgram operations
-                    sts_sender_task = asyncio.create_task(self.sts_sender(sts_ws, audio_queue))
-                    sts_receiver_task = asyncio.create_task(self.sts_receiver(
-                        sts_ws, 
-                        websocket, 
-                        streamsid_queue, 
-                        call_id, 
-                        user_id,
-                        conversation_history,
-                        menu_items,
-                        restaurant_id
-                    ))
-                    # Tasks are already in outer scope
-
-                    # Wait for disconnection event or any task to complete
-                    try:
-                        # Wait for either disconnection event or first task completion
-                        done, pending = await asyncio.wait(
-                            [
-                                asyncio.create_task(disconnect_event.wait()),
-                                sts_sender_task,
-                                sts_receiver_task,
+                        print(f"[INFO] Attempting Deepgram connection with restaurant credentials...")
+                        async with self.deepgram_service.sts_connect(api_key=deepgram_api_key) as sts_ws:
+                            print("[INFO] Connected to DeepGram STS using restaurant credentials")
+                            call_id, sts_sender_task, sts_receiver_task = await self._handle_deepgram_session(
+                                sts_ws, restaurant_name, menu_items, faqs, 
+                                user_id, restaurant_id, audio_queue, streamsid_queue, 
+                                websocket, conversation_history, disconnect_event,
                                 receiver_task
-                            ],
-                            return_when=asyncio.FIRST_COMPLETED
-                        )
-                        print(f"[INFO] Disconnection detected. Done: {len(done)}, Pending: {len(pending)}")
-                        
-                        # Cancel remaining tasks
-                        for task in pending:
-                            if not task.done():
-                                task.cancel()
-                        
-                        # Wait for cancellation with timeout
-                        if pending:
-                            try:
-                                await asyncio.wait_for(
-                                    asyncio.gather(*pending, return_exceptions=True),
-                                    timeout=1.0
-                                )
-                            except asyncio.TimeoutError:
-                                print("[WARNING] Timeout waiting for tasks to cancel")
+                            )
+                            return
                     except Exception as e:
-                        print(f"[ERROR] Error in wait: {e}")
-                        import traceback
-                        traceback.print_exc()
+                        print(f"⚠️ Failed to connect with restaurant Deepgram credentials: {e}")
+                        print(f"[INFO] Falling back to environment variable credentials...")
+                
+                # Fallback: Use environment variable
+                async with self.deepgram_service.sts_connect() as sts_ws:
+                    print("[INFO] Connected to DeepGram STS using environment variable credentials")
+                    call_id, sts_sender_task, sts_receiver_task = await self._handle_deepgram_session(
+                        sts_ws, restaurant_name, menu_items, faqs, 
+                        user_id, restaurant_id, audio_queue, streamsid_queue, 
+                        websocket, conversation_history, disconnect_event,
+                        receiver_task
+                    )
                     
                     print("[INFO] Exiting Deepgram connection context - connection will close automatically")
             except Exception as e:
