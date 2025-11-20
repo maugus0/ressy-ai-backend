@@ -22,6 +22,19 @@ class MySQLBaseRepository:
     def _connect(self):
         """Establish MySQL connection."""
         try:
+            # Close existing connection if it exists
+            if self.connection:
+                try:
+                    if self.connection.is_connected():
+                        self.connection.close()
+                except (AttributeError, Error):
+                    # Connection is in invalid state, ignore
+                    pass
+        except Exception:
+            # Ignore any errors when closing old connection
+            pass
+        
+        try:
             self.connection = mysql.connector.connect(
                 host=os.getenv('DB_HOST', os.getenv('MYSQL_HOST', 'localhost')),
                 database=os.getenv('DB_NAME', os.getenv('MYSQL_DATABASE', 'ressy')),
@@ -33,8 +46,21 @@ class MySQLBaseRepository:
             print(f"Error connecting to MySQL: {e}")
             raise
     
+    def _ensure_connected(self):
+        """Ensure database connection is active, reconnect if needed."""
+        try:
+            if not self.connection or not self.connection.is_connected():
+                print("[INFO] MySQL connection closed, reconnecting...")
+                self._connect()
+        except (AttributeError, Error):
+            # Connection object exists but is in invalid state
+            print("[INFO] MySQL connection in invalid state, reconnecting...")
+            self.connection = None
+            self._connect()
+    
     def _execute_query(self, query: str, params: tuple = None) -> List[Dict[str, Any]]:
         """Execute SELECT query and return results."""
+        self._ensure_connected()
         try:
             cursor = self.connection.cursor(dictionary=True)
             cursor.execute(query, params)
@@ -47,6 +73,7 @@ class MySQLBaseRepository:
     
     def _execute_insert(self, query: str, params: tuple = None) -> int:
         """Execute INSERT query and return last insert ID."""
+        self._ensure_connected()
         try:
             cursor = self.connection.cursor()
             cursor.execute(query, params)
@@ -61,6 +88,7 @@ class MySQLBaseRepository:
     
     def _execute_update(self, query: str, params: tuple = None) -> int:
         """Execute UPDATE query and return affected rows."""
+        self._ensure_connected()
         try:
             cursor = self.connection.cursor()
             cursor.execute(query, params)
@@ -75,6 +103,12 @@ class MySQLBaseRepository:
     
     def close(self):
         """Close database connection."""
-        if self.connection and self.connection.is_connected():
-            self.connection.close()
+        try:
+            if self.connection and self.connection.is_connected():
+                self.connection.close()
+        except (AttributeError, Error):
+            # Connection is already closed or in invalid state
+            pass
+        finally:
+            self.connection = None
 
