@@ -522,7 +522,7 @@ class WebSocketService:
             faqs=faqs
         )
         await sts_ws.send(json.dumps(config_message))
-        print("[INFO] Sent dynamic config to DeepGram with restaurant context")
+        print("[INFO] Sent dynamic config to Deepgram with restaurant context")
 
         call_id = None
         try:
