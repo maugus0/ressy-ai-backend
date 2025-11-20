@@ -7,3 +7,4 @@ bcrypt==4.0.1
 pyjwt==2.8.0
 python-multipart
 certifi==2023.11.17
+mysql-connector-python>=8.0.0
