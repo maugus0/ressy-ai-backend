@@ -16,7 +16,7 @@ async def create_user(data: dict, current_user: dict = Depends(get_current_activ
 # READ ALL
 @router.get("/{restaurant_id}", dependencies=[Depends(require_role(["admin"]))])
 async def list_users(restaurant_id: str, current_user: dict = Depends(get_current_active_user)):
-    return user_service.list_users(restaurant_id)
+    return user_service.list_users()
 
 
 # UPDATE
