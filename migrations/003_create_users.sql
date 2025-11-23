@@ -3,7 +3,7 @@
 
 CREATE TABLE IF NOT EXISTS Users (
     id INT AUTO_INCREMENT PRIMARY KEY,
-    name VARCHAR(255) NOT NULL,
+    name VARCHAR(255), -- Not all users might give us their names. Phone numbers are identification for us.
     phone_number VARCHAR(20),
     email VARCHAR(255) UNIQUE,
     address TEXT,

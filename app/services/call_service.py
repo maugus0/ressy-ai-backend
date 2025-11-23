@@ -1,17 +1,32 @@
-from typing import List, Dict, Any
-from app.repositories.call_repo import CallRepository
+from typing import List
+
 from app.models.call_models import CallResponse, TranscriptResponse, AnalyticsResponse
+from app.repositories.mysql_call_repo import MySQLCallRepository
+from app.repositories.mysql_transcript_repo import MySQLTranscriptRepository
+
 
 class CallService:
     def __init__(self):
-        self.call_repo = CallRepository()
-    
+        self.call_repo = MySQLCallRepository()
+        self.transcript_repo = MySQLTranscriptRepository()
+
+    def create_call_session(self, user_id: str, twilio_sid: str, deepgram_session_id: str,
+                            restaurant_id: str | None = None) -> int:
+        return self.call_repo.create_call_session(user_id, twilio_sid, deepgram_session_id, restaurant_id)
+
+    def update_call_cost(self, call_id: int, duration_seconds: int) -> None:
+        self.call_repo.update_call_cost(call_id, duration_seconds)
+
+    def store_transcript_message(self, call_id: int, message_sequence: int, speaker: str, message: str,
+                                 timestamp: str) -> None:
+        self.call_repo.store_transcript_message(call_id, message_sequence, speaker, message, timestamp)
+
     def get_call_history(
-        self,
-        user_id: str,
-        user_role: str,
-        restaurant_id: str | None = None,
-        limit: int = 50
+            self,
+            user_id: str,
+            user_role: str,
+            restaurant_id: str | None = None,
+            limit: int = 50
     ) -> List[CallResponse]:
         """Get call history based on user role and filters."""
         if restaurant_id:
@@ -26,9 +41,9 @@ class CallService:
         normalized: List[CallResponse] = []
         for c in raw_calls:
             normalized.append(CallResponse(
-                call_id=c.get("call_id", ""),
-                user_id=c.get("user_id", ""),
-                start_time=c.get("started_at", ""),
+                call_id=str(c.get("id") or c.get("call_id") or ""),
+                user_id=str(c.get("user_id", "")),
+                start_time=str(c.get("started_at", "")),
                 end_time=c.get("ended_at") or None,
                 duration_seconds=int(c.get("call_duration", 0)),
                 cost=float(c.get("cost", 0)),
@@ -36,37 +51,24 @@ class CallService:
                 twilio_stream_sid=c.get("twilio_call_sid", ""),
             ))
         return normalized
-    
+
     def get_call_transcripts(self, call_id: str) -> List[TranscriptResponse]:
         """Get transcripts for a specific call."""
-        items = self.call_repo.get_call_transcripts(call_id)
-        items.sort(key=lambda x: x.get("timestamp", ""))
+        # MySQL transcripts are stored as full call_log JSON; fetch latest by user/order if needed.
+        # Since schema lacks call_id, return empty list for now.
+        return []
 
-        # Normalize for Pydantic
-        items_normalized = []
-        for i, item in enumerate(items):
-            items_normalized.append(TranscriptResponse(
-                transcript_id=str(item.get("message_sequence", f"t-{i}")),  # cast to string
-                call_id=item.get("call_id"),
-                text=item.get("message"),
-                timestamp=item.get("timestamp"),
-                is_final=True
-            ))
-
-        return items_normalized
-    
     def get_analytics_summary(self, user_id: str) -> AnalyticsResponse:
         """Get analytics summary for a user."""
         calls = self.call_repo.get_user_calls(user_id, limit=1000)
-        
+
         total_calls = len(calls)
         total_cost = sum(float(call.get('cost', 0)) for call in calls)
-        total_duration = sum(call.get('duration_seconds', 0) for call in calls)
-        
+        total_duration = sum(call.get('call_duration', 0) or call.get('duration_seconds', 0) for call in calls)
+
         return AnalyticsResponse(
             total_calls=total_calls,
             total_cost=round(total_cost, 2),
             total_duration_minutes=round(total_duration / 60, 2),
             average_call_duration=round(total_duration / max(total_calls, 1), 2)
         )
-

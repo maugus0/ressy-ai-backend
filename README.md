@@ -1,91 +1,91 @@
 # RessyAI Backend
 
-## Project Overview
+FastAPI backend for a multitenant, function-calling voice agent. It streams Twilio audio to Deepgram STS, builds restaurant-specific prompts (menu, specials, FAQs), executes app functions (orders, reservations, FAQs, etc.), and persists calls, transcripts, and orders to MySQL.
 
-RessyAI Backend is a FastAPI-based voice agent API server designed to handle real-time voice interactions, primarily integrating Twilio and Deepgram for telephony and speech-to-text services. It provides authentication, call management, and admin routes, and supports WebSocket connections for streaming audio and transcripts.
+## What’s Inside
 
-### Key Features
-- **FastAPI** RESTful API with CORS support
-- **WebSocket endpoint** for Twilio integration (`/twilio`)
-- **Deepgram STS** for real-time speech-to-text
-- **Call session management** and transcript storage
-- **JWT-based authentication**
-- **Modular structure** for routes, services, models, and utilities
+- **WebSocket call flow**: `/voice` Twilio webhook hands off to `/twilio` WebSocket; `app/services/websocket_service.py` coordinates Twilio ⇄ Deepgram audio, function calls, barge-in, farewells, and transcript capture.
+- **Deepgram Agent FC**: `app/agent_fc/*` wires Deepgram function calls to app services (orders, reservations, conversation helpers).
+- **REST APIs**: Auth, users, restaurants, menus, specials, orders, transcripts, FAQs under `/api/v1/*` (see routers in `app/api`).
+- **Multitenant routing**: Resolves restaurant by Twilio number, loads menu + FAQs, injects into prompts, stores transcripts per call.
+- **MySQL persistence**: Repositories in `app/repositories/mysql_*.py` back menus, restaurants, orders, users, transcripts.
 
-## Project Structure
-```
-ressy-ai-backend/
-├── Dockerfile
-├── requirements.txt
-├── start.sh
-└── app/
-    ├── main.py
-    ├── main_fixed_final.py
-    ├── config.json
-    ├── config/
-    ├── models/
-    ├── routes/
-    ├── services/
-    └── utils/
-```
+## Quickstart
 
-## How to Run Locally
+### Prereqs
 
-### Prerequisites
 - Python 3.9+
-- [pip](https://pip.pypa.io/en/stable/)
+- MySQL reachable with schema matching `migrations/queries.sql`
 - (Optional) Docker
 
-### 1. Install Dependencies
+### Setup
+
 ```bash
 pip install -r requirements.txt
 ```
 
-### 2. Set Environment Variables
-Create a `.env` file in the root directory and add your Deepgram API key:
-```
-DEEPGRAM_API_KEY=your_deepgram_api_key
+Create `.env` in the repo root:
+
+```env
+# Deepgram
+DEEPGRAM_API_KEY=your_deepgram_key
+
+# MySQL
+DB_HOST=localhost
+DB_NAME=ressy
+DB_USERNAME=root
+DB_PASSWORD=secret
+DB_PORT=3306
+
+# Local dev
+USE_MOCK_DATA=false
 ```
 
-### 3. Start the Server
-You can run the server using the provided script:
+### Run
+
 ```bash
 ./start.sh
-```
-Or manually:
-```bash
+# or
 uvicorn app.main:app --host 0.0.0.0 --port 5001 --reload
 ```
 
-### 4. Docker Usage
-To run in Docker:
+Docker:
+
 ```bash
 docker build -t ressy-ai-backend .
-docker run -p 5001:5001 --env DEEPGRAM_API_KEY=your_deepgram_api_key ressy-ai-backend
+docker run -p 5001:5001 --env-file .env ressy-ai-backend
 ```
 
-## API Endpoints
-- `GET /` — Health check
-- `GET /health` — Health status
-- `POST /api/auth/*` — Authentication routes
-- `POST /api/calls/*` — Call management
-- `POST /api/admin/*` — Admin operations
-- `WS /twilio` — WebSocket endpoint for Twilio audio streaming
+## Call Flow (Twilio → Deepgram)
 
-## Configuration
-- `app/config.json` — Deepgram agent configuration
-- `.env` — Environment variables (API keys)
+1. Twilio hits `POST /voice`, which responds with a `<Stream>` that points to `wss://<host>/twilio` and passes `fromNumber`/`toNumber`.
+2. `app/api/websocket.py` hands the socket to `WebSocketService`.
+3. The service:
+   - Looks up the restaurant by Twilio number, pulls Deepgram API key/keyterms.
+   - Builds dynamic prompt with menu + FAQs (`prompt_loader.load_think_prompt`).
+   - Streams audio to Deepgram STS, forwards agent audio back to Twilio, handles barge-in/clear.
+   - Routes function calls (orders/reservations/etc.) via `app/agent_fc`.
+   - Writes transcripts and order data to MySQL.
 
-## Main Dependencies
-- fastapi
-- uvicorn
-- websockets
-- boto3
-- python-dotenv
-- bcrypt
-- pyjwt
-- python-multipart
-- certifi
+## Key Endpoints
 
-## Summary
-This backend enables real-time voice agent capabilities, integrating Twilio for telephony and Deepgram for speech-to-text. It is modular, production-ready, and can be run locally or in Docker. See the code in `app/main.py` for the main application logic and WebSocket handling.
+- Health: `GET /`, `GET /health`
+- Twilio webhook: `POST /voice` (returns TwiML `<Stream>`)
+- Twilio WebSocket: `WS /twilio`
+- REST APIs (prefix `/api/v1`): `auth`, `users`, `restaurants`, `menu`, `specials`, `orders`, `order-history`, `transcripts`, `faqs`, `calls`, `admin`
+
+## Testing
+
+```bash
+pytest
+```
+
+Note: Tests that touch MySQL expect the database reachable per your `.env`.
+
+## Useful Paths
+
+- Entrypoint: `app/main.py`
+- WebSocket plumbing: `app/services/websocket_service.py`
+- Deepgram config: `app/services/deepgram_service.py`
+- Function call handlers: `app/agent_fc/functions/*`
+- Migrations/SQL: `migrations/`

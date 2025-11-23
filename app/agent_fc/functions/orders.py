@@ -1,0 +1,232 @@
+"""Order-related function implementations wired to application services."""
+
+from __future__ import annotations
+
+import asyncio
+import inspect
+from typing import Any, Dict, List, Optional
+
+from pydantic import BaseModel, ConfigDict, Field
+
+from app.repositories.mysql_menu_repo import MySQLMenuRepository
+from app.repositories.mysql_order_repo import MySQLOrderRepository
+from app.repositories.mysql_user_repo import MySQLUserRepository
+
+
+class OrderItem(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    item_id: int
+    name: str
+    quantity: int = 1
+    price: Optional[float] = None
+    instructions: Optional[str] = None
+    options: Dict[str, Any] = Field(default_factory=dict)
+
+
+class CreateOrderArgs(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    restaurant_id: str = None
+    customer_name: Optional[str] = None
+    customer_contact: str = None
+    pickup_time_iso: Optional[str] = None
+    items: List[OrderItem]
+    notes: Optional[str] = None
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class LookupOrderArgs(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    customer_contact: str
+    restaurant_id: Optional[str] = None
+
+
+class CheckItemsAvailabilityArgs(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    restaurant_id: str
+    items: List[OrderItem]
+    location: Optional[str] = None
+
+
+class UpdateOrderDetailsArgs(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    customer_contact: str
+    items: List[OrderItem]
+    customization: Dict[str, Any] = Field(default_factory=dict)
+    total_amount: Optional[float] = None
+    notes: Optional[str] = None
+
+
+_order_repo = MySQLOrderRepository()
+_user_repo = MySQLUserRepository()
+_menu_repo = MySQLMenuRepository()
+
+
+async def _run_service_call(func, *args, **kwargs):
+    if inspect.iscoroutinefunction(func):
+        return await func(*args, **kwargs)
+    return await asyncio.to_thread(func, *args, **kwargs)
+
+
+def _summarize_items(items: List[OrderItem]) -> List[Dict[str, Any]]:
+    return [
+        {
+            "name": item.name,
+            "quantity": item.quantity,
+            "item_id": item.item_id,
+            "instructions": item.instructions,
+            "options": item.options,
+        }
+        for item in items
+    ]
+
+
+def _calculate_total(items: List[OrderItem]) -> float:
+    """Compute total from item prices * quantities; treats missing prices as 0."""
+    total = 0.0
+    for item in items:
+        price = item.price if item.price is not None else 0.0
+        qty = max(item.quantity, 1)
+        try:
+            total += float(price) * qty
+        except (TypeError, ValueError):
+            continue
+    return round(total, 2)
+
+
+async def create_order(**kwargs) -> Dict[str, Any]:
+    args = CreateOrderArgs.model_validate(kwargs)
+    print(f"[INFO] create_order invoked customer_contact={args.customer_contact} items={len(args.items)}")
+
+    def _create():
+        # Ensure user exists/updated
+        user_id = _user_repo.create_or_update_user(
+            {
+                "name": args.customer_name,
+                "phone_number": args.customer_contact,
+                "email": None,
+                "address": None,
+                "is_spam": False,
+                "credit_card": None,
+            }
+        )
+        total_amount = _calculate_total(args.items)
+        order_payload = {
+            "status": "pending",
+            "total_amount": total_amount,
+            "order_details": [item.model_dump() for item in args.items],
+            "customization": args.metadata.get("customization", {}),
+        }
+        order_id = _order_repo.create_order(user_id, order_payload)
+        # Store detail rows for relational table
+        for item in args.items:
+            item_id = item.item_id
+            if item_id:
+                for _ in range(max(item.quantity, 1)):
+                    _order_repo.create_order_details(order_id, item_id)
+        return order_id, user_id
+
+    order_id, user_id = await _run_service_call(_create)
+    return {
+        "status": "CREATED",
+        "message": "Order created",
+        "order_id": order_id,
+        "user_id": user_id,
+        "restaurant_id": args.restaurant_id,
+        "items": _summarize_items(args.items),
+    }
+
+
+async def lookup_order(**kwargs) -> Dict[str, Any]:
+    args = LookupOrderArgs.model_validate(kwargs)
+    print(f"[INFO] lookup_order invoked customer_contact={args.customer_contact}")
+
+    def _lookup():
+        user_id = _user_repo.get_user_id_by_phone_or_email(args.customer_contact, None)
+        if not user_id:
+            return None
+        return _order_repo.get_latest_order_by_user(user_id)
+
+    order = await _run_service_call(_lookup)
+    if not order:
+        return {"status": "NOT_FOUND"}
+    return {"status": "FOUND", "order": order}
+
+
+def _flatten_menu_items(menus: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    return menus
+
+
+def _match_menu_item(menu_items: List[Dict[str, Any]], request_item: OrderItem) -> Optional[Dict[str, Any]]:
+    for item in menu_items:
+        if request_item.item_id and item.get("id") == request_item.item_id:
+            return item
+        if item.get("name") and request_item.name.lower() == str(item.get("name")).lower():
+            return item
+    return None
+
+
+async def check_items_availability(**kwargs) -> Dict[str, Any]:
+    args = CheckItemsAvailabilityArgs.model_validate(kwargs)
+    print(
+        f"[INFO] check_items_availability invoked restaurant_id={args.restaurant_id} "
+        f"item_count={len(args.items)}"
+    )
+    menu_items = await _run_service_call(_menu_repo.get_available_items_by_restaurant, args.restaurant_id)
+    menu_items = _flatten_menu_items(menu_items)
+    results = []
+    for requested in args.items:
+        match = _match_menu_item(menu_items, requested)
+        if match:
+            is_available = match.get("is_available", True)
+            results.append(
+                {
+                    "requested_item": requested.name,
+                    "status": "AVAILABLE" if is_available else "UNAVAILABLE",
+                    "item_id": match.get("id"),
+                    "price": str(match.get("price")),
+                    "category": match.get("category"),
+                },
+            )
+        else:
+            results.append(
+                {
+                    "requested_item": requested.name,
+                    "status": "UNKNOWN_ITEM",
+                },
+            )
+
+    return {
+        "restaurant_id": args.restaurant_id,
+        "results": results,
+    }
+
+
+async def update_order_details(**kwargs) -> Dict[str, Any]:
+    args = UpdateOrderDetailsArgs.model_validate(kwargs)
+    print(f"[INFO] update_order_details invoked customer_contact={args.customer_contact}")
+
+    def _update():
+        user_id = _user_repo.get_user_id_by_phone_or_email(args.customer_contact, None)
+        if not user_id:
+            return None
+        order = _order_repo.get_latest_order_by_user(user_id)
+        if not order:
+            return None
+        order_id = order.get("id")
+        if not order_id:
+            return None
+        order_details = [item.model_dump() for item in args.items]
+        total_amount = _calculate_total(args.items)
+        _order_repo.update_order_details(order_id, order_details, args.customization, total_amount)
+        updated = _order_repo.get_order_by_id(order_id)
+        return updated
+
+    updated_order = await _run_service_call(_update)
+    if not updated_order:
+        return {"status": "NOT_FOUND"}
+    return {"status": "UPDATED", "order": updated_order}

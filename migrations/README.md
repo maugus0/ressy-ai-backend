@@ -18,11 +18,14 @@ Migrations should be run in numerical order (001, 002, 003, etc.) as they have d
 8. **008_create_faqs.sql** - Creates the FAQs table (depends on Restaurants)
 9. **009_create_notifications.sql** - Creates the Notifications table (depends on Orders)
 10. **010_create_transcripts.sql** - Creates the Transcripts table (depends on Users and Orders)
-11. **011_create_table_availability_requests.sql** - Creates the Table_Availability_Requests table (depends on Restaurants)
+11. **011_create_table_availability_requests.sql** - Creates the Table_Availability_Requests table (depends on
+    Restaurants)
 12. **012_create_slot_bookings.sql** - Creates the Slot_Bookings table (depends on Restaurants)
-13. **013_create_reservations.sql** - Creates the Reservations table (depends on Table_Availability_Requests, Slot_Bookings, and Users)
+13. **013_create_reservations.sql** - Creates the Reservations table (depends on Table_Availability_Requests,
+    Slot_Bookings, and Users)
 14. **014_create_ressy_administrator.sql** - Creates the Ressy_Administrator table (depends on Crm_roles)
-15. **015_create_restaurant_administrators.sql** - Creates the Restaurant_Administrators table (depends on Restaurants and Crm_roles)
+15. **015_create_restaurant_administrators.sql** - Creates the Restaurant_Administrators table (depends on Restaurants
+    and Crm_roles)
 
 ## Running Migrations
 
@@ -40,11 +43,13 @@ source migrations/002_create_crm_roles.sql;
 
 ### Using a Migration Tool
 
-If you're using a migration tool like Alembic, Flyway, or a custom script, ensure migrations are run in the correct order.
+If you're using a migration tool like Alembic, Flyway, or a custom script, ensure migrations are run in the correct
+order.
 
 ## Database Schema Overview
 
 ### Core Tables
+
 - **Users**: Customer information
 - **Restaurants**: Restaurant details and integrations
 - **Menus**: Menu items for restaurants
@@ -52,17 +57,20 @@ If you're using a migration tool like Alembic, Flyway, or a custom script, ensur
 - **Order_Details**: Individual items in orders
 
 ### Reservation System
+
 - **Table_Availability_Requests**: Table availability requests
 - **Slot_Bookings**: Available booking slots
 - **Reservations**: Confirmed reservations
 
 ### Administrative
+
 - **Permissions**: Route permissions
 - **Crm_roles**: Role definitions
 - **Ressy_Administrator**: Platform administrators
 - **Restaurant_Administrators**: Restaurant-specific administrators
 
 ### Supporting Tables
+
 - **FAQs**: Frequently asked questions
 - **Notifications**: Order notifications
 - **Transcripts**: Call transcripts and logs
@@ -70,6 +78,7 @@ If you're using a migration tool like Alembic, Flyway, or a custom script, ensur
 ## Indexes
 
 All tables include appropriate indexes for:
+
 - Primary keys (automatic)
 - Foreign keys
 - Frequently queried columns
@@ -79,6 +88,7 @@ All tables include appropriate indexes for:
 ## Foreign Key Constraints
 
 Foreign keys are set up with appropriate ON DELETE and ON UPDATE actions:
+
 - **CASCADE**: When parent is deleted/updated, child records are deleted/updated
 - **RESTRICT**: Prevents deletion/update if child records exist
 - **SET NULL**: Sets foreign key to NULL when parent is deleted (where applicable)

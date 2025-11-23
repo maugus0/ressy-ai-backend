@@ -1,22 +1,23 @@
-import boto3
 import os
 import uuid
 from datetime import datetime
 from decimal import Decimal
-from boto3.dynamodb.conditions import Key, Attr
-from app.config import settings
-from dotenv import load_dotenv
-import os
 from typing import Any
 
+import boto3
+from boto3.dynamodb.conditions import Key, Attr
+from dotenv import load_dotenv
 
+from app.config import settings
 
 dotenv_path = os.path.join(os.path.dirname(__file__), "..", ".env")
 load_dotenv(dotenv_path)
 
+
 # Dynamo Manager
 class DynamoDBManager:
     """Main AWS DynamoDB connection and table registry."""
+
     def __init__(self):
         self.dynamodb: Any = boto3.resource(
             'dynamodb',
@@ -35,6 +36,7 @@ class DynamoDBManager:
         self.transcripts_table = self.dynamodb.Table(settings.TRANSCRIPTS_TABLE)
         self.faqs_table = self.dynamodb.Table(settings.FAQS_TABLE)
         self.users_table = self.dynamodb.Table(settings.USERS_TABLE)
+
 
 class BaseDynamoManager:
     def __init__(self):
@@ -82,27 +84,27 @@ class CallDatabase(BaseDynamoManager):
 
         print(f"[DDB] update call: call_id={call_id} duration={duration_seconds} cost={total_cost}")
         self._with_retries(self.db.calls_table.update_item,
-            Key={'CALL_METADATA': 'dummy', 'call_id': call_id},
-            UpdateExpression='SET call_duration = :dur, cost = :cost, call_status = :status, ended_at = :end',
-            ExpressionAttributeValues={
-                ':dur': duration_seconds,
-                ':cost': total_cost,
-                ':status': 'completed',
-                ':end': datetime.utcnow().isoformat()
-            }
-        )
+                           Key={'CALL_METADATA': 'dummy', 'call_id': call_id},
+                           UpdateExpression='SET call_duration = :dur, cost = :cost, call_status = :status, ended_at = :end',
+                           ExpressionAttributeValues={
+                               ':dur': duration_seconds,
+                               ':cost': total_cost,
+                               ':status': 'completed',
+                               ':end': datetime.utcnow().isoformat()
+                           }
+                           )
         return total_cost
 
     def store_transcript(self, call_id, text, is_final=False):
         if not is_final:
             return None  # skip partial results
         existing_items = self.db.transcripts_table.scan(
-        FilterExpression=Key('call_id').eq(call_id) & Attr('text').eq(text) & Attr('is_final').eq(True)).get('Items', [])
+            FilterExpression=Key('call_id').eq(call_id) & Attr('text').eq(text) & Attr('is_final').eq(True)).get(
+            'Items', [])
 
         if existing_items:
             # Transcript already exists, return its id
             return existing_items[0]['transcript_id']
-
 
         transcript_id = str(uuid.uuid4())
         item = {
@@ -125,7 +127,7 @@ class CallDatabase(BaseDynamoManager):
                 Limit=limit,
                 ScanIndexForward=False
             )
-            return response.get('Items', []) # type: ignore
+            return response.get('Items', [])  # type: ignore
         except Exception:
             try:
                 items = []
@@ -139,7 +141,7 @@ class CallDatabase(BaseDynamoManager):
     def get_call_transcripts(self, call_id):
         response = self.db.transcripts_table.query(KeyConditionExpression=Key('call_id').eq(call_id))
         return response.get('Items', [])
-    
+
     def get_calls_by_restaurant(self, restaurant_id, limit=50):
         """Fetch calls filtered by restaurant_id."""
         try:
@@ -150,7 +152,7 @@ class CallDatabase(BaseDynamoManager):
                 Limit=limit,
                 ScanIndexForward=False
             )
-            return response.get('Items', []) # type: ignore
+            return response.get('Items', [])  # type: ignore
         except Exception:
             # fallback to full scan if query fails
             items = []
@@ -158,13 +160,13 @@ class CallDatabase(BaseDynamoManager):
             items.extend(resp.get('Items', []))
             items.sort(key=lambda x: x.get('started_at', ''), reverse=True)
             return items[:limit]
-        
+
     def get_all_calls(self, limit=50):
         try:
             response = self._with_retries(
                 self.db.calls_table.scan  # Use scan because no GSI for all calls
             )
-            items = response.get('Items', []) #type: ignore
+            items = response.get('Items', [])  # type: ignore
             items.sort(key=lambda x: x.get('started_at', ''), reverse=True)
             return items[:limit]
         except Exception:
@@ -199,6 +201,7 @@ class UserDatabase(BaseDynamoManager):
 # Generic Table Utility
 class GenericTableManager(BaseDynamoManager):
     """Reusable for Restaurants, Menus, Specials, Orders, FAQs."""
+
     def create_item(self, table, item):
         self._with_retries(table.put_item, Item=item)
 
@@ -221,4 +224,4 @@ class GenericTableManager(BaseDynamoManager):
 
     def scan_table(self, table):
         resp = self._with_retries(table.scan)
-        return resp.get('Items', []) # type: ignore
+        return resp.get('Items', [])  # type: ignore

@@ -1,11 +1,10 @@
-from app.repositories.user_repo import UserRepository
+from app.repositories.mysql_user_repo import MySQLUserRepository
+
 
 class AdminService:
     def __init__(self):
-        self.user_repo = UserRepository()
-    
+        self.user_repo = MySQLUserRepository()
+
     def get_all_users(self):
         """Get all users - admin only operation."""
-        # Implement admin user listing logic here
-        return {"message": "Admin endpoint - implement user listing"}
-
+        return self.user_repo.list_users()
