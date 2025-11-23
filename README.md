@@ -483,4 +483,280 @@ See `migrations/README.md` for detailed migration information.
 4. Ensure all tests pass
 5. Create a pull request
 
+# Quick Start Guide - Running RessyAI Backend
 
+This guide will help you get the RessyAI Backend up and running quickly.
+
+## 📋 Prerequisites Checklist
+
+Before starting, ensure you have:
+
+- ✅ **Python 3.9+** installed (check with `python3 --version`)
+- ✅ **MySQL 8.0+** installed and running
+- ✅ **pip** installed (comes with Python)
+- ✅ **Git** (if cloning the repository)
+
+## 🚀 Step-by-Step Setup
+
+### Step 1: Navigate to Project Directory
+
+```bash
+cd /path/to/ressy-ai-backend
+```
+
+### Step 2: Set Up Virtual Environment (Recommended)
+
+**Important**: Always use a virtual environment to avoid conflicts with system Python packages.
+
+```bash
+# Create a new virtual environment
+python3 -m venv venv
+
+# Activate the virtual environment
+source venv/bin/activate
+
+# You should see (venv) in your terminal prompt
+# If you see an error about the venv being broken, recreate it:
+# rm -rf venv && python3 -m venv venv && source venv/bin/activate
+```
+
+**Note**: You need to activate the virtual environment every time you open a new terminal:
+```bash
+source venv/bin/activate
+```
+
+### Step 3: Install Dependencies
+
+```bash
+# Make sure venv is activated (you should see (venv) in your prompt)
+# Install production dependencies
+pip3 install -r requirements.txt
+
+# Install development dependencies (optional, but recommended)
+pip3 install -r requirements-dev.txt
+```
+
+**Troubleshooting**: If you get "externally-managed-environment" error:
+- Make sure the virtual environment is activated: `source venv/bin/activate`
+- Check that you're using venv's pip: `which pip3` should show `.../venv/bin/pip3`
+- If venv is broken (wrong path), recreate it: `rm -rf venv && python3 -m venv venv`
+
+### Step 4: Set Up Environment Variables
+
+Create or update a `.env` file in the project root:
+
+```bash
+# Create .env file if it doesn't exist
+touch .env
+```
+
+Edit the `.env` file with your configuration:
+
+```env
+# Deepgram Configuration (REQUIRED for voice features)
+DEEPGRAM_API_KEY=your_deepgram_api_key_here
+
+# MySQL Database Configuration (REQUIRED)
+DB_HOST=localhost
+DB_NAME=ressy
+DB_USERNAME=root
+DB_PASSWORD=your_mysql_password
+DB_PORT=3306
+
+# Alternative MySQL variables (also supported)
+MYSQL_HOST=localhost
+MYSQL_DATABASE=ressy
+MYSQL_USER=root
+MYSQL_PASSWORD=your_mysql_password
+MYSQL_PORT=3306
+
+# JWT Configuration (REQUIRED for authentication)
+JWT_SECRET_KEY=your-super-secret-jwt-key-change-in-production
+
+# Application Settings
+USE_MOCK_DATA=false
+ALLOW_DB_FAILURE=false
+
+# AWS Configuration (if using DynamoDB features)
+AWS_REGION=ca-central-1
+AWS_ACCESS_KEY_ID=your_access_key
+AWS_SECRET_ACCESS_KEY=your_secret_key
+```
+
+**Important**: Replace placeholder values with your actual credentials!
+
+### Step 5: Set Up MySQL Database
+
+#### Option A: Using the Migration Script (Recommended)
+
+```bash
+# Make sure MySQL is running
+# Then run the migration script
+python3 scripts/run_migrations.py
+```
+
+This script will:
+- Create the database if it doesn't exist
+- Run all migrations in order
+- Set up all required tables
+
+#### Option B: Manual MySQL Setup
+
+```bash
+# 1. Connect to MySQL
+mysql -u root -p
+
+# 2. Create the database
+CREATE DATABASE IF NOT EXISTS ressy;
+
+# 3. Exit MySQL
+exit;
+
+# 4. Run migrations manually (in order)
+mysql -u root -p ressy < migrations/001_create_permissions.sql
+mysql -u root -p ressy < migrations/002_create_crm_roles.sql
+mysql -u root -p ressy < migrations/003_create_users.sql
+mysql -u root -p ressy < migrations/004_create_restaurants.sql
+mysql -u root -p ressy < migrations/005_create_menus.sql
+mysql -u root -p ressy < migrations/006_create_orders.sql
+mysql -u root -p ressy < migrations/007_create_order_details.sql
+mysql -u root -p ressy < migrations/008_create_faqs.sql
+mysql -u root -p ressy < migrations/009_create_notifications.sql
+mysql -u root -p ressy < migrations/010_create_transcripts.sql
+mysql -u root -p ressy < migrations/011_create_table_availability_requests.sql
+mysql -u root -p ressy < migrations/012_create_slot_bookings.sql
+mysql -u root -p ressy < migrations/013_create_reservations.sql
+mysql -u root -p ressy < migrations/014_create_ressy_administrator.sql
+mysql -u root -p ressy < migrations/015_create_restaurant_administrators.sql
+mysql -u root -p ressy < migrations/016_create_calls.sql
+```
+
+### Step 6: Verify Database Connection
+
+Test if the database connection works:
+
+```bash
+# This will attempt to connect and show any errors
+python3 -c "from app.repositories.mysql_base import MySQLBaseRepository; repo = MySQLBaseRepository(); print('✅ Database connection successful!')"
+```
+
+If you see connection errors, check:
+- MySQL is running: `mysql.server status` or `brew services list` (on macOS)
+- Database credentials in `.env` are correct
+- Database `ressy` exists
+
+### Step 7: Run the Application
+
+#### Option A: Using the Start Script
+
+```bash
+# Make the script executable (first time only)
+chmod +x start.sh
+
+# Run the application
+./start.sh
+```
+
+#### Option B: Using uvicorn Directly
+
+```bash
+uvicorn app.main:app --host 0.0.0.0 --port 5001 --reload
+```
+
+The `--reload` flag enables auto-reload on code changes (useful for development).
+
+### Step 8: Verify the Application is Running
+
+Open your browser or use curl:
+
+```bash
+# Check health endpoint
+curl http://localhost:5001/health
+
+# Check root endpoint
+curl http://localhost:5001/
+
+# Or visit in browser:
+# - API: http://localhost:5001
+# - Swagger UI: http://localhost:5001/docs
+# - ReDoc: http://localhost:5001/redoc
+```
+
+You should see:
+```json
+{
+  "status": "healthy",
+  "timestamp": 1234567890.123
+}
+```
+
+## 🐳 Running with Docker (Alternative)
+
+If you prefer Docker:
+
+```bash
+# 1. Build the Docker image
+docker build -t ressy-ai-backend .
+
+# 2. Run the container
+docker run -p 5001:5001 --env-file .env ressy-ai-backend
+```
+
+## 🔧 Troubleshooting
+
+### Issue: "Can't connect to MySQL server"
+
+**Solution**:
+- Check if MySQL is running: `mysql.server start` (macOS) or `sudo systemctl start mysql` (Linux)
+- Verify database credentials in `.env`
+- Check if the database exists: `mysql -u root -p -e "SHOW DATABASES;"`
+
+### Issue: "ModuleNotFoundError"
+
+**Solution**:
+- Make sure you've installed dependencies: `pip3 install -r requirements.txt`
+- Check if you're using the correct Python version: `python3 --version`
+
+### Issue: "Port 5001 already in use"
+
+**Solution**:
+- Find and kill the process: `lsof -ti:5001 | xargs kill -9`
+- Or use a different port: `uvicorn app.main:app --host 0.0.0.0 --port 5002 --reload`
+
+### Issue: "DEEPGRAM_API_KEY not set"
+
+**Solution**:
+- Add `DEEPGRAM_API_KEY=your_key` to your `.env` file
+- For testing without Deepgram, you can set `USE_MOCK_DATA=true` in `.env`
+
+### Issue: Database connection fails during startup
+
+**Solution**:
+- Set `ALLOW_DB_FAILURE=true` in `.env` for testing (not recommended for production)
+- Or ensure MySQL is running and credentials are correct
+
+## ✅ Success Checklist
+
+Once running, you should be able to:
+
+- [ ] Access `http://localhost:5001/health` and get a healthy response
+- [ ] Access `http://localhost:5001/docs` and see Swagger UI
+- [ ] See the application logs in your terminal
+- [ ] No database connection errors in the logs
+
+## 📚 Next Steps
+
+- Explore the API documentation at `http://localhost:5001/docs`
+- Check out the README.md for development workflow
+- Review the codebase structure in the `app/` directory
+
+## 🆘 Need Help?
+
+- Check the main [README.md](README.md) for detailed documentation
+- Review error messages in the terminal output
+- Verify all environment variables are set correctly
+- Ensure MySQL is running and accessible
+
+## 👥 Attribution
+
+Created by RessyAI Team

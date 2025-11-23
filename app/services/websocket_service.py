@@ -621,7 +621,7 @@ class WebSocketService:
 
                     if decoded.get("type") == "AgentAudioDone" and not state.closing_after_farewell:
                         await self._flush_audio_buffer(state, twilio_ws, streamsid)
-                    continue
+                        continue
 
                 await self._handle_binary_audio(message, state, twilio_ws, streamsid)
 
