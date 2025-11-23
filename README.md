@@ -501,7 +501,7 @@ Before starting, ensure you have:
 ### Step 1: Navigate to Project Directory
 
 ```bash
-cd /Users/user/Desktop/Projects/RessyAI/ressy-ai-backend
+cd /path/to/ressy-ai-backend
 ```
 
 ### Step 2: Set Up Virtual Environment (Recommended)
