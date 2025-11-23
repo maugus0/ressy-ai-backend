@@ -19,12 +19,7 @@ from .transport import Transport
 class FunctionCallRouter:
     """Routes incoming frames to registered client-side functions."""
 
-    def __init__(
-            self,
-            registry: FunctionRegistry,
-            transport: Transport,
-            settings: Settings
-    ) -> None:
+    def __init__(self, registry: FunctionRegistry, transport: Transport, settings: Settings) -> None:
         self._registry = registry
         self._transport = transport
         self._settings = settings

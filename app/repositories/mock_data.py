@@ -88,7 +88,7 @@ def _seed_restaurant() -> None:
             "name": "Mango Lassi Mocktail",
             "description": "House-made yogurt, mango puree, mint",
             "price": 6.5,
-            "is_available": True
+            "is_available": True,
         },
     ]
 
@@ -97,7 +97,7 @@ def _seed_restaurant() -> None:
             "restaurant_id": restaurant_id,
             "faq_id": "faq-1",
             "question": "Do you offer gluten-free options?",
-            "answer": "Yes, several dosas can be made gluten-free."
+            "answer": "Yes, several dosas can be made gluten-free.",
         },
     ]
 

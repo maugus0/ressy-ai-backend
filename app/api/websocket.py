@@ -18,7 +18,8 @@ async def twilio_websocket_handler(websocket: WebSocket):
     except Exception as e:
         print(f"[WS] token verification failed, fallback user_id. Error: {e}")
     print(
-        f"[WS] Received incoming call for restaurant_twilio_number={restaurant_twilio_number}, user={user_id}, caller_number={caller_number}")
+        f"[WS] Received incoming call for restaurant_twilio_number={restaurant_twilio_number}, user={user_id}, caller_number={caller_number}"
+    )
     await websocket_service.twilio_websocket_handler(
         websocket,
         user_id,

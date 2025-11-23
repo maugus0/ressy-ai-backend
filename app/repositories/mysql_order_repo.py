@@ -1,6 +1,7 @@
 """
 MySQL Order Repository for order operations.
 """
+
 import json
 from typing import Dict
 
@@ -18,13 +19,16 @@ class MySQLOrderRepository(MySQLBaseRepository):
             INSERT INTO Orders (user_id, status, total_amount, order_details, customization, created_at, updated_at)
             VALUES (%s, %s, %s, %s, %s, NOW(), NOW())
         """
-        order_id = self._execute_insert(query, (
-            user_id,
-            order_data.get("status", "pending"),
-            order_data.get("total_amount", 0.0),
-            json.dumps(order_data.get("order_details", [])),
-            json.dumps(order_data.get("customization", {}))
-        ))
+        order_id = self._execute_insert(
+            query,
+            (
+                user_id,
+                order_data.get("status", "pending"),
+                order_data.get("total_amount", 0.0),
+                json.dumps(order_data.get("order_details", [])),
+                json.dumps(order_data.get("customization", {})),
+            ),
+        )
         return order_id
 
     def get_latest_order_by_user(self, user_id: int) -> Dict:
@@ -66,11 +70,7 @@ class MySQLOrderRepository(MySQLBaseRepository):
         return results[0] if results else {}
 
     def update_order_details(
-            self,
-            order_id: int,
-            order_details: list,
-            customization: Dict | None = None,
-            total_amount: float | None = None
+        self, order_id: int, order_details: list, customization: Dict | None = None, total_amount: float | None = None
     ) -> int:
         """Update order details/customization/total_amount."""
         fields = ["order_details = %s"]

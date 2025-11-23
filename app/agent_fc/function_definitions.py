@@ -7,7 +7,7 @@ in sync.
 
 from __future__ import annotations
 
-from typing import List, Dict, Any
+from typing import Any, Dict, List
 
 from .functions import conversation, orders, reservations
 
@@ -73,13 +73,13 @@ def get_function_definitions() -> List[Dict[str, Any]]:
         _definition(
             name="agent_filler",
             description="ALWAYS use this before any potentially slow lookups (menu, reservations, totals) so the caller hears a natural filler. "
-                        "Another client-side function call should ALWAYS be followed by this function call.",
+            "Another client-side function call should ALWAYS be followed by this function call.",
             schema=filler_schema,
         ),
         _definition(
             name="end_call",
             description="ALWAYS ALWAYS use this when a call is supposed to end. Either after all tasks are complete OR the caller indicates that the conversation is over. "
-                        "Farewell message will be supplied to you with this function.",
+            "Farewell message will be supplied to you with this function.",
             schema=end_call_schema,
         ),
         _definition(

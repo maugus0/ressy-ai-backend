@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel
 
@@ -26,8 +26,5 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends()):
     email = form_data.username.replace(" ", "+")
     token = auth_service.login_user(email, form_data.password)
     if not token:
-        raise HTTPException(
-            status_code=401,
-            detail="Incorrect email or password"
-        )
+        raise HTTPException(status_code=401, detail="Incorrect email or password")
     return {"access_token": token, "token_type": "bearer"}

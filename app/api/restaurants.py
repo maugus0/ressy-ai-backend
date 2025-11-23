@@ -20,21 +20,24 @@ async def list_restaurants(current_user: dict = Depends(get_current_active_user)
 
 
 # ---------- READ ONE ----------
-@router.get("/{restaurant_id}", dependencies=[Depends(require_role(["admin"]))],
-            summary="Get restaurant details (Admin only)")
+@router.get(
+    "/{restaurant_id}", dependencies=[Depends(require_role(["admin"]))], summary="Get restaurant details (Admin only)"
+)
 async def get_restaurant(restaurant_id: str, current_user: dict = Depends(get_current_active_user)):
     return restaurant_service.get_restaurant(restaurant_id)
 
 
 # ---------- UPDATE ----------
-@router.put("/{restaurant_id}", dependencies=[Depends(require_role(["admin"]))],
-            summary="Update restaurant info (Admin only)")
+@router.put(
+    "/{restaurant_id}", dependencies=[Depends(require_role(["admin"]))], summary="Update restaurant info (Admin only)"
+)
 async def update_restaurant(restaurant_id: str, data: dict, current_user: dict = Depends(get_current_active_user)):
     return restaurant_service.update_restaurant(restaurant_id, data)
 
 
 # ---------- DELETE ----------
-@router.delete("/{restaurant_id}", dependencies=[Depends(require_role(["admin"]))],
-               summary="Delete restaurant (Admin only)")
+@router.delete(
+    "/{restaurant_id}", dependencies=[Depends(require_role(["admin"]))], summary="Delete restaurant (Admin only)"
+)
 async def delete_restaurant(restaurant_id: str, current_user: dict = Depends(get_current_active_user)):
     return restaurant_service.delete_restaurant(restaurant_id)

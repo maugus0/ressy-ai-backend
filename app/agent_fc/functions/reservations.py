@@ -48,10 +48,7 @@ async def _run_service_call(func, *args, **kwargs):
 
 async def create_reservation(**kwargs) -> Dict[str, Any]:
     args = CreateReservationArgs.model_validate(kwargs)
-    print(
-        f"[INFO] create_reservation invoked restaurant_id={args.restaurant_id} "
-        f"party_size={args.party_size}"
-    )
+    print(f"[INFO] create_reservation invoked restaurant_id={args.restaurant_id} " f"party_size={args.party_size}")
 
     async def _create():
         user_id = _user_repo.create_or_update_user(

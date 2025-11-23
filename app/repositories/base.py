@@ -14,10 +14,10 @@ class BaseRepository:
         self.dynamodb: Any | None = None
         if not self.use_mock:
             self.dynamodb = boto3.resource(
-                'dynamodb',
+                "dynamodb",
                 region_name=settings.AWS_REGION,
-                aws_access_key_id=os.getenv('AWS_ACCESS_KEY_ID'),
-                aws_secret_access_key=os.getenv('AWS_SECRET_ACCESS_KEY')
+                aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
+                aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
             )
         self._init_tables()
 

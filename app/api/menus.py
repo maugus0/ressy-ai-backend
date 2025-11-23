@@ -27,8 +27,9 @@ async def get_menu(restaurant_id: str, menu_id: str, current_user: dict = Depend
 
 # UPDATE
 @router.put("/{restaurant_id}/{menu_id}", dependencies=[Depends(require_role(["admin", "client"]))])
-async def update_menu(restaurant_id: str, menu_id: str, data: dict,
-                      current_user: dict = Depends(get_current_active_user)):
+async def update_menu(
+    restaurant_id: str, menu_id: str, data: dict, current_user: dict = Depends(get_current_active_user)
+):
     return menu_service.update_menu(restaurant_id, menu_id, data)
 
 

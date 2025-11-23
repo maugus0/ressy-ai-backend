@@ -12,6 +12,7 @@ from pydantic import BaseModel, ConfigDict, RootModel, field_validator
 
 class FunctionCallRequest(BaseModel):
     """Function call request issued by the agent."""
+
     model_config = ConfigDict(extra="forbid")
     id: str
     name: str
@@ -37,6 +38,7 @@ class FunctionCallRequest(BaseModel):
 
 class FunctionCallResponse(BaseModel):
     """Function call response to send back to the agent."""
+
     model_config = ConfigDict(extra="forbid")
     id: str
     name: str
@@ -61,12 +63,14 @@ class FunctionCallResponse(BaseModel):
 
 class GenericAgentFrame(BaseModel):
     """Pass-through container for frames that are not function call requests."""
+
     model_config = ConfigDict(extra="allow")
     payload: dict[str, Any]
 
 
 class AgentFrame(RootModel[Union[FunctionCallRequest, GenericAgentFrame]]):
     """Union type that represents either a function call request or any other frame."""
+
     root: Union[FunctionCallRequest, GenericAgentFrame]
 
     @property

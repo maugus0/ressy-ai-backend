@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
 
-from app.api import auth, calls, admin, users, menus, restaurants, specials, orders, order_history, transcripts, faqs
+from app.api import admin, auth, calls, faqs, menus, order_history, orders, restaurants, specials, transcripts, users
 from app.api.websocket import twilio_websocket_handler
 from app.services.restaurant_service import RestaurantService
 
@@ -70,7 +70,7 @@ async def voice(request: Request):
         <Response>
             <Connect>
                 <Stream url="{stream_url}">
-                    <Parameter name="fromNumber" value="{from_number}"/>                    
+                    <Parameter name="fromNumber" value="{from_number}"/>
                     <Parameter name="toNumber" value="{to_number}"/>
                 </Stream>
             </Connect>

@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Dict, List, Any
+from typing import Any, Dict, List
 
 from boto3.dynamodb.conditions import Key
 
@@ -24,7 +24,7 @@ class FAQRepository(BaseRepository):
             "faq_id": faq_id,
             "created_at": datetime.utcnow().isoformat(),
             "updated_at": datetime.utcnow().isoformat(),
-            **data
+            **data,
         }
         if self.use_mock:
             faqs = MOCK_DATA["faqs"].setdefault(restaurant_id, [])
@@ -41,7 +41,7 @@ class FAQRepository(BaseRepository):
         resp = self._with_retries(
             self.faqs_table.query,
             IndexName="restaurant_id-faq_id-index",
-            KeyConditionExpression=Key("restaurant_id").eq(restaurant_id)
+            KeyConditionExpression=Key("restaurant_id").eq(restaurant_id),
         )
         return resp.get("Items", [])
 
@@ -57,7 +57,7 @@ class FAQRepository(BaseRepository):
             Key={"restaurant_id": restaurant_id, "faq_id": faq_id},
             UpdateExpression="SET " + ", ".join(f"#{k}=:{k}" for k in data.keys()),
             ExpressionAttributeNames={f"#{k}": k for k in data.keys()},
-            ExpressionAttributeValues={f":{k}": v for k, v in data.items()}
+            ExpressionAttributeValues={f":{k}": v for k, v in data.items()},
         )
 
     def delete(self, restaurant_id: str, faq_id: str) -> None:
@@ -66,7 +66,4 @@ class FAQRepository(BaseRepository):
             faqs = [f for f in MOCK_DATA["faqs"].get(restaurant_id, []) if f.get("faq_id") != faq_id]
             MOCK_DATA["faqs"][restaurant_id] = faqs
             return
-        self._with_retries(
-            self.faqs_table.delete_item,
-            Key={"restaurant_id": restaurant_id, "faq_id": faq_id}
-        )
+        self._with_retries(self.faqs_table.delete_item, Key={"restaurant_id": restaurant_id, "faq_id": faq_id})

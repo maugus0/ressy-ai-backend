@@ -113,9 +113,7 @@ class WebSocketService:
         ]
 
     def _build_restaurant_context(
-            self,
-            caller_phone: Optional[str] = None,
-            restaurant_record: Optional[Dict[str, Any]] = None
+        self, caller_phone: Optional[str] = None, restaurant_record: Optional[Dict[str, Any]] = None
     ) -> tuple[Dict[str, Any], Optional[str], Optional[str], Optional[str]]:
         restaurant_phone_fwd = restaurant_record.get("phone_number") if restaurant_record else None
         restaurant_id = restaurant_record.get("id") if restaurant_record else None
@@ -191,9 +189,9 @@ class WebSocketService:
             print(f"[Shutdown] connection close failed: {exc}")
 
     async def _handle_side_effects(
-            self,
-            side_effects: list[AgentSideEffect],
-            sts_ws,
+        self,
+        side_effects: list[AgentSideEffect],
+        sts_ws,
     ) -> dict[str, Optional[str] | bool]:
         """Send side effect messages (e.g., InjectAgentMessage) back to Deepgram."""
 
@@ -227,11 +225,11 @@ class WebSocketService:
         return {"close_requested": close_requested, "farewell_message": last_inject_message}
 
     async def _graceful_shutdown_call(
-            self,
-            twilio_ws,
-            sts_ws,
-            shutdown_event: Optional[asyncio.Event] = None,
-            audio_queue: Optional[asyncio.Queue] = None,
+        self,
+        twilio_ws,
+        sts_ws,
+        shutdown_event: Optional[asyncio.Event] = None,
+        audio_queue: Optional[asyncio.Queue] = None,
     ) -> None:
         """Close Deepgram and Twilio sockets after the farewell finishes."""
 
@@ -253,11 +251,11 @@ class WebSocketService:
             print(f"[Close] Failed to close Deepgram websocket: {exc}")
 
     async def _prepare_call_resources(
-            self,
-            restaurant_phone: Optional[str],
-            caller_phone: Optional[str],
-            restaurant_record: Optional[Dict[str, Any]] = None,
-            deepgram_key_terms: Optional[Any] = None
+        self,
+        restaurant_phone: Optional[str],
+        caller_phone: Optional[str],
+        restaurant_record: Optional[Dict[str, Any]] = None,
+        deepgram_key_terms: Optional[Any] = None,
     ) -> CallResources:
         context_payload, restaurant_id, restaurant_phone_fwd, restaurant_name = await asyncio.to_thread(
             self._build_restaurant_context,
@@ -339,9 +337,9 @@ class WebSocketService:
         return transport
 
     def _create_call_session(
-            self,
-            user_id: str,
-            restaurant_id: Optional[str],
+        self,
+        user_id: str,
+        restaurant_id: Optional[str],
     ) -> Optional[str]:
         try:
             call_id = self.call_service.create_call_session(
@@ -470,11 +468,11 @@ class WebSocketService:
             print(f"[WARN] Failed to persist transcript entry: {exc}")
 
     async def _route_function_calls(
-            self,
-            decoded: dict[str, Any],
-            state: StreamState,
-            transport: Optional[Transport],
-            sts_ws,
+        self,
+        decoded: dict[str, Any],
+        state: StreamState,
+        transport: Optional[Transport],
+        sts_ws,
     ) -> None:
         if transport is None:
             return
@@ -513,14 +511,14 @@ class WebSocketService:
             print("[Call] Farewell close scheduled")
 
     async def _maybe_finish_farewell(
-            self,
-            decoded: dict[str, Any],
-            state: StreamState,
-            twilio_ws,
-            sts_ws,
-            streamsid,
-            shutdown_event: Optional[asyncio.Event],
-            audio_queue: Optional[asyncio.Queue] = None,
+        self,
+        decoded: dict[str, Any],
+        state: StreamState,
+        twilio_ws,
+        sts_ws,
+        streamsid,
+        shutdown_event: Optional[asyncio.Event],
+        audio_queue: Optional[asyncio.Queue] = None,
     ) -> bool:
         if not state.closing_after_farewell:
             return False
@@ -528,10 +526,10 @@ class WebSocketService:
         if event_type == "AgentStartedSpeaking":
             state.farewell_started = True
         elif (
-                event_type == "ConversationText"
-                and decoded.get("role") == "assistant"
-                and state.farewell_expected_text
-                and decoded.get("content") == state.farewell_expected_text
+            event_type == "ConversationText"
+            and decoded.get("role") == "assistant"
+            and state.farewell_expected_text
+            and decoded.get("content") == state.farewell_expected_text
         ):
             state.farewell_started = True
         elif event_type == "AgentAudioDone" and state.farewell_started:
@@ -585,16 +583,16 @@ class WebSocketService:
             print("sts_sender stopped")
 
     async def sts_receiver(
-            self,
-            sts_ws,
-            twilio_ws,
-            streamsid_queue,
-            call_id=None,
-            user_id=None,
-            transport: Optional[Transport] = None,
-            shutdown_event: Optional[asyncio.Event] = None,
-            audio_queue: Optional[asyncio.Queue] = None,
-            state: Optional[StreamState] = None,
+        self,
+        sts_ws,
+        twilio_ws,
+        streamsid_queue,
+        call_id=None,
+        user_id=None,
+        transport: Optional[Transport] = None,
+        shutdown_event: Optional[asyncio.Event] = None,
+        audio_queue: Optional[asyncio.Queue] = None,
+        state: Optional[StreamState] = None,
     ):
         """Receive messages from Deepgram STS and forward to Twilio."""
         print("sts_receiver started")
@@ -644,13 +642,13 @@ class WebSocketService:
                 print(f"[WARN] Error updating call cost: {exc}")
 
     async def twilio_receiver(
-            self,
-            twilio_ws,
-            audio_queue,
-            streamsid_queue,
-            shutdown_event: Optional[asyncio.Event] = None,
-            to_number_queue: Optional[asyncio.Queue] = None,
-            from_number_queue: Optional[asyncio.Queue] = None,
+        self,
+        twilio_ws,
+        audio_queue,
+        streamsid_queue,
+        shutdown_event: Optional[asyncio.Event] = None,
+        to_number_queue: Optional[asyncio.Queue] = None,
+        from_number_queue: Optional[asyncio.Queue] = None,
     ):
         """Receive audio from Twilio and forward to Deepgram."""
         buffer_size = 20 * 160  # 3200 bytes per 100ms
@@ -698,11 +696,11 @@ class WebSocketService:
                 print(f"Twilio receiver error: {e}")
 
     async def twilio_websocket_handler(
-            self,
-            twilio_ws: WebSocket,
-            user_id: str = "demo-user",
-            restaurant_twilio_number: Optional[str] = None,
-            caller_number: Optional[str] = None,
+        self,
+        twilio_ws: WebSocket,
+        user_id: str = "demo-user",
+        restaurant_twilio_number: Optional[str] = None,
+        caller_number: Optional[str] = None,
     ) -> None:
         """Main WebSocket handler for Twilio connections."""
 
@@ -766,10 +764,7 @@ class WebSocketService:
                     deepgram_api_key = deepgram_api_key.strip() or None
 
             call_resources = await self._prepare_call_resources(
-                restaurant_twilio_number,
-                caller_number,
-                restaurant_record,
-                deepgram_key_terms
+                restaurant_twilio_number, caller_number, restaurant_record, deepgram_key_terms
             )
 
             try:

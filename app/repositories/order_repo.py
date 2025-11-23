@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Dict, List, Any
+from typing import Any, Dict, List
 
 from boto3.dynamodb.conditions import Key
 
@@ -27,7 +27,7 @@ class OrderRepository(BaseRepository):
             "SK": "ORDER_METADATA",
             "created_at": datetime.utcnow().isoformat(),
             "updated_at": datetime.utcnow().isoformat(),
-            **data
+            **data,
         }
         if self.use_mock:
             MOCK_DATA["orders"][order_id] = item
@@ -41,10 +41,7 @@ class OrderRepository(BaseRepository):
         """Get order by ID."""
         if self.use_mock:
             return clone(MOCK_DATA["orders"].get(order_id, {}))
-        resp = self._with_retries(
-            self.orders_table.get_item,
-            Key={"order_id": order_id, "SK": "ORDER_METADATA"}
-        )
+        resp = self._with_retries(self.orders_table.get_item, Key={"order_id": order_id, "SK": "ORDER_METADATA"})
         return resp.get("Item", {})
 
     def get_by_restaurant(self, restaurant_id: str) -> List[Dict[str, Any]]:
@@ -54,7 +51,7 @@ class OrderRepository(BaseRepository):
         resp = self._with_retries(
             self.orders_table.scan,
             FilterExpression="restaurant_id = :rid",
-            ExpressionAttributeValues={":rid": restaurant_id}
+            ExpressionAttributeValues={":rid": restaurant_id},
         )
         return resp.get("Items", [])
 
@@ -72,7 +69,7 @@ class OrderRepository(BaseRepository):
             Key={"order_id": order_id, "SK": "ORDER_METADATA"},
             UpdateExpression="SET " + ", ".join(f"#{k}=:{k}" for k in data.keys()),
             ExpressionAttributeNames={f"#{k}": k for k in data.keys()},
-            ExpressionAttributeValues={f":{k}": v for k, v in data.items()}
+            ExpressionAttributeValues={f":{k}": v for k, v in data.items()},
         )
 
     def delete(self, order_id: str) -> None:
@@ -80,17 +77,11 @@ class OrderRepository(BaseRepository):
         if self.use_mock:
             MOCK_DATA["orders"].pop(order_id, None)
             return
-        self._with_retries(
-            self.orders_table.delete_item,
-            Key={"order_id": order_id, "SK": "ORDER_METADATA"}
-        )
+        self._with_retries(self.orders_table.delete_item, Key={"order_id": order_id, "SK": "ORDER_METADATA"})
 
     def get_history(self, order_id: str) -> List[Dict[str, Any]]:
         """Get order history."""
         if self.use_mock:
             return clone(MOCK_DATA["order_history"].get(order_id, []))
-        resp = self._with_retries(
-            self.order_history_table.query,
-            KeyConditionExpression=Key("order_id").eq(order_id)
-        )
+        resp = self._with_retries(self.order_history_table.query, KeyConditionExpression=Key("order_id").eq(order_id))
         return resp.get("Items", [])

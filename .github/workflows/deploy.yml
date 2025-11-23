@@ -1,0 +1,274 @@
+name: RessyAI Backend CI/CD Pipeline
+
+on:
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+
+      - name: Run Unit Tests
+        env:
+          ALLOW_DB_FAILURE: "true"
+          USE_MOCK_DATA: "true"
+          MYSQL_HOST: "localhost"
+          MYSQL_DATABASE: "test_db"
+          MYSQL_USER: "test_user"
+          MYSQL_PASSWORD: "test_pass"
+        run: |
+          pytest tests/ -v --tb=short --junitxml=junit-report.xml
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: |
+            junit-report.xml
+          retention-days: 7
+          if-no-files-found: warn
+
+  format:
+    name: Code Formatting
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+
+      - name: Check code formatting (Black)
+        run: |
+          black --check --diff app/ tests/
+
+      - name: Check import sorting (isort)
+        run: |
+          isort --check-only --diff app/ tests/
+
+  lint-source:
+    name: Lint & Code Quality
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+
+      - name: Run flake8 (linting)
+        run: |
+          flake8 app/ tests/ --max-line-length=120 --extend-ignore=E203,W503,E501
+
+      - name: Run pylint (code quality)
+        run: |
+          pylint app/ tests/ --max-line-length=120 --disable=C0111,R0903 || true
+
+  type-check:
+    name: Type Checking
+    needs:
+      - format
+      - lint-source
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+
+      - name: Run mypy (type checking)
+        run: |
+          mypy app/ --ignore-missing-imports --no-strict-optional || true
+
+  tests:
+    name: Integration & Coverage Tests
+    needs:
+      - format
+      - lint-source
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+
+      - name: Run syntax and import validation
+        run: |
+          python -m py_compile app/main.py
+          python -m py_compile app/config.py
+
+      - name: Run tests with coverage
+        env:
+          ALLOW_DB_FAILURE: "true"
+          USE_MOCK_DATA: "true"
+          MYSQL_HOST: "localhost"
+          MYSQL_DATABASE: "test_db"
+          MYSQL_USER: "test_user"
+          MYSQL_PASSWORD: "test_pass"
+        run: |
+          pytest tests/ --cov=app --cov-report=html --cov-report=xml -v
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: htmlcov/
+          retention-days: 7
+          if-no-files-found: warn
+
+  security-audit:
+    name: Security Scan
+    needs:
+      - format
+      - lint-source
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+
+      - name: Run Safety (dependency vulnerability check)
+        run: |
+          safety check --file requirements.txt || true
+
+      - name: Run Bandit (static security analysis)
+        run: |
+          bandit -r app/ -f json -o bandit-report.json || true
+          bandit -r app/ || true
+
+      - name: Upload security reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-reports
+          path: |
+            bandit-report.json
+          retention-days: 7
+          if-no-files-found: warn
+
+  build-docker:
+    name: Build Docker Image
+    needs:
+      - unit-tests
+      - type-check
+      - tests
+      - security-audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: false
+          tags: ressy-ai-backend:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  summary:
+    name: Generate CI Summary & Reports
+    needs:
+      - unit-tests
+      - format
+      - lint-source
+      - type-check
+      - tests
+      - security-audit
+      - build-docker
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+        continue-on-error: true
+
+      - name: Generate CI/CD Summary
+        run: |
+          echo "# 🚀 RessyAI Backend - CI/CD Pipeline Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## ✅ Pipeline Status" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Job | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Unit Tests | ${{ needs.unit-tests.result == 'success' && '✅ Passed' || '❌ Failed' }}" >> $GITHUB_STEP_SUMMARY
+          echo "| Format Check | ${{ needs.format.result == 'success' && '✅ Passed' || '❌ Failed' }}" >> $GITHUB_STEP_SUMMARY
+          echo "| Lint Check | ${{ needs.lint-source.result == 'success' && '✅ Passed' || '❌ Failed' }}" >> $GITHUB_STEP_SUMMARY
+          echo "| Type Check | ${{ needs.type-check.result == 'success' && '✅ Passed' || '❌ Failed' }}" >> $GITHUB_STEP_SUMMARY
+          echo "| Tests | ${{ needs.tests.result == 'success' && '✅ Passed' || '❌ Failed' }}" >> $GITHUB_STEP_SUMMARY
+          echo "| Security Audit | ${{ needs.security-audit.result == 'success' && '✅ Passed' || '❌ Failed' }}" >> $GITHUB_STEP_SUMMARY
+          echo "| Docker Build | ${{ needs.build-docker.result == 'success' && '✅ Passed' || '❌ Failed' }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## 📊 Artifacts" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- Test Results" >> $GITHUB_STEP_SUMMARY
+          echo "- Coverage Reports" >> $GITHUB_STEP_SUMMARY
+          echo "- Security Reports" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Pipeline completed at:** $(date)" >> $GITHUB_STEP_SUMMARY
+
