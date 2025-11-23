@@ -7,7 +7,11 @@ import os
 from typing import Any, Dict, List
 
 import mysql.connector
+from dotenv import load_dotenv
 from mysql.connector import Error
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 class MySQLBaseRepository:
