@@ -23,7 +23,7 @@ class OrderService:
 
     def update_order(self, order_id: str, data: dict) -> dict:
         """Update an existing order."""
-        self.order_repo.update_order_details(int(order_id), data.get("order_details", {}), data.get("customization"),
+        self.order_repo.update_order_details(int(order_id), data.get("order_details", []), data.get("customization"),
                                              data.get("total_amount"))
         return {"message": "Order updated"}
 

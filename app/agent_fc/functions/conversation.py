@@ -61,6 +61,7 @@ class EndCallArgs(BaseModel):
 class EscalateToHumanArgs(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    restaurant_id: int
     reason: Optional[str] = None
     urgency: Literal["standard", "urgent"] = "standard"
 

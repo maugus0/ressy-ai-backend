@@ -64,14 +64,14 @@ def _seed_restaurant() -> None:
             "name": "Main Menu",
             "items": [
                 {
-                    "menu_item_id": "item-1",
+                    "item_id": "item-1",
                     "name": "Heritage Dosa",
                     "description": "Crispy dosa with traditional chutneys",
                     "price": 12.0,
                     "is_available": True,
                 },
                 {
-                    "menu_item_id": "item-2",
+                    "item_id": "item-2",
                     "name": "Spiced Paneer Wrap",
                     "description": "Paneer, pickled onions, mint chutney",
                     "price": 14.5,

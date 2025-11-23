@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -15,9 +16,9 @@ from app.repositories.mysql_user_repo import MySQLUserRepository
 class OrderItem(BaseModel):
     model_config = ConfigDict(extra="allow")
 
+    item_id: int
     name: str
     quantity: int = 1
-    menu_item_id: Optional[str] = None
     price: Optional[float] = None
     instructions: Optional[str] = None
     options: Dict[str, Any] = Field(default_factory=dict)
@@ -26,10 +27,9 @@ class OrderItem(BaseModel):
 class CreateOrderArgs(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    restaurant_id: Optional[str] = None
+    restaurant_id: str = None
     customer_name: Optional[str] = None
-    customer_contact: Optional[str] = None
-    fulfillment_type: str = "pickup"
+    customer_contact: str = None
     pickup_time_iso: Optional[str] = None
     items: List[OrderItem]
     notes: Optional[str] = None
@@ -67,6 +67,8 @@ _menu_repo = MySQLMenuRepository()
 
 
 async def _run_service_call(func, *args, **kwargs):
+    if inspect.iscoroutinefunction(func):
+        return await func(*args, **kwargs)
     return await asyncio.to_thread(func, *args, **kwargs)
 
 
@@ -75,7 +77,7 @@ def _summarize_items(items: List[OrderItem]) -> List[Dict[str, Any]]:
         {
             "name": item.name,
             "quantity": item.quantity,
-            "menu_item_id": item.menu_item_id,
+            "item_id": item.item_id,
             "instructions": item.instructions,
             "options": item.options,
         }
@@ -83,11 +85,24 @@ def _summarize_items(items: List[OrderItem]) -> List[Dict[str, Any]]:
     ]
 
 
+def _calculate_total(items: List[OrderItem]) -> float:
+    """Compute total from item prices * quantities; treats missing prices as 0."""
+    total = 0.0
+    for item in items:
+        price = item.price if item.price is not None else 0.0
+        qty = max(item.quantity, 1)
+        try:
+            total += float(price) * qty
+        except (TypeError, ValueError):
+            continue
+    return round(total, 2)
+
+
 async def create_order(**kwargs) -> Dict[str, Any]:
     args = CreateOrderArgs.model_validate(kwargs)
     print(f"[INFO] create_order invoked customer_contact={args.customer_contact} items={len(args.items)}")
 
-    async def _create():
+    def _create():
         # Ensure user exists/updated
         user_id = _user_repo.create_or_update_user(
             {
@@ -99,19 +114,20 @@ async def create_order(**kwargs) -> Dict[str, Any]:
                 "credit_card": None,
             }
         )
+        total_amount = _calculate_total(args.items)
         order_payload = {
             "status": "pending",
-            "total_amount": args.metadata.get("total_amount", 0.0) if args.metadata else 0.0,
+            "total_amount": total_amount,
             "order_details": [item.model_dump() for item in args.items],
             "customization": args.metadata.get("customization", {}),
         }
         order_id = _order_repo.create_order(user_id, order_payload)
         # Store detail rows for relational table
         for item in args.items:
-            menu_item_id = item.menu_item_id
-            if menu_item_id:
+            item_id = item.item_id
+            if item_id:
                 for _ in range(max(item.quantity, 1)):
-                    _order_repo.create_order_details(order_id, menu_item_id)
+                    _order_repo.create_order_details(order_id, item_id)
         return order_id, user_id
 
     order_id, user_id = await _run_service_call(_create)
@@ -129,7 +145,7 @@ async def lookup_order(**kwargs) -> Dict[str, Any]:
     args = LookupOrderArgs.model_validate(kwargs)
     print(f"[INFO] lookup_order invoked customer_contact={args.customer_contact}")
 
-    async def _lookup():
+    def _lookup():
         user_id = _user_repo.get_user_id_by_phone_or_email(args.customer_contact, None)
         if not user_id:
             return None
@@ -147,7 +163,7 @@ def _flatten_menu_items(menus: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
 def _match_menu_item(menu_items: List[Dict[str, Any]], request_item: OrderItem) -> Optional[Dict[str, Any]]:
     for item in menu_items:
-        if request_item.menu_item_id and item.get("menu_item_id") == request_item.menu_item_id:
+        if request_item.item_id and item.get("id") == request_item.item_id:
             return item
         if item.get("name") and request_item.name.lower() == str(item.get("name")).lower():
             return item
@@ -171,9 +187,9 @@ async def check_items_availability(**kwargs) -> Dict[str, Any]:
                 {
                     "requested_item": requested.name,
                     "status": "AVAILABLE" if is_available else "UNAVAILABLE",
-                    "menu_item_id": match.get("menu_item_id"),
-                    "price": match.get("price"),
-                    "category": match.get("menu_name"),
+                    "item_id": match.get("id"),
+                    "price": str(match.get("price")),
+                    "category": match.get("category"),
                 },
             )
         else:
@@ -194,7 +210,7 @@ async def update_order_details(**kwargs) -> Dict[str, Any]:
     args = UpdateOrderDetailsArgs.model_validate(kwargs)
     print(f"[INFO] update_order_details invoked customer_contact={args.customer_contact}")
 
-    async def _update():
+    def _update():
         user_id = _user_repo.get_user_id_by_phone_or_email(args.customer_contact, None)
         if not user_id:
             return None
@@ -205,7 +221,7 @@ async def update_order_details(**kwargs) -> Dict[str, Any]:
         if not order_id:
             return None
         order_details = [item.model_dump() for item in args.items]
-        total_amount = args.total_amount if args.total_amount is not None else order.get("total_amount")
+        total_amount = _calculate_total(args.items)
         _order_repo.update_order_details(order_id, order_details, args.customization, total_amount)
         updated = _order_repo.get_order_by_id(order_id)
         return updated

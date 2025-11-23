@@ -26,7 +26,7 @@ class Settings:
     DEEPGRAM_LISTEN_KEYTERMS = os.getenv('DEEPGRAM_LISTEN_KEYTERMS', 'hello,goodbye').split(',')
     DEEPGRAM_THINK_PROVIDER_TYPE = os.getenv('DEEPGRAM_THINK_PROVIDER_TYPE', 'open_ai')
     DEEPGRAM_THINK_MODEL = os.getenv('DEEPGRAM_THINK_MODEL', 'gpt-4o-mini')
-    DEEPGRAM_THINK_TEMPERATURE = float(os.getenv('DEEPGRAM_THINK_TEMPERATURE', '0.25'))
+    DEEPGRAM_THINK_TEMPERATURE = float(os.getenv('DEEPGRAM_THINK_TEMPERATURE', '0.15'))
     DEEPGRAM_SPEAK_MODEL = os.getenv('DEEPGRAM_SPEAK_MODEL', 'aura-2-amalthea-en')
     DEEPGRAM_AGENT_GREETING = os.getenv('DEEPGRAM_AGENT_GREETING', 'Hi! Thank you for calling {RESTAURANT_NAME}. How may I help you today?')
 

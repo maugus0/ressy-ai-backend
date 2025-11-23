@@ -73,14 +73,14 @@ class WebSocketService:
         highlights: list[dict[str, Any]] = []
         categories: list[str] = []
         for item in items:
-            category = item.get("category") or item.get("menu_category")
+            category = item.get("category")
             if category:
                 categories.append(str(category))
-            name = item.get("item_name") or item.get("name")
             entry = {
-                "name": name,
+                "item_id": item.get("id"),
+                "name": item.get("item_name"),
                 "price": item.get("price"),
-                "description": item.get("item_desc") or item.get("description"),
+                "description": item.get("item_desc"),
                 "category": category,
             }
             if entry["name"]:
@@ -94,9 +94,11 @@ class WebSocketService:
     def _summarize_specials(self, specials: list[dict[str, Any]]) -> list[dict[str, Any]]:
         return [
             {
-                "name": special.get("name"),
-                "description": special.get("description"),
+                "item_id": special.get("id"),
+                "name": special.get("item_name"),
+                "description": special.get("item_desc"),
                 "price": special.get("price"),
+                "category": special.get("category"),
             }
             for special in specials[:5]
         ]
@@ -122,7 +124,8 @@ class WebSocketService:
         restaurant = restaurant_record or {}
 
         menu_items = self.menu_service.get_available_items_by_restaurant(restaurant_id) if restaurant_id else []
-        specials: list[dict[str, Any]] = []
+        specials: list[dict[str, Any]] = [item for item in menu_items if item.get("is_special")]
+        regular_menu_items = [item for item in menu_items if not item.get("is_special")]
         faqs = self.faq_service.list_faqs(restaurant_id) if restaurant_id else []
 
         restaurant_name = restaurant.get("name")
@@ -150,7 +153,7 @@ class WebSocketService:
                 "delivery": service_options.get("delivery", False),
                 "reservations": service_options.get("reservations", True),
             },
-            "menu": self._summarize_menu(menu_items),
+            "menu": self._summarize_menu(regular_menu_items),
             "specials": self._summarize_specials(specials),
             "faqs": self._summarize_faqs(faqs),
             "function_defaults": {
@@ -160,10 +163,10 @@ class WebSocketService:
         }
         if caller_phone:
             context["caller_profile"] = {
-                "phone": caller_phone,
+                "caller_phone": caller_phone,
                 "source": "inbound_call",
             }
-            context["function_defaults"]["customer_contact"] = caller_phone
+            context["function_defaults"]["caller_phone"] = caller_phone
         return context, restaurant_id, restaurant_phone_fwd, restaurant_name
 
     async def shutdown(self) -> None:

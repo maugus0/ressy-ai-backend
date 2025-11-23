@@ -22,7 +22,7 @@ class MySQLOrderRepository(MySQLBaseRepository):
             user_id,
             order_data.get("status", "pending"),
             order_data.get("total_amount", 0.0),
-            json.dumps(order_data.get("order_details", {})),
+            json.dumps(order_data.get("order_details", [])),
             json.dumps(order_data.get("customization", {}))
         ))
         return order_id
@@ -65,17 +65,23 @@ class MySQLOrderRepository(MySQLBaseRepository):
         results = self._execute_query(query, (order_id,))
         return results[0] if results else {}
 
-    def update_order_details(self, order_id: int, order_details: Dict, customization: Dict | None = None,
-                             total_amount: float | None = None) -> int:
+    def update_order_details(
+            self,
+            order_id: int,
+            order_details: list,
+            customization: Dict | None = None,
+            total_amount: float | None = None
+    ) -> int:
         """Update order details/customization/total_amount."""
-        fields = ["order_details = %s", "updated_at = NOW()"]
+        fields = ["order_details = %s"]
         params = [json.dumps(order_details)]
         if customization is not None:
-            fields.insert(1, "customization = %s")
+            fields.append("customization = %s")
             params.append(json.dumps(customization))
         if total_amount is not None:
-            fields.insert(1, "total_amount = %s")
+            fields.append("total_amount = %s")
             params.append(total_amount)
+        fields.append("updated_at = NOW()")
         params.append(order_id)
         query = f"UPDATE Orders SET {', '.join(fields)} WHERE id = %s"
         return self._execute_update(query, tuple(params))

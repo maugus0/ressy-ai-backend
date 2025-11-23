@@ -52,7 +52,7 @@ def get_function_definitions() -> List[Dict[str, Any]]:
         ),
         _definition(
             name="check_items_availability",
-            description="Check availability of menu items for pickup order requests. Always use this before confirming the final order.",
+            description="Check availability of menu items for pickup order requests. Always use this just before confirming the final order.",
             schema=check_items_schema,
         ),
         _definition(
@@ -72,13 +72,14 @@ def get_function_definitions() -> List[Dict[str, Any]]:
         ),
         _definition(
             name="agent_filler",
-            description="Always use this before any potentially slow lookups (menu, reservations, totals) so the caller hears a natural filler. "
-                        "Another client-side function call should always be followed by this function call ALWAYS.",
+            description="ALWAYS use this before any potentially slow lookups (menu, reservations, totals) so the caller hears a natural filler. "
+                        "Another client-side function call should ALWAYS be followed by this function call.",
             schema=filler_schema,
         ),
         _definition(
             name="end_call",
-            description="Use this when a call is supposed to end. Either after all tasks are complete OR the caller indicates that the conversation is over.",
+            description="ALWAYS ALWAYS use this when a call is supposed to end. Either after all tasks are complete OR the caller indicates that the conversation is over. "
+                        "Farewell message will be supplied to you with this function.",
             schema=end_call_schema,
         ),
         _definition(

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+from datetime import date, datetime
+from decimal import Decimal
 from typing import Any, Mapping, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, RootModel, field_validator
@@ -40,12 +42,20 @@ class FunctionCallResponse(BaseModel):
     name: str
     content: dict[str, Any]
 
+    @staticmethod
+    def _json_default(value: Any) -> Any:
+        if isinstance(value, Decimal):
+            return float(value)
+        if isinstance(value, (datetime, date)):
+            return value.isoformat()
+        return str(value)
+
     def to_wire(self) -> dict[str, Any]:
         return {
             "type": "FunctionCallResponse",
             "id": self.id,
             "name": self.name,
-            "content": json.dumps(self.content),
+            "content": json.dumps(self.content, default=self._json_default),
         }
 
 
