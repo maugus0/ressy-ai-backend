@@ -11,6 +11,7 @@ from dotenv import load_dotenv
 from mysql.connector import Error
 
 # Load environment variables from .env file
+# TODO: Investigate import order - this shouldn't be needed if config.py loads first
 load_dotenv()
 
 
