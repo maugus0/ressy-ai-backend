@@ -35,7 +35,7 @@ FILLER_LIBRARY = {
 FAREWELL_LIBRARY = {
     "general": "You're all set. Thanks for calling and have a great day!",
     "positive": "Wonderful! We can't wait to see you. Have an amazing day!",
-    "apologetic": "I'm sorry I wasn't able to help out much. We'd love to hear from you again!"
+    "apologetic": "I'm sorry I wasn't able to help out much. We'd love to hear from you again!",
 }
 
 
@@ -99,9 +99,7 @@ async def end_call(**kwargs) -> AgentFunctionResult:
 async def escalate_to_human(**kwargs) -> AgentFunctionResult:
     args = EscalateToHumanArgs.model_validate(kwargs)
     print(f"[INFO] escalate_to_human invoked urgency={args.urgency} reason={args.reason}")
-    message = (
-        "It sounds like you'd prefer to speak with one of our team members. Please allow me to connect you."
-    )
+    message = "It sounds like you'd prefer to speak with one of our team members. Please allow me to connect you."
     content = {
         "status": "HUMAN_ESCALATION_REQUESTED",
         "urgency": args.urgency,

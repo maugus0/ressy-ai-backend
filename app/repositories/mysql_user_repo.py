@@ -1,6 +1,7 @@
 """
 MySQL User Repository for user operations.
 """
+
 from typing import Dict, Optional
 
 from app.repositories.mysql_base import MySQLBaseRepository
@@ -15,10 +16,7 @@ class MySQLUserRepository(MySQLBaseRepository):
         Returns user ID.
         """
         # First, try to find existing user
-        user_id = self.get_user_id_by_phone_or_email(
-            user_data.get("phone_number"),
-            user_data.get("email")
-        )
+        user_id = self.get_user_id_by_phone_or_email(user_data.get("phone_number"), user_data.get("email"))
 
         if user_id:
             # Update existing user
@@ -32,14 +30,17 @@ class MySQLUserRepository(MySQLBaseRepository):
                     updated_at = NOW()
                 WHERE id = %s
             """
-            self._execute_update(query, (
-                user_data.get("name"),
-                user_data.get("email"),
-                user_data.get("address"),
-                user_data.get("is_spam", False),
-                user_data.get("credit_card"),
-                user_id
-            ))
+            self._execute_update(
+                query,
+                (
+                    user_data.get("name"),
+                    user_data.get("email"),
+                    user_data.get("address"),
+                    user_data.get("is_spam", False),
+                    user_data.get("credit_card"),
+                    user_id,
+                ),
+            )
             return user_id
         else:
             # Create new user
@@ -47,14 +48,17 @@ class MySQLUserRepository(MySQLBaseRepository):
                 INSERT INTO Users (name, phone_number, email, address, is_spam, credit_card, created_at, updated_at)
                 VALUES (%s, %s, %s, %s, %s, %s, NOW(), NOW())
             """
-            return self._execute_insert(query, (
-                user_data.get("name"),
-                user_data.get("phone_number"),
-                user_data.get("email"),
-                user_data.get("address"),
-                user_data.get("is_spam", False),
-                user_data.get("credit_card")
-            ))
+            return self._execute_insert(
+                query,
+                (
+                    user_data.get("name"),
+                    user_data.get("phone_number"),
+                    user_data.get("email"),
+                    user_data.get("address"),
+                    user_data.get("is_spam", False),
+                    user_data.get("credit_card"),
+                ),
+            )
 
     def get_user_id_by_phone_or_email(self, phone_number: Optional[str], email: Optional[str]) -> Optional[int]:
         """
@@ -64,8 +68,8 @@ class MySQLUserRepository(MySQLBaseRepository):
             return None
 
         query = """
-            SELECT id 
-            FROM Users 
+            SELECT id
+            FROM Users
             WHERE (phone_number = %s AND phone_number IS NOT NULL)
                OR (email = %s AND email IS NOT NULL)
             LIMIT 1
@@ -94,7 +98,8 @@ class MySQLUserRepository(MySQLBaseRepository):
     def list_users(self) -> list[Dict]:
         """List all users."""
         return self._execute_query(
-            "SELECT id, name, phone_number, email, address, is_spam, credit_card, created_at, updated_at FROM Users")
+            "SELECT id, name, phone_number, email, address, is_spam, credit_card, created_at, updated_at FROM Users"
+        )
 
     def update_user(self, user_id: int, user_data: Dict) -> int:
         """Update user fields."""

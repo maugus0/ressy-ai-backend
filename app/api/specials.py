@@ -27,8 +27,9 @@ async def get_special(restaurant_id: str, special_id: str, current_user: dict = 
 
 # UPDATE
 @router.put("/{restaurant_id}/{special_id}", dependencies=[Depends(require_role(["admin", "client"]))])
-async def update_special(restaurant_id: str, special_id: str, data: dict,
-                         current_user: dict = Depends(get_current_active_user)):
+async def update_special(
+    restaurant_id: str, special_id: str, data: dict, current_user: dict = Depends(get_current_active_user)
+):
     return special_service.update_special(restaurant_id, special_id, data)
 
 

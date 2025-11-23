@@ -1,8 +1,9 @@
 """
 MySQL Restaurant Repository for multitenant operations.
 """
+
 import json
-from typing import Dict, Optional, Any, List
+from typing import Any, Dict, List, Optional
 
 from app.repositories.mysql_base import MySQLBaseRepository
 
@@ -16,7 +17,7 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
         Used for multitenant call routing.
         """
         query = """
-            SELECT 
+            SELECT
                 id,
                 name,
                 address,

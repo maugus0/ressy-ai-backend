@@ -21,8 +21,9 @@ async def list_faqs(restaurant_id: str, current_user: dict = Depends(get_current
 
 # UPDATE
 @router.put("/{restaurant_id}/{faq_id}", dependencies=[Depends(require_role(["admin"]))])
-async def update_faq(restaurant_id: str, faq_id: str, data: dict,
-                     current_user: dict = Depends(get_current_active_user)):
+async def update_faq(
+    restaurant_id: str, faq_id: str, data: dict, current_user: dict = Depends(get_current_active_user)
+):
     return faq_service.update_faq(restaurant_id, faq_id, data)
 
 

@@ -21,7 +21,7 @@ class DeepgramClient:
         return websockets.connect(
             "wss://agent.deepgram.com/v1/agent/converse",
             subprotocols=["token", self.api_key],  # type: ignore
-            ssl=ssl_context
+            ssl=ssl_context,
         )
 
     def get_config(self):
@@ -31,12 +31,12 @@ class DeepgramClient:
             "audio": {
                 "input": {
                     "encoding": settings.DEEPGRAM_AUDIO_INPUT_ENCODING,
-                    "sample_rate": settings.DEEPGRAM_AUDIO_INPUT_SAMPLE_RATE
+                    "sample_rate": settings.DEEPGRAM_AUDIO_INPUT_SAMPLE_RATE,
                 },
                 "output": {
                     "encoding": settings.DEEPGRAM_AUDIO_OUTPUT_ENCODING,
                     "sample_rate": settings.DEEPGRAM_AUDIO_OUTPUT_SAMPLE_RATE,
-                    "container": settings.DEEPGRAM_AUDIO_OUTPUT_CONTAINER
-                }
-            }
+                    "container": settings.DEEPGRAM_AUDIO_OUTPUT_CONTAINER,
+                },
+            },
         }

@@ -24,7 +24,7 @@ class RestaurantRepository(BaseRepository):
             "SK": "METADATA",
             "created_at": datetime.utcnow().isoformat(),
             "updated_at": datetime.utcnow().isoformat(),
-            **data
+            **data,
         }
         if self.use_mock:
             MOCK_DATA["restaurants"][restaurant_id] = item
@@ -36,8 +36,7 @@ class RestaurantRepository(BaseRepository):
         if self.use_mock:
             return clone(MOCK_DATA["restaurants"].get(restaurant_id, {}))
         resp = self._with_retries(
-            self.restaurants_table.get_item,
-            Key={"restaurant_id": restaurant_id, "SK": "METADATA"}
+            self.restaurants_table.get_item, Key={"restaurant_id": restaurant_id, "SK": "METADATA"}
         )
         return resp.get("Item", {})
 
@@ -76,7 +75,7 @@ class RestaurantRepository(BaseRepository):
             Key={"restaurant_id": restaurant_id, "SK": "METADATA"},
             UpdateExpression="SET " + ", ".join(f"#{k}=:{k}" for k in data.keys()),
             ExpressionAttributeNames={f"#{k}": k for k in data.keys()},
-            ExpressionAttributeValues={f":{k}": v for k, v in data.items()}
+            ExpressionAttributeValues={f":{k}": v for k, v in data.items()},
         )
 
     def delete(self, restaurant_id: str) -> None:
@@ -84,7 +83,4 @@ class RestaurantRepository(BaseRepository):
         if self.use_mock:
             MOCK_DATA["restaurants"].pop(restaurant_id, None)
             return
-        self._with_retries(
-            self.restaurants_table.delete_item,
-            Key={"restaurant_id": restaurant_id, "SK": "METADATA"}
-        )
+        self._with_retries(self.restaurants_table.delete_item, Key={"restaurant_id": restaurant_id, "SK": "METADATA"})

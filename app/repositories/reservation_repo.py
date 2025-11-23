@@ -49,8 +49,9 @@ class ReservationRepository(BaseRepository):
         """List reservations belonging to a restaurant."""
 
         if self.use_mock:
-            return [clone(res) for res in MOCK_DATA["reservations"].values() if
-                    res.get("restaurant_id") == restaurant_id]
+            return [
+                clone(res) for res in MOCK_DATA["reservations"].values() if res.get("restaurant_id") == restaurant_id
+            ]
         resp = self._with_retries(
             self.reservations_table.scan,
             FilterExpression=Attr("restaurant_id").eq(restaurant_id),
@@ -58,10 +59,10 @@ class ReservationRepository(BaseRepository):
         return resp.get("Items", [])
 
     def get_between(
-            self,
-            restaurant_id: str,
-            start_iso: str,
-            end_iso: str,
+        self,
+        restaurant_id: str,
+        start_iso: str,
+        end_iso: str,
     ) -> List[Dict[str, Any]]:
         """Return reservations scheduled within a window [start_iso, end_iso]."""
 
@@ -69,16 +70,15 @@ class ReservationRepository(BaseRepository):
             items = []
             for res in MOCK_DATA["reservations"].values():
                 if (
-                        res.get("restaurant_id") == restaurant_id
-                        and start_iso <= res.get("reservation_datetime", "") <= end_iso
+                    res.get("restaurant_id") == restaurant_id
+                    and start_iso <= res.get("reservation_datetime", "") <= end_iso
                 ):
                     items.append(clone(res))
             return items
         resp = self._with_retries(
             self.reservations_table.scan,
             FilterExpression=(
-                    Attr("restaurant_id").eq(restaurant_id)
-                    & Attr("reservation_datetime").between(start_iso, end_iso)
+                Attr("restaurant_id").eq(restaurant_id) & Attr("reservation_datetime").between(start_iso, end_iso)
             ),
         )
         return resp.get("Items", [])

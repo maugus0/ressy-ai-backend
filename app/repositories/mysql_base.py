@@ -2,8 +2,9 @@
 MySQL Base Repository for database operations.
 This is a placeholder for MySQL operations - adapt based on your MySQL connection library.
 """
+
 import os
-from typing import Dict, List, Any
+from typing import Any, Dict, List
 
 import mysql.connector
 from mysql.connector import Error
@@ -42,14 +43,20 @@ class MySQLBaseRepository:
 
         try:
             self.connection = mysql.connector.connect(
-                host=os.getenv('DB_HOST', os.getenv('MYSQL_HOST', 'localhost')),
-                database=os.getenv('DB_NAME', os.getenv('MYSQL_DATABASE', 'ressy')),
-                user=os.getenv('DB_USERNAME', os.getenv('MYSQL_USER', 'root')),
-                password=os.getenv('DB_PASSWORD', os.getenv('MYSQL_PASSWORD', 'root')),
-                port=int(os.getenv('DB_PORT', os.getenv('MYSQL_PORT', 3306)))
+                host=os.getenv("DB_HOST", os.getenv("MYSQL_HOST", "localhost")),
+                database=os.getenv("DB_NAME", os.getenv("MYSQL_DATABASE", "ressy")),
+                user=os.getenv("DB_USERNAME", os.getenv("MYSQL_USER", "root")),
+                password=os.getenv("DB_PASSWORD", os.getenv("MYSQL_PASSWORD", "root")),
+                port=int(os.getenv("DB_PORT", os.getenv("MYSQL_PORT", 3306))),
+                connection_timeout=5,  # Add timeout for faster failure in tests
             )
         except Error as e:
-            print(f"Error connecting to MySQL: {e}")
+            error_msg = f"Error connecting to MySQL: {e}"
+            print(error_msg)
+            # In test mode, allow connection to fail without raising
+            if os.getenv("ALLOW_DB_FAILURE", "false").lower() == "true":
+                self.connection = None
+                return
             raise
 
     def _ensure_connected(self):

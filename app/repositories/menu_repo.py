@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Dict, List, Any
+from typing import Any, Dict, List
 
 from boto3.dynamodb.conditions import Key
 
@@ -26,7 +26,7 @@ class MenuRepository(BaseRepository):
             "menu_id": menu_id,
             "created_at": datetime.utcnow().isoformat(),
             "updated_at": datetime.utcnow().isoformat(),
-            **data
+            **data,
         }
         if self.use_mock:
             menus = MOCK_DATA["menus"].setdefault(restaurant_id, [])
@@ -43,10 +43,7 @@ class MenuRepository(BaseRepository):
                 if menu.get("menu_id") == menu_id:
                     return clone(menu)
             return {}
-        resp = self._with_retries(
-            self.menus_table.get_item,
-            Key={"restaurant_id": restaurant_id, "menu_id": menu_id}
-        )
+        resp = self._with_retries(self.menus_table.get_item, Key={"restaurant_id": restaurant_id, "menu_id": menu_id})
         return resp.get("Item", {})
 
     def get_menus_by_restaurant(self, restaurant_id: str) -> List[Dict[str, Any]]:
@@ -56,7 +53,7 @@ class MenuRepository(BaseRepository):
         resp = self._with_retries(
             self.menus_table.query,
             IndexName="restaurant_id-menu_id-index",
-            KeyConditionExpression=Key("restaurant_id").eq(restaurant_id)
+            KeyConditionExpression=Key("restaurant_id").eq(restaurant_id),
         )
         return resp.get("Items", [])
 
@@ -74,7 +71,7 @@ class MenuRepository(BaseRepository):
             Key={"restaurant_id": restaurant_id, "menu_id": menu_id},
             UpdateExpression="SET " + ", ".join(f"#{k}=:{k}" for k in data.keys()),
             ExpressionAttributeNames={f"#{k}": k for k in data.keys()},
-            ExpressionAttributeValues={f":{k}": v for k, v in data.items()}
+            ExpressionAttributeValues={f":{k}": v for k, v in data.items()},
         )
 
     def delete_menu(self, restaurant_id: str, menu_id: str) -> None:
@@ -83,10 +80,7 @@ class MenuRepository(BaseRepository):
             menus = [m for m in MOCK_DATA["menus"].get(restaurant_id, []) if m.get("menu_id") != menu_id]
             MOCK_DATA["menus"][restaurant_id] = menus
             return
-        self._with_retries(
-            self.menus_table.delete_item,
-            Key={"restaurant_id": restaurant_id, "menu_id": menu_id}
-        )
+        self._with_retries(self.menus_table.delete_item, Key={"restaurant_id": restaurant_id, "menu_id": menu_id})
 
     def create_special(self, restaurant_id: str, special_id: str, data: dict) -> None:
         """Create a new special."""
@@ -94,7 +88,7 @@ class MenuRepository(BaseRepository):
             "restaurant_id": restaurant_id,
             "special_id": special_id,
             "created_at": datetime.utcnow().isoformat(),
-            **data
+            **data,
         }
         if self.use_mock:
             specials = MOCK_DATA["specials"].setdefault(restaurant_id, [])
@@ -112,8 +106,7 @@ class MenuRepository(BaseRepository):
                     return clone(special)
             return {}
         resp = self._with_retries(
-            self.specials_table.get_item,
-            Key={"restaurant_id": restaurant_id, "special_id": special_id}
+            self.specials_table.get_item, Key={"restaurant_id": restaurant_id, "special_id": special_id}
         )
         return resp.get("Item", {})
 
@@ -124,7 +117,7 @@ class MenuRepository(BaseRepository):
         resp = self._with_retries(
             self.specials_table.scan,
             FilterExpression="restaurant_id = :rid",
-            ExpressionAttributeValues={":rid": restaurant_id}
+            ExpressionAttributeValues={":rid": restaurant_id},
         )
         return resp.get("Items", [])
 
@@ -141,7 +134,7 @@ class MenuRepository(BaseRepository):
             Key={"restaurant_id": restaurant_id, "special_id": special_id},
             UpdateExpression="SET " + ", ".join(f"#{k}=:{k}" for k in data.keys()),
             ExpressionAttributeNames={f"#{k}": k for k in data.keys()},
-            ExpressionAttributeValues={f":{k}": v for k, v in data.items()}
+            ExpressionAttributeValues={f":{k}": v for k, v in data.items()},
         )
 
     def delete_special(self, restaurant_id: str, special_id: str) -> None:
@@ -151,6 +144,5 @@ class MenuRepository(BaseRepository):
             MOCK_DATA["specials"][restaurant_id] = specials
             return
         self._with_retries(
-            self.specials_table.delete_item,
-            Key={"restaurant_id": restaurant_id, "special_id": special_id}
+            self.specials_table.delete_item, Key={"restaurant_id": restaurant_id, "special_id": special_id}
         )

@@ -40,11 +40,11 @@ class ReservationService:
         return []
 
     def check_reservation_availability(
-            self,
-            restaurant_id: str,
-            party_size: int,
-            start_iso: str,
-            end_iso: str,
+        self,
+        restaurant_id: str,
+        party_size: int,
+        start_iso: str,
+        end_iso: str,
     ) -> dict:
         restaurant = self.restaurant_service.get_restaurant(restaurant_id)
         if not restaurant:

@@ -1,7 +1,8 @@
 """
 MySQL FAQ Repository for fetching restaurant FAQs.
 """
-from typing import List, Dict, Any
+
+from typing import Any, Dict, List
 
 from app.repositories.mysql_base import MySQLBaseRepository
 
@@ -14,7 +15,7 @@ class MySQLFAQRepository(MySQLBaseRepository):
         Get all FAQs for a restaurant.
         """
         query = """
-            SELECT 
+            SELECT
                 id,
                 restaurant_id,
                 question,

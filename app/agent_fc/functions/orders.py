@@ -173,8 +173,7 @@ def _match_menu_item(menu_items: List[Dict[str, Any]], request_item: OrderItem) 
 async def check_items_availability(**kwargs) -> Dict[str, Any]:
     args = CheckItemsAvailabilityArgs.model_validate(kwargs)
     print(
-        f"[INFO] check_items_availability invoked restaurant_id={args.restaurant_id} "
-        f"item_count={len(args.items)}"
+        f"[INFO] check_items_availability invoked restaurant_id={args.restaurant_id} " f"item_count={len(args.items)}"
     )
     menu_items = await _run_service_call(_menu_repo.get_available_items_by_restaurant, args.restaurant_id)
     menu_items = _flatten_menu_items(menu_items)

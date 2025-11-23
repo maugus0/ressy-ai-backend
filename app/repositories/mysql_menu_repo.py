@@ -1,8 +1,9 @@
 """
 MySQL Menu Repository for fetching available menu items.
 """
+
 import json
-from typing import List, Dict, Any
+from typing import Any, Dict, List
 
 from app.repositories.mysql_base import MySQLBaseRepository
 
@@ -16,7 +17,7 @@ class MySQLMenuRepository(MySQLBaseRepository):
         Only returns items where is_available = TRUE.
         """
         query = """
-            SELECT 
+            SELECT
                 id,
                 restaurant_id,
                 category,
@@ -31,7 +32,7 @@ class MySQLMenuRepository(MySQLBaseRepository):
                 created_at,
                 updated_at
             FROM Menus
-            WHERE restaurant_id = %s 
+            WHERE restaurant_id = %s
               AND is_available = TRUE
             ORDER BY category, sub_category, item_name
         """
@@ -90,8 +91,17 @@ class MySQLMenuRepository(MySQLBaseRepository):
     def update_menu(self, restaurant_id: int, menu_id: int, data: Dict[str, Any]) -> int:
         fields = []
         params = []
-        for key in ["category", "sub_category", "item_name", "item_desc", "price", "avg_prep_time", "suggested_items",
-                    "is_available", "is_special"]:
+        for key in [
+            "category",
+            "sub_category",
+            "item_name",
+            "item_desc",
+            "price",
+            "avg_prep_time",
+            "suggested_items",
+            "is_available",
+            "is_special",
+        ]:
             if key in data:
                 value = data[key]
                 if key == "suggested_items":

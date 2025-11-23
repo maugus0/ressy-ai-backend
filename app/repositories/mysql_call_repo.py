@@ -1,7 +1,8 @@
 """
 MySQL Call Repository for call session operations.
 """
-from typing import Optional, List, Dict
+
+from typing import Dict, List, Optional
 
 from app.repositories.mysql_base import MySQLBaseRepository
 
@@ -10,11 +11,7 @@ class MySQLCallRepository(MySQLBaseRepository):
     """Repository for call data access in MySQL."""
 
     def create_call_session(
-            self,
-            user_id: str,
-            twilio_sid: str,
-            deepgram_session_id: str,
-            restaurant_id: Optional[str] = None
+        self, user_id: str, twilio_sid: str, deepgram_session_id: str, restaurant_id: Optional[str] = None
     ) -> int:
         """
         Create a new call session and return call ID.
@@ -25,16 +22,9 @@ class MySQLCallRepository(MySQLBaseRepository):
                 call_status, call_direction, call_duration, cost, started_at, created_at, updated_at
             ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW(), NOW())
         """
-        call_id = self._execute_insert(query, (
-            user_id,
-            restaurant_id,
-            twilio_sid,
-            deepgram_session_id,
-            'in_progress',
-            'inbound',
-            0,
-            0.000000
-        ))
+        call_id = self._execute_insert(
+            query, (user_id, restaurant_id, twilio_sid, deepgram_session_id, "in_progress", "inbound", 0, 0.000000)
+        )
         print(f"[MySQL] Created call session: call_id={call_id}, user_id={user_id}, restaurant_id={restaurant_id}")
         return call_id
 
@@ -84,12 +74,7 @@ class MySQLCallRepository(MySQLBaseRepository):
         return self._execute_query(query, (limit,))
 
     def store_transcript_message(
-            self,
-            call_id: int,
-            message_sequence: int,
-            speaker: str,
-            message: str,
-            timestamp: str
+        self, call_id: int, message_sequence: int, speaker: str, message: str, timestamp: str
     ) -> None:
         """
         Store individual transcript messages.
