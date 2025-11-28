@@ -31,6 +31,7 @@ class Settings:
     DEEPGRAM_AGENT_GREETING = os.getenv(
         "DEEPGRAM_AGENT_GREETING", "Hi! Thank you for calling {RESTAURANT_NAME}. How may I help you today?"
     )
+    RESTAURANT_TIMEZONE = os.getenv("RESTAURANT_TIMEZONE", "America/Vancouver")
 
     # Barge-in behavior
     # Minimum gap in seconds after last agent audio chunk before clearing Twilio buffer when user starts speaking

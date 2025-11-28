@@ -52,6 +52,10 @@ app/config.json
 venv/
 ENV/
 env/
+.pytest-venv/
 
 # Ignore requirements lock files
 requirements.lock
+
+# IDE artifacts
+.idea/
