@@ -39,7 +39,7 @@ class MySQLBaseRepository:
                 host=os.getenv('DB_HOST', os.getenv('MYSQL_HOST', 'localhost')),
                 database=os.getenv('DB_NAME', os.getenv('MYSQL_DATABASE', 'ressy')),
                 user=os.getenv('DB_USERNAME', os.getenv('MYSQL_USER', 'root')),
-                password=os.getenv('DB_PASSWORD', os.getenv('MYSQL_PASSWORD', 'root')),
+                password=os.getenv('DB_PASSWORD', os.getenv('MYSQL_PASSWORD', '')),
                 port=int(os.getenv('DB_PORT', os.getenv('MYSQL_PORT', 3306)))
             )
         except Error as e:

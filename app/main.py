@@ -1,7 +1,7 @@
 import asyncio
 from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
-from app.api import auth, calls, admin, users, menus, restaurants, specials, orders, order_history, transcripts, faqs
+from app.api import auth, calls, admin, users, menus, restaurants, specials, orders, order_history, transcripts, faqs, opentable, reservations, dashboard_reservations
 from app.api.websocket import twilio_websocket_handler
 
 app = FastAPI(title="Voice Agent API", version="1.0.0")
@@ -26,6 +26,9 @@ app.include_router(orders.router, prefix="/api/v1/orders", tags=["orders"])
 app.include_router(order_history.router, prefix="/api/v1/order-history", tags=["order-history"])
 app.include_router(transcripts.router, prefix="/api/v1/transcripts", tags=["transcripts"])
 app.include_router(faqs.router, prefix="/api/v1/faqs", tags=["faqs"])
+app.include_router(opentable.router, prefix="/api/v1/opentable", tags=["opentable"])
+app.include_router(reservations.router, prefix="/api/v1/reservations", tags=["reservations"])
+app.include_router(dashboard_reservations.router, prefix="/api/v1/dashboard", tags=["dashboard-reservations"])
 
 
 # WebSocket Endpoint

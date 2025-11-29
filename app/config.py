@@ -28,6 +28,9 @@ class Settings:
     DEEPGRAM_SPEAK_MODEL = os.getenv('DEEPGRAM_SPEAK_MODEL', 'aura-2-thalia-en')
     DEEPGRAM_AGENT_GREETING = os.getenv('DEEPGRAM_AGENT_GREETING', 'Hello! I\'m your pharmacy assistant Mahima. I can help you with drug information, placing orders, and checking order status. When placing orders, I\'ll need your full name spelled out clearly and will confirm all details with you. How can I assist you today?')
     
+    # OpenTable Configuration
+    OPENTABLE_BASE_URL = os.getenv('OPENTABLE_BASE_URL', 'https://platform.otqa.com/sync')
+    
     # Database Tables
     RESTAURANTS_TABLE: str = "Restaurants" 
     MENUS_TABLE: str = "Menus"
@@ -38,6 +41,7 @@ class Settings:
     TRANSCRIPTS_TABLE: str = "ConversationTranscripts"
     FAQS_TABLE: str = "FAQs"
     USERS_TABLE: str = "Users"
+    OPENTABLE_API_LOGS_TABLE: str = "OpenTable_API_Logs"
 
 settings = Settings()
 
