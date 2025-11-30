@@ -8,9 +8,10 @@ CREATE TABLE IF NOT EXISTS Ressy_Administrator (
     role_id INT NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    last_login TIMESTAMP NULL DEFAULT NULL,
+    last_active TIMESTAMP NULL DEFAULT NULL,
     FOREIGN KEY (role_id) REFERENCES Crm_roles(id) ON DELETE RESTRICT ON UPDATE CASCADE,
     INDEX idx_email (email),
     INDEX idx_role_id (role_id),
     INDEX idx_created_at (created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-

@@ -72,7 +72,7 @@ def test_models_import():
 
 def test_utils_import():
     """Test that utils can be imported."""
-    from app.utils import helpers, security
+    from app.utils import helpers, jwt_util
 
-    assert security is not None
+    assert jwt_util is not None
     assert helpers is not None

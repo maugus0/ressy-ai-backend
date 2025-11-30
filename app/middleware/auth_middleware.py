@@ -1,74 +1,92 @@
-# app/middleware/auth_middleware.py
-from functools import lru_cache
-from typing import Dict
+from typing import List, Optional
 
-import jwt
-import requests
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
+from app.utils.jwt_util import JWTUtil
+
 security = HTTPBearer()
-
-# config
-COGNITO_USERPOOL_ID = "YOUR_USERPOOL_ID"
-COGNITO_REGION = "ca-central-1"
-COGNITO_APP_CLIENT_ID = "YOUR_APP_CLIENT_ID"
-
-JWKS_URL = f"https://cognito-idp.{COGNITO_REGION}.amazonaws.com/{COGNITO_USERPOOL_ID}/.well-known/jwks.json"
+jwt_util = JWTUtil()
 
 
-@lru_cache()
-def get_jwks():
-    response = requests.get(JWKS_URL)
-    if response.status_code != 200:
-        raise HTTPException(status_code=500, detail="Failed to fetch Cognito JWKS")
-    return response.json()
+def _validate_access_token(token: str, audiences: List[str]) -> dict:
+    if not token:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
 
+    claims = None
+    last_error: Optional[HTTPException] = None
+    for audience in audiences:
+        try:
+            claims = jwt_util.validate_token(token, audience)
+            break
+        except HTTPException as exc:  # noqa: PERF203 small loop
+            last_error = exc
+    if claims is None:
+        raise last_error or HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
 
-def verify_cognito_token(token: str) -> Dict:
-    """Verify Cognito JWT token."""
-    try:
-        headers = jwt.get_unverified_header(token)
-        jwks = get_jwks()
-        key = next((k for k in jwks["keys"] if k["kid"] == headers["kid"]), None)
-        if not key:
-            raise HTTPException(status_code=401, detail="Invalid token")
+    if claims.get("token_type") != "access":
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Access token required")
 
-        public_key = jwt.algorithms.RSAAlgorithm.from_jwk(key)
-        payload = jwt.decode(
-            token,
-            key=public_key,
-            algorithms=[headers["alg"]],
-            audience=COGNITO_APP_CLIENT_ID,
-        )
-        return payload
-    except jwt.ExpiredSignatureError:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token expired")
-    except jwt.InvalidTokenError as e:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=f"Invalid token: {str(e)}")
+    return claims
 
 
 def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)) -> dict:
-    """Get current user from token."""
-    token = credentials.credentials
-    payload = verify_cognito_token(token)
-    return payload
+    token = credentials.credentials if credentials else None
+    return _validate_access_token(token, [jwt_util.admin_audience, jwt_util.client_audience])
 
 
-def get_current_active_user(payload: dict = Depends(get_current_user)) -> dict:
-    """Get current active user."""
-    if payload.get("cognito:user_status", "CONFIRMED") != "CONFIRMED":
-        raise HTTPException(status_code=400, detail="Inactive user")
-    return payload
+def get_current_active_user(credentials: HTTPAuthorizationCredentials = Depends(security)) -> dict:
+    return get_current_user(credentials)
 
 
-def require_role(roles: list[str]):
-    """Require specific role(s) for access."""
+def get_current_admin_user(credentials: HTTPAuthorizationCredentials = Depends(security)) -> dict:
+    claims = _validate_access_token(credentials.credentials if credentials else None, [jwt_util.admin_audience])
+    if claims.get("user_type") != "admin":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
+    return claims
 
-    def role_checker(payload: dict = Depends(get_current_active_user)):
-        user_roles = payload.get("cognito:groups", [])
-        if not any(role in user_roles for role in roles):
-            raise HTTPException(status_code=403, detail="Not authorized")
-        return payload
+
+def get_current_restaurant_user(credentials: HTTPAuthorizationCredentials = Depends(security)) -> dict:
+    claims = _validate_access_token(credentials.credentials if credentials else None, [jwt_util.client_audience])
+    if claims.get("user_type") != "restaurant":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Restaurant access required")
+    return claims
+
+
+def require_role(roles: List[str]):
+    def role_checker(
+        credentials: HTTPAuthorizationCredentials = Depends(security),
+        restaurant_id: str | None = None,
+    ):
+        claims = _validate_access_token(
+            credentials.credentials if credentials else None, [jwt_util.admin_audience, jwt_util.client_audience]
+        )
+        user_role = claims.get("role")
+        user_type = claims.get("user_type")
+
+        if roles and not _role_matches(user_role, user_type, roles):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized")
+
+        if restaurant_id and user_type == "restaurant":
+            token_restaurant_id = str(claims.get("restaurant_id"))
+            if token_restaurant_id and token_restaurant_id != str(restaurant_id):
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Restaurant access denied")
+
+        return claims
 
     return role_checker
+
+
+def _role_matches(user_role: Optional[str], user_type: Optional[str], allowed_roles: List[str]) -> bool:
+    normalized_user_role = (user_role or "").lower()
+    normalized_user_type = (user_type or "").lower()
+
+    for role in allowed_roles:
+        role_normalized = role.lower()
+        if normalized_user_role == role_normalized:
+            return True
+        if role_normalized == "admin" and normalized_user_type == "admin":
+            return True
+        if role_normalized in {"client", "restaurant"} and normalized_user_type == "restaurant":
+            return True
+    return False

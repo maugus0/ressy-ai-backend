@@ -26,6 +26,8 @@ Migrations should be run in numerical order (001, 002, 003, etc.) as they have d
 14. **014_create_ressy_administrator.sql** - Creates the Ressy_Administrator table (depends on Crm_roles)
 15. **015_create_restaurant_administrators.sql** - Creates the Restaurant_Administrators table (depends on Restaurants
     and Crm_roles)
+16. **016_create_calls.sql** - Creates the Calls table (stores call session information)
+17. **017_create_auth_sessions.sql** - Adds last_login/last_active columns to administrators and creates Auth_Sessions for JWT refresh flows
 
 ## Running Migrations
 
@@ -99,4 +101,3 @@ Foreign keys are set up with appropriate ON DELETE and ON UPDATE actions:
 - Timestamps use `TIMESTAMP` type with automatic `created_at` and `updated_at` handling
 - JSON columns are used for flexible data storage (order_details, customization, etc.)
 - UUIDs are used for administrator tables (VARCHAR(36))
-

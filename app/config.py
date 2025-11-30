@@ -7,9 +7,19 @@ load_dotenv()
 
 class Settings:
     AWS_REGION = os.getenv("AWS_REGION", "ca-central-1")
+    # Deprecated (legacy HS256). Retained for backward compatibility with any remaining consumers.
     JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "your-super-secret-jwt-key-change-in-production")
-    JWT_ALGORITHM = "HS256"
+    JWT_ALGORITHM = "RS256"
+    # Deprecated in favor of JWT_ACCESS_TOKEN_EXP_SECONDS.
     JWT_EXPIRE_HOURS = 24
+    JWT_PRIVATE_KEY = os.getenv("JWT_PRIVATE_KEY", "").replace("\\n", "\n")
+    JWT_PUBLIC_KEY = os.getenv("JWT_PUBLIC_KEY", "").replace("\\n", "\n")
+    JWT_ACCESS_TOKEN_EXP_SECONDS = int(os.getenv("JWT_ACCESS_TOKEN_EXP_SECONDS", 3600))
+    JWT_REFRESH_TOKEN_EXP_SECONDS = int(os.getenv("JWT_REFRESH_TOKEN_EXP_SECONDS", 30 * 24 * 3600))
+    JWT_ISSUER = os.getenv("JWT_ISSUER", "ressy.ai/auth")
+    JWT_ADMIN_AUDIENCE = os.getenv("JWT_ADMIN_AUDIENCE", "ressy-admin-api")
+    JWT_CLIENT_AUDIENCE = os.getenv("JWT_CLIENT_AUDIENCE", "ressy-client-api")
+    JWT_AUTH_AUDIENCE = os.getenv("JWT_AUTH_AUDIENCE", "ressy-auth")
     USE_MOCK_DATA = os.getenv("USE_MOCK_DATA", "true").lower() in {"1", "true", "yes", "on"}
     DEEPGRAM_API_KEY = os.getenv("DEEPGRAM_API_KEY")
 
