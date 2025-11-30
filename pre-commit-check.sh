@@ -29,6 +29,39 @@ warning() {
     echo -e "${YELLOW}⚠️  $1${NC}"
 }
 
+# Activate the local virtual environment if available so the tooling commands
+# (black, isort, etc.) are reachable even outside an activated shell.
+VENV_ACTIVATED=false
+if [ -d ".venv" ]; then
+    if [ -f ".venv/bin/activate" ]; then
+        # shellcheck source=/dev/null
+        source ".venv/bin/activate"
+        VENV_ACTIVATED=true
+    elif [ -f ".venv/Scripts/activate" ]; then
+        # shellcheck source=/dev/null
+        # Windows virtual environments place activate inside Scripts
+        source ".venv/Scripts/activate"
+        VENV_ACTIVATED=true
+    fi
+fi
+
+if [ "${VENV_ACTIVATED}" = true ]; then
+    success "Using Python virtual environment at .venv"
+else
+    warning "Proceeding without activating .venv (tools must already be on PATH)"
+fi
+
+# Determine which Python executable to use (prefer the one from the virtualenv)
+PYTHON_CMD="python"
+if ! command -v "${PYTHON_CMD}" > /dev/null 2>&1; then
+    if command -v python3 > /dev/null 2>&1; then
+        PYTHON_CMD="python3"
+    else
+        error "Python interpreter not found. Install Python or create the .venv environment."
+        exit 1
+    fi
+fi
+
 # 1. Formatting check
 echo "1️⃣  Checking code formatting (Black)..."
 if black --check app/ tests/ > /dev/null 2>&1; then
@@ -61,7 +94,7 @@ fi
 # 4. Syntax validation
 echo ""
 echo "4️⃣  Validating Python syntax..."
-if python3 -m py_compile app/main.py app/config.py > /dev/null 2>&1; then
+if "${PYTHON_CMD}" -m py_compile app/main.py app/config.py > /dev/null 2>&1; then
     success "Syntax validation passed"
 else
     error "Syntax validation failed"
@@ -91,4 +124,3 @@ echo ""
 echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo -e "${GREEN}✅ All critical checks passed! Ready to commit.${NC}"
 echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-

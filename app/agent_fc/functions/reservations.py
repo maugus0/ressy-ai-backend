@@ -50,7 +50,7 @@ async def create_reservation(**kwargs) -> Dict[str, Any]:
     args = CreateReservationArgs.model_validate(kwargs)
     print(f"[INFO] create_reservation invoked restaurant_id={args.restaurant_id} " f"party_size={args.party_size}")
 
-    async def _create():
+    def _create():
         user_id = _user_repo.create_or_update_user(
             {
                 "name": args.customer_name,
@@ -75,7 +75,7 @@ async def update_reservation(**kwargs) -> Dict[str, Any]:
     args = UpdateReservationArgs.model_validate(kwargs)
     print(f"[INFO] update_reservation invoked customer_contact={args.customer_contact}")
 
-    async def _update():
+    def _update():
         user_id = _user_repo.get_user_id_by_phone_or_email(args.customer_contact, None)
         if not user_id:
             return None
@@ -100,7 +100,7 @@ async def check_reservation_availability(**kwargs) -> Dict[str, Any]:
         f"party_size={args.party_size}"
     )
 
-    async def _check():
+    def _check():
         slots = _reservation_repo.list_available_slots(int(args.restaurant_id), args.date_start_iso, args.date_end_iso)
         return {
             "restaurant_id": args.restaurant_id,

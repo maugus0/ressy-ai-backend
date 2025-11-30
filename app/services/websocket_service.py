@@ -2,9 +2,10 @@ import asyncio
 import base64
 import json
 import time
-from dataclasses import dataclass, field
-from datetime import datetime
+from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any, Dict, Optional
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import websockets
 from fastapi import WebSocket, WebSocketDisconnect
@@ -18,6 +19,9 @@ from app.agent_fc.router import FunctionCallRouter
 from app.agent_fc.transport import Transport
 from app.config import settings
 from app.services.call_service import CallService
+from app.services.callmanager.call_filler import FillerManager
+from app.services.callmanager.call_latency import log_agent_audio_start_latency, log_assistant_text_latency
+from app.services.callmanager.call_state import StreamState
 from app.services.deepgram_service import DeepgramService
 from app.services.faq_service import FAQService
 from app.services.menu_service import MenuService
@@ -37,25 +41,6 @@ class CallResources:
     think_prompt: str
 
 
-@dataclass
-class StreamState:
-    audio_buffer: bytearray = field(default_factory=bytearray)
-    last_agent_audio_time: Optional[float] = None
-    barge_in_active: bool = False
-    agent_speaking: bool = False
-    barge_in_start_time: Optional[float] = None
-    barge_in_reported: bool = False
-    last_user_text_time: Optional[float] = None
-    last_function_response_time: Optional[float] = None
-    in_function_chain: bool = False
-    closing_after_farewell: bool = False
-    farewell_expected_text: Optional[str] = None
-    farewell_started: bool = False
-    farewell_shutdown_complete: bool = False
-    message_seq: int = 0
-    conversation_history: list[dict[str, Any]] = field(default_factory=list)
-
-
 class WebSocketService:
     def __init__(self):
         self.deepgram_service = DeepgramService()
@@ -67,6 +52,7 @@ class WebSocketService:
         self._active_twilio: set[WebSocket] = set()
         self._active_deepgram: set[Any] = set()
         self._connections_lock = asyncio.Lock()
+        self._filler_manager = FillerManager()
 
     def _summarize_menu(self, items: list[dict[str, Any]]) -> Dict[str, Any]:
         """Return a compact menu summary for prompts."""
@@ -158,6 +144,22 @@ class WebSocketService:
                 "restaurant_id": restaurant_id,
                 "restaurant_phone": restaurant_phone_fwd,
             },
+        }
+        restaurant_timezone_name = getattr(settings, "RESTAURANT_TIMEZONE", "America/Vancouver")
+        try:
+            restaurant_tz = ZoneInfo(restaurant_timezone_name)
+            timezone_label = restaurant_timezone_name
+        except ZoneInfoNotFoundError:
+            restaurant_tz = datetime.now().astimezone().tzinfo or timezone.utc
+            timezone_label = restaurant_tz.tzname(None) or "America/Vancouver"
+
+        now_utc = datetime.now(timezone.utc)
+        now_local = now_utc.astimezone(restaurant_tz)
+        context["current_time"] = {
+            "utc_iso": now_utc.isoformat(),
+            "local_iso": now_local.isoformat(),
+            "local_date": now_local.date().isoformat(),
+            "timezone": timezone_label,
         }
         if caller_phone:
             context["caller_profile"] = {
@@ -415,6 +417,7 @@ class WebSocketService:
         if not audio_payload:
             return
         try:
+            now = time.perf_counter()
             audio_bytes = base64.b64decode(audio_payload)
             state.audio_buffer.extend(audio_bytes)
             buffer_size = 3200
@@ -425,19 +428,26 @@ class WebSocketService:
                 msg = {"event": "media", "streamSid": streamsid, "media": {"payload": payload}}
                 await twilio_ws.send_text(json.dumps(msg))
                 state.last_agent_audio_time = asyncio.get_event_loop().time()
+                log_agent_audio_start_latency(state, now)
                 print(f"✅ Sent ConversationAudio {len(chunk)} bytes to Twilio")
         except Exception as exc:
             print(f"Error processing ConversationAudio: {exc}")
 
-    def _track_conversation_turn(self, decoded: dict[str, Any], state: StreamState) -> None:
+    def _track_conversation_turn(
+        self, decoded: dict[str, Any], state: StreamState, now: Optional[float] = None
+    ) -> None:
         if decoded.get("type") != "ConversationText":
             return
+        current_time = now or time.perf_counter()
         role = decoded.get("role")
         if role == "user":
-            state.last_user_text_time = time.perf_counter()
+            state.last_user_text_time = current_time
             state.in_function_chain = False
         elif role == "assistant":
             state.in_function_chain = False
+            state.last_assistant_text_time = current_time
+            state.agent_audio_latency_logged = False
+            state.last_assistant_audio_start_time = None
 
     def _store_transcript_entry(self, decoded: dict[str, Any], call_id: Optional[str], state: StreamState) -> None:
         if decoded.get("type") not in {"ConversationText", "History"}:
@@ -540,8 +550,15 @@ class WebSocketService:
             return True
         return False
 
-    async def _handle_binary_audio(self, message: bytes, state: StreamState, twilio_ws, streamsid) -> None:
-        state.audio_buffer.extend(message)
+    async def _handle_binary_audio(
+        self, message: bytes | bytearray | memoryview, state: StreamState, twilio_ws, streamsid
+    ) -> None:
+        now = time.perf_counter()
+        try:
+            state.audio_buffer.extend(message)
+        except Exception as exc:
+            print(f"[WARN] Failed to buffer binary audio payload ({type(message)}): {exc}")
+            return
         buffer_size = 3200
         while len(state.audio_buffer) >= buffer_size:
             chunk = state.audio_buffer[:buffer_size]
@@ -550,6 +567,7 @@ class WebSocketService:
             msg = {"event": "media", "streamSid": streamsid, "media": {"payload": payload}}
             await twilio_ws.send_text(json.dumps(msg))
             state.last_agent_audio_time = asyncio.get_event_loop().time()
+            log_agent_audio_start_latency(state, now)
 
     async def handle_barge_in(self, decoded, twilio_ws, streamsid, last_agent_audio_time):
         """Clear Twilio audio only if user starts speaking after a gap."""
@@ -604,7 +622,30 @@ class WebSocketService:
             async for message in sts_ws:
                 if isinstance(message, str):
                     decoded = json.loads(message)
-                    print(f"Deepgram Message: {decoded}")
+                    message_type = decoded.get("type")
+                    now = time.perf_counter()
+                    if message_type == "History":
+                        pass  # Don't print history entries to reduce noise
+                    elif message_type == "ConversationText":
+                        role = decoded.get("role", "unknown")
+                        content = decoded.get("content", "")
+                        print(f"{role}: {content}")
+                    else:
+                        print(f"Deepgram Message: {decoded}")
+
+                    if message_type == "UserStartedSpeaking":
+                        state.last_user_started_speaking_time = now
+                        self._filler_manager.cancel(state)
+                    elif message_type == "ConversationText":
+                        role = decoded.get("role")
+                        self._track_conversation_turn(decoded, state, now)
+                        if role == "user":
+                            self._filler_manager.schedule(state, sts_ws)
+                        elif role == "assistant":
+                            self._filler_manager.cancel(state)
+                            log_assistant_text_latency(state, now)
+                    elif message_type in {"ConversationAudio", "AgentAudioDone", "AgentStartedSpeaking"}:
+                        self._filler_manager.cancel(state)
 
                     farewell_finished = await self._maybe_finish_farewell(
                         decoded, state, twilio_ws, sts_ws, streamsid, shutdown_event, audio_queue
@@ -615,7 +656,6 @@ class WebSocketService:
                     self._update_barge_in_state(decoded, state)
                     await self._handle_audio_payload(decoded, state, twilio_ws, streamsid)
                     await self.handle_text_message(decoded, twilio_ws, sts_ws, streamsid, state.last_agent_audio_time)
-                    self._track_conversation_turn(decoded, state)
                     await self._route_function_calls(decoded, state, transport, sts_ws)
                     self._store_transcript_entry(decoded, call_id, state)
 
@@ -623,7 +663,11 @@ class WebSocketService:
                         await self._flush_audio_buffer(state, twilio_ws, streamsid)
                         continue
 
-                await self._handle_binary_audio(message, state, twilio_ws, streamsid)
+                elif isinstance(message, (bytes, bytearray, memoryview)):
+                    await self._handle_binary_audio(message, state, twilio_ws, streamsid)
+                else:
+                    print(f"[WARN] Dropping unexpected Deepgram payload type: {type(message)}")
+                    continue
 
             if not state.farewell_shutdown_complete:
                 await self._flush_audio_buffer(state, twilio_ws, streamsid)
@@ -635,6 +679,7 @@ class WebSocketService:
         finally:
             end_time = asyncio.get_event_loop().time()
             duration = int(end_time - start_time)
+            self._filler_manager.cancel(state)
             try:
                 if call_id:
                     self.call_service.update_call_cost(call_id, duration)
