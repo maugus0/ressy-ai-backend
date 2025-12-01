@@ -1,6 +1,6 @@
 from typing import List, Optional
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Query, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.utils.jwt_util import JWTUtil
@@ -56,7 +56,7 @@ def get_current_restaurant_user(credentials: HTTPAuthorizationCredentials = Depe
 def require_role(roles: List[str]):
     def role_checker(
         credentials: HTTPAuthorizationCredentials = Depends(security),
-        restaurant_id: str | None = None,
+        restaurant_id: str | None = Query(default=None),
     ):
         claims = _validate_access_token(
             credentials.credentials if credentials else None, [jwt_util.admin_audience, jwt_util.client_audience]
