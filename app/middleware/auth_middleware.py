@@ -1,6 +1,6 @@
 from typing import List, Optional
 
-from fastapi import Depends, HTTPException, Query, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.utils.jwt_util import JWTUtil
@@ -55,8 +55,8 @@ def get_current_restaurant_user(credentials: HTTPAuthorizationCredentials = Depe
 
 def require_role(roles: List[str]):
     def role_checker(
+        request: Request,
         credentials: HTTPAuthorizationCredentials = Depends(security),
-        restaurant_id: str | None = Query(default=None),
     ):
         claims = _validate_access_token(
             credentials.credentials if credentials else None, [jwt_util.admin_audience, jwt_util.client_audience]
@@ -67,10 +67,12 @@ def require_role(roles: List[str]):
         if roles and not _role_matches(user_role, user_type, roles):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized")
 
-        if restaurant_id and user_type == "restaurant":
-            token_restaurant_id = str(claims.get("restaurant_id"))
-            if token_restaurant_id and token_restaurant_id != str(restaurant_id):
-                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Restaurant access denied")
+        if request and user_type == "restaurant":
+            path_restaurant_id = request.path_params.get("restaurant_id")
+            if path_restaurant_id:
+                token_restaurant_id = str(claims.get("restaurant_id"))
+                if token_restaurant_id and token_restaurant_id != str(path_restaurant_id):
+                    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Restaurant access denied")
 
         return claims
 
