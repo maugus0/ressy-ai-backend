@@ -65,7 +65,7 @@ ressy-ai-backend/
 │   │   ├── restaurant_service.py
 │   │   └── ...                # Other services
 │   ├── utils/                 # Utility functions
-│   │   ├── security.py
+│   │   ├── jwt_util.py
 │   │   ├── helpers.py
 │   │   └── prompt_loader.py
 │   ├── config.py             # Application settings
@@ -145,12 +145,42 @@ AWS_ACCESS_KEY_ID=your_access_key
 AWS_SECRET_ACCESS_KEY=your_secret_key
 
 # JWT Configuration
-JWT_SECRET_KEY=your-super-secret-jwt-key-change-in-production
+JWT_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----"
+JWT_PUBLIC_KEY="-----BEGIN PUBLIC KEY-----\n...\n-----END PUBLIC KEY-----"
+JWT_ACCESS_TOKEN_EXP_SECONDS=3600
+JWT_REFRESH_TOKEN_EXP_SECONDS=2592000
+JWT_ISSUER=ressy.ai/auth
+JWT_ADMIN_AUDIENCE=ressy-admin-api
+JWT_CLIENT_AUDIENCE=ressy-client-api
+JWT_AUTH_AUDIENCE=ressy-auth
 
 # Application Settings
 USE_MOCK_DATA=false
 ALLOW_DB_FAILURE=false  # Set to 'true' for testing without database
 ```
+
+> Store RSA keys as multiline PEM strings; when injecting via environment variables, escape newlines as `\n` if your process manager requires single-line values.
+
+#### Production JWT setup
+
+1. Generate a 2048-bit RSA keypair (private key stays on auth service only):
+   ```bash
+   openssl genrsa -out jwt_private.pem 2048
+   openssl rsa -in jwt_private.pem -pubout -out jwt_public.pem
+   ```
+2. Configure env vars (example):
+   ```
+   JWT_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n<escaped private pem>\n-----END PRIVATE KEY-----"
+   JWT_PUBLIC_KEY="-----BEGIN PUBLIC KEY-----\n<escaped public pem>\n-----END PUBLIC KEY-----"
+   JWT_ISSUER=ressy.ai/auth
+   JWT_ADMIN_AUDIENCE=ressy-admin-api
+   JWT_CLIENT_AUDIENCE=ressy-client-api
+   JWT_AUTH_AUDIENCE=ressy-auth
+   JWT_ACCESS_TOKEN_EXP_SECONDS=3600
+   JWT_REFRESH_TOKEN_EXP_SECONDS=2592000
+   ```
+3. Deploy the **private key** only to the auth component; deploy the **public key** to any service that validates tokens (if split).
+4. Rotate keys via env updates and rolling restarts; ensure both old/new public keys are trusted during rotation if you need overlap.
 
 ### 4. Database Setup
 
@@ -412,7 +442,11 @@ The pipeline configuration is located at `.github/workflows/deploy.yml`. It auto
 
 ### REST APIs (prefix: `/api/v1`)
 
-- **Authentication**: `/auth/login`
+- **Authentication**:
+  - `/auth/admin/login`
+  - `/auth/client/login`
+  - `/auth/refresh`
+  - `/auth/logout`
 - **Users**: `/users/*` (CRUD operations)
 - **Restaurants**: `/restaurants/*` (CRUD operations)
 - **Menus**: `/menu/*` (Menu item management)

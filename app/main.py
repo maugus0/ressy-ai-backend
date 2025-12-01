@@ -10,10 +10,8 @@ from starlette.responses import Response
 
 from app.api import admin, auth, calls, faqs, menus, order_history, orders, restaurants, specials, transcripts, users
 from app.api.websocket import twilio_websocket_handler
-from app.services.restaurant_service import RestaurantService
 
-app = FastAPI(title="Voice Agent API", version="1.0.0")
-restaurant_service = RestaurantService()
+app = FastAPI(title="RessyAI Backend", version="1.0.0")
 
 # CORS middleware
 app.add_middleware(
