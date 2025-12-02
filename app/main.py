@@ -32,7 +32,7 @@ app.include_router(specials.router, prefix="/api/v1/specials", tags=["specials"]
 app.include_router(orders.router, prefix="/api/v1/orders", tags=["orders"])
 app.include_router(order_history.router, prefix="/api/v1/order-history", tags=["order-history"])
 app.include_router(transcripts.router, prefix="/api/v1/transcripts", tags=["transcripts"])
-app.include_router(faqs.router, prefix="/api/v1/faqs", tags=["faqs"])
+app.include_router(faqs.router, tags=["faqs"])
 
 
 # WebSocket Endpoint
