@@ -3,7 +3,7 @@ OpenTable API routes for handling reservation operations.
 """
 from fastapi import APIRouter, Depends, HTTPException, Query
 from typing import Optional, Dict, Any
-from app.middleware.auth_middleware import get_current_active_user, require_role
+from app.middleware.auth_middleware import get_current_active_user
 from app.services.opentable_service import OpenTableService
 from pydantic import BaseModel, Field
 
