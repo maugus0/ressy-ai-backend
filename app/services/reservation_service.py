@@ -1,7 +1,7 @@
 """
 In-House Reservation Service for handling table reservations.
 """
-from typing import Dict, Optional, List, Any
+from typing import Dict, Optional, Any
 from datetime import datetime, timedelta
 import uuid
 from app.repositories.mysql_reservation_repo import MySQLReservationRepository
