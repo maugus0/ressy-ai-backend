@@ -27,7 +27,7 @@ class OpenTableClient:
             "Content-Type": "application/json"
         }
         if self.bearer_token:
-            headers["Authorization"] = f"bearer {self.bearer_token}"
+            headers["Authorization"] = f"Bearer {self.bearer_token}"
         return headers
     
     def get_availability(
