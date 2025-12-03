@@ -119,7 +119,7 @@ class OpenTableClient:
         if environment:
             payload["environment"] = environment
         
-        response = requests.post(url, json=payload, headers=self._get_headers())
+        response = requests.post(url, json=payload, headers=self._get_headers(), timeout=30)
         response.raise_for_status()
         return response.json()
     
