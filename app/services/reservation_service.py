@@ -430,10 +430,18 @@ class ReservationService:
             offset=offset
         )
         
+        total_count = self.reservation_repo.get_reservations_count_by_restaurant(
+            restaurant_id=restaurant_id,
+            reservation_type=self.RESERVATION_TYPE,
+            status=status,
+            start_date=start_dt,
+            end_date=end_dt
+        )
+
         return {
             "restaurant_id": restaurant_id,
             "reservations": reservations,
-            "total": len(reservations)
+            "total": total_count
         }
     
     def cancel_reservation(
