@@ -24,6 +24,13 @@ htmlcov/
 .tox/
 .pytest_cache/
 
+# Test reports and artifacts
+junit-report.xml
+bandit-report.json
+*.json.report
+test-results/
+coverage.xml
+
 # Docker
 *.db
 
@@ -44,7 +51,11 @@ app/config.json
 # Ignore virtual environments
 venv/
 ENV/
+env/
+.pytest-venv/
 
 # Ignore requirements lock files
 requirements.lock
-venv/
+
+# IDE artifacts
+.idea/

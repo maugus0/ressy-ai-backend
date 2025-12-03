@@ -1,0 +1,38 @@
+[tool.black]
+line-length = 120
+target-version = ['py39', 'py310', 'py311']
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+  # directories
+  \.eggs
+  | \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | venv
+  | migrations
+  | scripts
+)/
+'''
+
+[tool.isort]
+profile = "black"
+line_length = 120
+skip = ["migrations", "scripts", "venv", ".venv"]
+
+[tool.mypy]
+python_version = "3.9"
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = true
+no_strict_optional = true
+
+[tool.pylint.messages_control]
+disable = ["C0111", "R0903"]
+max-line-length = 120
+
+[tool.bandit]
+exclude_dirs = ["tests", "migrations", "scripts", "venv", ".venv"]
+
