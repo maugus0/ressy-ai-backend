@@ -9,6 +9,8 @@ CREATE TABLE IF NOT EXISTS Restaurant_Administrators (
     role_id INT NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    last_login TIMESTAMP NULL DEFAULT NULL,
+    last_active TIMESTAMP NULL DEFAULT NULL,
     FOREIGN KEY (rest_id) REFERENCES Restaurants(id) ON DELETE CASCADE ON UPDATE CASCADE,
     FOREIGN KEY (role_id) REFERENCES Crm_roles(id) ON DELETE RESTRICT ON UPDATE CASCADE,
     INDEX idx_rest_id (rest_id),
@@ -18,4 +20,3 @@ CREATE TABLE IF NOT EXISTS Restaurant_Administrators (
     INDEX idx_rest_email (rest_id, email),
     UNIQUE KEY unique_rest_email (rest_id, email)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-

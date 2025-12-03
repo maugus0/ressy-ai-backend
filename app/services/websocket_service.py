@@ -1,39 +1,580 @@
 import asyncio
 import base64
 import json
-import re
+import time
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from typing import Any, Dict, Optional
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
 import websockets
-from datetime import datetime
-from typing import List, Dict, Optional, Any
 from fastapi import WebSocket, WebSocketDisconnect
+
+from app.agent_fc.config import get_settings as get_fc_settings
+from app.agent_fc.functions import conversation, orders, reservations
+from app.agent_fc.models import AgentFrame
+from app.agent_fc.registry import FunctionRegistry
+from app.agent_fc.responses import AgentSideEffect
+from app.agent_fc.router import FunctionCallRouter
+from app.agent_fc.transport import Transport
+from app.config import settings
+from app.services.call_service import CallService
+from app.services.callmanager.call_filler import FillerManager
+from app.services.callmanager.call_latency import log_agent_audio_start_latency, log_assistant_text_latency
+from app.services.callmanager.call_state import StreamState
 from app.services.deepgram_service import DeepgramService
-from app.services.data_extraction_service import DataExtractionService
-from app.repositories.mysql_call_repo import MySQLCallRepository
-from app.repositories.mysql_restaurant_repo import MySQLRestaurantRepository
-from app.repositories.mysql_menu_repo import MySQLMenuRepository
-from app.repositories.mysql_faq_repo import MySQLFAQRepository
-from app.repositories.mysql_user_repo import MySQLUserRepository
-from app.repositories.mysql_order_repo import MySQLOrderRepository
-from app.repositories.mysql_transcript_repo import MySQLTranscriptRepository
+from app.services.faq_service import FAQService
+from app.services.menu_service import MenuService
+from app.services.restaurant_service import RestaurantService
+from app.services.transcript_service import TranscriptService
+from app.utils import prompt_loader
+
+
+@dataclass
+class CallResources:
+    context_payload: Dict[str, Any]
+    restaurant_id: Optional[str]
+    restaurant_phone: Optional[str]
+    restaurant_phone_fwd: Optional[str]
+    restaurant_name: Optional[str]
+    deepgram_key_terms: Optional[Any]
+    think_prompt: str
+
 
 class WebSocketService:
     def __init__(self):
         self.deepgram_service = DeepgramService()
-        self.call_repo = MySQLCallRepository()
-        self.data_extraction_service = DataExtractionService()
-        self.restaurant_repo = MySQLRestaurantRepository()
-        self.menu_repo = MySQLMenuRepository()
-        self.faq_repo = MySQLFAQRepository()
-        self.user_repo = MySQLUserRepository()
-        self.order_repo = MySQLOrderRepository()
-        self.transcript_repo = MySQLTranscriptRepository()
-    
+        self.call_service = CallService()
+        self.restaurant_service = RestaurantService()
+        self.menu_service = MenuService()
+        self.faq_service = FAQService()
+        self.transcript_service = TranscriptService()
+        self._active_twilio: set[WebSocket] = set()
+        self._active_deepgram: set[Any] = set()
+        self._connections_lock = asyncio.Lock()
+        self._filler_manager = FillerManager()
+
+    def _summarize_menu(self, items: list[dict[str, Any]]) -> Dict[str, Any]:
+        """Return a compact menu summary for prompts."""
+        highlights: list[dict[str, Any]] = []
+        categories: list[str] = []
+        for item in items:
+            category = item.get("category")
+            if category:
+                categories.append(str(category))
+            entry = {
+                "item_id": item.get("id"),
+                "name": item.get("item_name"),
+                "price": item.get("price"),
+                "description": item.get("item_desc"),
+                "category": category,
+            }
+            if entry["name"]:
+                highlights.append(entry)
+            if len(highlights) >= 10:
+                break
+        # Preserve order while deduping categories
+        deduped_categories = list(dict.fromkeys(categories))
+        return {"categories": deduped_categories[:6], "highlights": highlights[:10]}
+
+    def _summarize_specials(self, specials: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return [
+            {
+                "item_id": special.get("id"),
+                "name": special.get("item_name"),
+                "description": special.get("item_desc"),
+                "price": special.get("price"),
+                "category": special.get("category"),
+            }
+            for special in specials[:5]
+        ]
+
+    def _summarize_faqs(self, faqs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return [
+            {
+                "question": faq.get("question"),
+                "answer": faq.get("answer"),
+            }
+            for faq in faqs[:6]
+        ]
+
+    def _build_restaurant_context(
+        self, caller_phone: Optional[str] = None, restaurant_record: Optional[Dict[str, Any]] = None
+    ) -> tuple[Dict[str, Any], Optional[str], Optional[str], Optional[str]]:
+        restaurant_phone_fwd = restaurant_record.get("phone_number") if restaurant_record else None
+        restaurant_id = restaurant_record.get("id") if restaurant_record else None
+        if isinstance(restaurant_id, str) and restaurant_id.isdigit():
+            restaurant_id = int(restaurant_id)
+        restaurant = restaurant_record or {}
+
+        menu_items = self.menu_service.get_available_items_by_restaurant(restaurant_id) if restaurant_id else []
+        specials: list[dict[str, Any]] = [item for item in menu_items if item.get("is_special")]
+        regular_menu_items = [item for item in menu_items if not item.get("is_special")]
+        faqs = self.faq_service.list_faqs(restaurant_id) if restaurant_id else []
+
+        restaurant_name = restaurant.get("name")
+        hours = restaurant.get("hours") or restaurant.get("hours_of_operation") or []
+        if isinstance(hours, dict):
+            hours = [f"{day}: {span}" for day, span in hours.items()]
+
+        service_options = restaurant.get("service_options") or {}
+        if not isinstance(service_options, dict):
+            service_options = {}
+
+        context = {
+            "restaurant_profile": {
+                "id": restaurant_id,
+                "name": restaurant_name,
+                "cuisine": restaurant.get("cuisine_type"),
+                "address": restaurant.get("full_address") or restaurant.get("address"),
+                "phone": restaurant.get("phone_number"),
+                "prep_time_minutes": restaurant.get("prep_time_minutes", 20),
+            },
+            "hours": hours,
+            "service_options": {
+                "dine_in": service_options.get("dine_in", True),
+                "takeout": service_options.get("takeout", True),
+                "delivery": service_options.get("delivery", False),
+                "reservations": service_options.get("reservations", True),
+            },
+            "menu": self._summarize_menu(regular_menu_items),
+            "specials": self._summarize_specials(specials),
+            "faqs": self._summarize_faqs(faqs),
+            "function_defaults": {
+                "restaurant_id": restaurant_id,
+                "restaurant_phone": restaurant_phone_fwd,
+            },
+        }
+        restaurant_timezone_name = getattr(settings, "RESTAURANT_TIMEZONE", "America/Vancouver")
+        try:
+            restaurant_tz = ZoneInfo(restaurant_timezone_name)
+            timezone_label = restaurant_timezone_name
+        except ZoneInfoNotFoundError:
+            restaurant_tz = datetime.now().astimezone().tzinfo or timezone.utc
+            timezone_label = restaurant_tz.tzname(None) or "America/Vancouver"
+
+        now_utc = datetime.now(timezone.utc)
+        now_local = now_utc.astimezone(restaurant_tz)
+        context["current_time"] = {
+            "utc_iso": now_utc.isoformat(),
+            "local_iso": now_local.isoformat(),
+            "local_date": now_local.date().isoformat(),
+            "timezone": timezone_label,
+        }
+        if caller_phone:
+            context["caller_profile"] = {
+                "caller_phone": caller_phone,
+                "source": "inbound_call",
+            }
+            context["function_defaults"]["caller_phone"] = caller_phone
+        return context, restaurant_id, restaurant_phone_fwd, restaurant_name
+
+    async def shutdown(self) -> None:
+        """Close any remaining Twilio or Deepgram connections during app shutdown."""
+        async with self._connections_lock:
+            closing_tasks = []
+            for ws in list(self._active_twilio):
+                closing_tasks.append(self._safe_close(ws.close))
+                self._active_twilio.discard(ws)
+            for conn in list(self._active_deepgram):
+                closing_tasks.append(self._safe_close(conn.close))
+                self._active_deepgram.discard(conn)
+        if closing_tasks:
+            await asyncio.gather(*closing_tasks, return_exceptions=True)
+
+    async def _safe_close(self, closer) -> None:
+        try:
+            result = closer()
+            if asyncio.iscoroutine(result):
+                await result
+        except Exception as exc:
+            print(f"[Shutdown] connection close failed: {exc}")
+
+    async def _handle_side_effects(
+        self,
+        side_effects: list[AgentSideEffect],
+        sts_ws,
+    ) -> dict[str, Optional[str] | bool]:
+        """Send side effect messages (e.g., InjectAgentMessage) back to Deepgram."""
+
+        if not side_effects:
+            return {"close_requested": False, "farewell_message": None}
+
+        close_requested = False
+        last_inject_message: Optional[str] = None
+
+        for effect in side_effects:
+            try:
+                if effect.delay_seconds > 0:
+                    await asyncio.sleep(effect.delay_seconds)
+                payload = effect.payload or {}
+                effect_type = payload.get("type")
+                if effect_type == "InjectAgentMessage":
+                    await sts_ws.send(json.dumps(payload))
+                    last_inject_message = payload.get("message") or last_inject_message
+                    print(f"[FX] InjectAgentMessage sent: {payload}")
+                elif effect_type == "close":
+                    close_requested = True
+                    print("[FX] Close request received from agent function")
+                else:
+                    await sts_ws.send(json.dumps(payload))
+                    print(f"[FX] Side effect forwarded: {payload}")
+            except Exception as exc:
+                print(f"[FX] Failed to process side effect {effect.payload}: {exc}")
+
+        if not close_requested:
+            last_inject_message = None
+        return {"close_requested": close_requested, "farewell_message": last_inject_message}
+
+    async def _graceful_shutdown_call(
+        self,
+        twilio_ws,
+        sts_ws,
+        shutdown_event: Optional[asyncio.Event] = None,
+        audio_queue: Optional[asyncio.Queue] = None,
+    ) -> None:
+        """Close Deepgram and Twilio sockets after the farewell finishes."""
+
+        if shutdown_event and not shutdown_event.is_set():
+            shutdown_event.set()
+        if audio_queue is not None:
+            try:
+                audio_queue.put_nowait(None)
+            except asyncio.QueueFull:
+                pass
+        print("🔚 Farewell finished, closing sockets")
+        try:
+            await twilio_ws.close()
+        except Exception as exc:
+            print(f"[Close] Failed to close Twilio websocket: {exc}")
+        try:
+            await sts_ws.close()
+        except Exception as exc:
+            print(f"[Close] Failed to close Deepgram websocket: {exc}")
+
+    async def _prepare_call_resources(
+        self,
+        restaurant_phone: Optional[str],
+        caller_phone: Optional[str],
+        restaurant_record: Optional[Dict[str, Any]] = None,
+        deepgram_key_terms: Optional[Any] = None,
+    ) -> CallResources:
+        context_payload, restaurant_id, restaurant_phone_fwd, restaurant_name = await asyncio.to_thread(
+            self._build_restaurant_context,
+            caller_phone,
+            restaurant_record,
+        )
+        think_prompt = prompt_loader.load_think_prompt(context_payload)
+        return CallResources(
+            context_payload=context_payload,
+            restaurant_id=restaurant_id,
+            restaurant_phone=restaurant_phone,
+            restaurant_phone_fwd=restaurant_phone_fwd,
+            restaurant_name=restaurant_name,
+            deepgram_key_terms=deepgram_key_terms,
+            think_prompt=think_prompt,
+        )
+
+    def _build_function_router(self, sts_ws) -> Transport:
+        registry = FunctionRegistry()
+        registry.register(
+            name="create_order",
+            handler=orders.create_order,
+            arg_model=orders.CreateOrderArgs,
+        )
+        registry.register(
+            name="lookup_order",
+            handler=orders.lookup_order,
+            arg_model=orders.LookupOrderArgs,
+        )
+        registry.register(
+            name="update_order_details",
+            handler=orders.update_order_details,
+            arg_model=orders.UpdateOrderDetailsArgs,
+        )
+        registry.register(
+            name="check_items_availability",
+            handler=orders.check_items_availability,
+            arg_model=orders.CheckItemsAvailabilityArgs,
+        )
+        registry.register(
+            name="create_reservation",
+            handler=reservations.create_reservation,
+            arg_model=reservations.CreateReservationArgs,
+        )
+        registry.register(
+            name="update_reservation",
+            handler=reservations.update_reservation,
+            arg_model=reservations.UpdateReservationArgs,
+        )
+        registry.register(
+            name="check_reservation_availability",
+            handler=reservations.check_reservation_availability,
+            arg_model=reservations.CheckAvailabilityArgs,
+        )
+        registry.register(
+            name="agent_filler",
+            handler=conversation.agent_filler,
+            arg_model=conversation.AgentFillerArgs,
+        )
+        registry.register(
+            name="end_call",
+            handler=conversation.end_call,
+            arg_model=conversation.EndCallArgs,
+        )
+        registry.register(
+            name="escalate_to_human",
+            handler=conversation.escalate_to_human,
+            arg_model=conversation.EscalateToHumanArgs,
+        )
+
+        transport = Transport(send_callable=sts_ws.send)
+        router = FunctionCallRouter(
+            registry=registry,
+            transport=transport,
+            settings=get_fc_settings(),
+        )
+        transport.on_message(router.handle_frame)
+        print("Function calling router initialized")
+        return transport
+
+    def _create_call_session(
+        self,
+        user_id: str,
+        restaurant_id: Optional[str],
+    ) -> Optional[str]:
+        try:
+            call_id = self.call_service.create_call_session(
+                user_id,
+                "twilio-demo",
+                "deepgram-demo",
+                restaurant_id,
+            )
+            print(f"📞 Call session created: {call_id}")
+            return str(call_id)
+        except Exception as exc:
+            print(f"[DB] create_call_session error: {exc}")
+            return None
+
+    def _create_stream_state(self) -> StreamState:
+        return StreamState()
+
+    async def _flush_audio_buffer(self, state: StreamState, twilio_ws, streamsid) -> None:
+        if not state.audio_buffer:
+            return
+        payload = base64.b64encode(state.audio_buffer).decode("ascii")
+        msg = {"event": "media", "streamSid": streamsid, "media": {"payload": payload}}
+        try:
+            await twilio_ws.send_text(json.dumps(msg))
+            state.last_agent_audio_time = asyncio.get_event_loop().time()
+            print(f"✅ Flushed {len(state.audio_buffer)} bytes to Twilio")
+        except Exception as exc:
+            print(f"Error sending buffered audio to Twilio: {exc}")
+        state.audio_buffer.clear()
+
+    async def _wait_for_farewell_playback(self, state: StreamState) -> None:
+        """Allow buffered farewell audio to play before closing sockets."""
+        grace_seconds = float(getattr(settings, "FAREWELL_PLAYBACK_GRACE_SECONDS", 3.5))
+        if grace_seconds <= 0:
+            return
+
+        last_audio_time = state.last_agent_audio_time
+        if last_audio_time is None:
+            await asyncio.sleep(grace_seconds)
+            return
+
+        elapsed = asyncio.get_event_loop().time() - last_audio_time
+        remaining = grace_seconds - elapsed
+        if remaining > 0:
+            await asyncio.sleep(remaining)
+
+    def _update_barge_in_state(self, decoded: dict[str, Any], state: StreamState) -> None:
+        event_type = decoded.get("type")
+        if event_type == "AgentStartedSpeaking":
+            state.agent_speaking = True
+        elif event_type == "AgentAudioDone":
+            state.agent_speaking = False
+            state.barge_in_active = False
+        elif event_type == "UserStartedSpeaking":
+            state.barge_in_active = True
+            state.barge_in_start_time = time.perf_counter()
+            state.barge_in_reported = False
+            state.audio_buffer.clear()
+        elif event_type == "UserStoppedSpeaking":
+            state.barge_in_active = False
+
+    async def _handle_audio_payload(self, decoded: dict[str, Any], state: StreamState, twilio_ws, streamsid) -> None:
+        if decoded.get("type") not in {"ConversationAudio", "AgentAudioDone"}:
+            return
+        if state.barge_in_active:
+            if not state.barge_in_reported and state.barge_in_start_time is not None:
+                delta = time.perf_counter() - state.barge_in_start_time
+                print(f"Barge-in suppression delay: {delta:.3f}s")
+                state.barge_in_reported = True
+            return
+
+        audio_payload = decoded.get("audio", "")
+        if not audio_payload:
+            return
+        try:
+            now = time.perf_counter()
+            audio_bytes = base64.b64decode(audio_payload)
+            state.audio_buffer.extend(audio_bytes)
+            buffer_size = 3200
+            while len(state.audio_buffer) >= buffer_size:
+                chunk = state.audio_buffer[:buffer_size]
+                del state.audio_buffer[:buffer_size]
+                payload = base64.b64encode(chunk).decode("ascii")
+                msg = {"event": "media", "streamSid": streamsid, "media": {"payload": payload}}
+                await twilio_ws.send_text(json.dumps(msg))
+                state.last_agent_audio_time = asyncio.get_event_loop().time()
+                log_agent_audio_start_latency(state, now)
+                print(f"✅ Sent ConversationAudio {len(chunk)} bytes to Twilio")
+        except Exception as exc:
+            print(f"Error processing ConversationAudio: {exc}")
+
+    def _track_conversation_turn(
+        self, decoded: dict[str, Any], state: StreamState, now: Optional[float] = None
+    ) -> None:
+        if decoded.get("type") != "ConversationText":
+            return
+        current_time = now or time.perf_counter()
+        role = decoded.get("role")
+        if role == "user":
+            state.last_user_text_time = current_time
+            state.in_function_chain = False
+        elif role == "assistant":
+            state.in_function_chain = False
+            state.last_assistant_text_time = current_time
+            state.agent_audio_latency_logged = False
+            state.last_assistant_audio_start_time = None
+
+    def _store_transcript_entry(self, decoded: dict[str, Any], call_id: Optional[str], state: StreamState) -> None:
+        if decoded.get("type") not in {"ConversationText", "History"}:
+            return
+        text = decoded.get("content")
+        if not text:
+            return
+        role = decoded.get("role")
+        state.message_seq += 1
+        entry = {
+            "role": role,
+            "content": text,
+            "timestamp": datetime.utcnow().isoformat(),
+            "sequence": state.message_seq,
+        }
+        state.conversation_history.append(entry)
+        # Write-through to call service when available for compatibility.
+        try:
+            if call_id:
+                self.call_service.store_transcript_message(
+                    call_id=call_id,
+                    message_sequence=state.message_seq,
+                    speaker=role,
+                    message=text,
+                    timestamp=entry["timestamp"],
+                )
+        except Exception as exc:
+            print(f"[WARN] Failed to persist transcript entry: {exc}")
+
+    async def _route_function_calls(
+        self,
+        decoded: dict[str, Any],
+        state: StreamState,
+        transport: Optional[Transport],
+        sts_ws,
+    ) -> None:
+        if transport is None:
+            return
+        try:
+            frame = AgentFrame.parse(decoded)
+        except Exception:
+            frame = None
+        if not frame or frame.function_call is None:
+            return
+
+        now = time.perf_counter()
+        if state.in_function_chain and state.last_function_response_time:
+            latency = now - state.last_function_response_time
+            print(f"LLM Decision Latency (chain): {latency:.3f}s")
+        elif state.last_user_text_time:
+            latency = now - state.last_user_text_time
+            print(f"LLM Decision Latency (initial): {latency:.3f}s")
+            state.in_function_chain = True
+
+        exec_start = time.perf_counter()
+        router_result = await transport.emit(decoded)
+        exec_ms = (time.perf_counter() - exec_start) * 1000.0
+        print(f"Function Execution Latency: {exec_ms:.2f}ms")
+        state.last_function_response_time = time.perf_counter()
+
+        if not router_result or not router_result.get("side_effects"):
+            return
+        effects_meta = await self._handle_side_effects(
+            router_result["side_effects"],
+            sts_ws,
+        )
+        if effects_meta.get("close_requested"):
+            state.closing_after_farewell = True
+            state.farewell_expected_text = effects_meta.get("farewell_message")
+            state.farewell_started = state.farewell_expected_text is None
+            print("[Call] Farewell close scheduled")
+
+    async def _maybe_finish_farewell(
+        self,
+        decoded: dict[str, Any],
+        state: StreamState,
+        twilio_ws,
+        sts_ws,
+        streamsid,
+        shutdown_event: Optional[asyncio.Event],
+        audio_queue: Optional[asyncio.Queue] = None,
+    ) -> bool:
+        if not state.closing_after_farewell:
+            return False
+        event_type = decoded.get("type")
+        if event_type == "AgentStartedSpeaking":
+            state.farewell_started = True
+        elif (
+            event_type == "ConversationText"
+            and decoded.get("role") == "assistant"
+            and state.farewell_expected_text
+            and decoded.get("content") == state.farewell_expected_text
+        ):
+            state.farewell_started = True
+        elif event_type == "AgentAudioDone" and state.farewell_started:
+            await self._flush_audio_buffer(state, twilio_ws, streamsid)
+            await self._wait_for_farewell_playback(state)
+            await self._graceful_shutdown_call(twilio_ws, sts_ws, shutdown_event, audio_queue)
+            state.farewell_shutdown_complete = True
+            return True
+        return False
+
+    async def _handle_binary_audio(
+        self, message: bytes | bytearray | memoryview, state: StreamState, twilio_ws, streamsid
+    ) -> None:
+        now = time.perf_counter()
+        try:
+            state.audio_buffer.extend(message)
+        except Exception as exc:
+            print(f"[WARN] Failed to buffer binary audio payload ({type(message)}): {exc}")
+            return
+        buffer_size = 3200
+        while len(state.audio_buffer) >= buffer_size:
+            chunk = state.audio_buffer[:buffer_size]
+            del state.audio_buffer[:buffer_size]
+            payload = base64.b64encode(chunk).decode("ascii")
+            msg = {"event": "media", "streamSid": streamsid, "media": {"payload": payload}}
+            await twilio_ws.send_text(json.dumps(msg))
+            state.last_agent_audio_time = asyncio.get_event_loop().time()
+            log_agent_audio_start_latency(state, now)
+
     async def handle_barge_in(self, decoded, twilio_ws, streamsid, last_agent_audio_time):
         """Clear Twilio audio only if user starts speaking after a gap."""
         if decoded.get("type") == "UserStartedSpeaking":
             now = asyncio.get_event_loop().time()
-            # Avoid clearing mid-sentence; only after 2s gap
-            if not last_agent_audio_time or (now - last_agent_audio_time) > 2.0:
+            threshold = float(getattr(settings, "BARGE_IN_CLEAR_SECONDS", 0.5))
+            if not last_agent_audio_time or (now - last_agent_audio_time) > threshold:
                 clear_msg = {"event": "clear", "streamSid": streamsid}
                 await twilio_ws.send_text(json.dumps(clear_msg))
                 print(f"🧹 Cleared Twilio buffer after {now - (last_agent_audio_time or 0):.2f}s")
@@ -41,159 +582,20 @@ class WebSocketService:
     async def handle_text_message(self, decoded, twilio_ws, sts_ws, streamsid, last_agent_audio_time):
         """Handle text messages and barge-in logic."""
         await self.handle_barge_in(decoded, twilio_ws, streamsid, last_agent_audio_time)
-    
-    def parse_order_ready(self, text: str, menu_items: List[Dict[str, Any]], restaurant_id: int) -> Optional[Dict[str, Any]]:
-        """
-        Parse ORDER_READY format: "ORDER_READY: [customer name], [item1] x[quantity], [item2] x[quantity], Total: $[amount]"
-        Returns order data if successfully parsed, None otherwise.
-        """
-        if "ORDER_READY:" not in text.upper():
-            return None
-        
-        try:
-            # Extract the order part after ORDER_READY:
-            order_match = re.search(r'ORDER_READY:\s*(.+)', text, re.IGNORECASE)
-            if not order_match:
-                return None
-            
-            order_text = order_match.group(1).strip()
-            
-            # Extract customer name (before first comma)
-            parts = order_text.split(',')
-            if len(parts) < 2:
-                return None
-            
-            customer_name = parts[0].strip()
-            
-            # Extract total amount
-            total_match = re.search(r'Total:\s*\$?([\d.]+)', order_text, re.IGNORECASE)
-            total_amount = float(total_match.group(1)) if total_match else 0.0
-            
-            # Extract items and quantities
-            # Pattern: "item name xquantity" or "item name" (default quantity 1)
-            items = []
-            menu_lookup = {}
-            for item in menu_items:
-                item_name_lower = item.get("item_name", "").lower()
-                menu_lookup[item_name_lower] = item
-                # Also add variations
-                words = item_name_lower.split()
-                if len(words) > 1:
-                    menu_lookup[" ".join(words[:2])] = item
-            
-            # Find all item patterns
-            item_patterns = [
-                r'([^,]+?)\s+x(\d+)',  # "item x2"
-                r'([^,]+?)\s+(\d+)\s*x',  # "item 2x"
-                r'([^,]+?)(?:\s*,\s*|$)',  # "item" (default quantity 1)
-            ]
-            
-            found_items = []
-            remaining_text = ','.join(parts[1:])  # Everything after customer name
-            
-            # Remove total from remaining text
-            remaining_text = re.sub(r',\s*Total:.*$', '', remaining_text, flags=re.IGNORECASE)
-            
-            # Try to match items
-            for pattern in item_patterns:
-                matches = re.finditer(pattern, remaining_text, re.IGNORECASE)
-                for match in matches:
-                    item_phrase = match.group(1).strip()
-                    quantity = int(match.group(2)) if len(match.groups()) > 1 and match.group(2).isdigit() else 1
-                    
-                    # Try to match with menu items
-                    item_phrase_lower = item_phrase.lower()
-                    for menu_key, menu_item in menu_lookup.items():
-                        if menu_key in item_phrase_lower or item_phrase_lower in menu_key:
-                            item_id = menu_item.get("id")
-                            if item_id:
-                                found_items.append({
-                                    "menu_item_id": item_id,
-                                    "item_name": menu_item.get("item_name"),
-                                    "price": float(menu_item.get("price", 0)),
-                                    "quantity": quantity
-                                })
-                                break
-            
-            if not found_items:
-                return None
-            
-            return {
-                "customer_name": customer_name,
-                "items": found_items,
-                "total_amount": total_amount
-            }
-        except Exception as e:
-            print(f"[ERROR] Error parsing ORDER_READY: {e}")
-            return None
-    
-    async def save_order_from_text(
-        self,
-        text: str,
-        menu_items: List[Dict[str, Any]],
-        restaurant_id: int,
-        conversation_history: List[Dict[str, Any]]
-    ):
-        """
-        Parse ORDER_READY text and save order to database.
-        """
-        order_data = self.parse_order_ready(text, menu_items, restaurant_id)
-        if not order_data:
-            return None
-        
-        try:
-            # Extract user info from conversation history
-            user_data = {}
-            for msg in conversation_history:
-                if msg.get("role") == "user":
-                    content = msg.get("content", "").lower()
-                    # Try to extract phone number
-                    phone_match = re.search(r'(\+?1?[-.\s]?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4})', msg.get("content", ""))
-                    if phone_match:
-                        phone = re.sub(r'[-.\s()]', '', phone_match.group(1))
-                        user_data["phone_number"] = phone
-            
-            # Get or create user
-            user_id = None
-            if user_data.get("phone_number"):
-                user_id = self.user_repo.get_user_id_by_phone_or_email(
-                    user_data.get("phone_number"),
-                    user_data.get("email")
-                )
-            
-            if not user_id:
-                # Create user with name from order
-                user_data["name"] = order_data["customer_name"]
-                user_id = self.user_repo.create_or_update_user(user_data)
-            
-            # Create order
-            order_id = self.order_repo.create_order(user_id, {
-                "status": "pending",
-                "total_amount": order_data["total_amount"],
-                "order_details": order_data["items"],
-                "customization": {}
-            })
-            print(f"[SUCCESS] Order saved immediately: order_id={order_id}, customer={order_data['customer_name']}, total=${order_data['total_amount']:.2f}")
-            
-            # Create order details
-            for item in order_data["items"]:
-                menu_item_id = item.get("menu_item_id")
-                quantity = item.get("quantity", 1)
-                if menu_item_id:
-                    for _ in range(quantity):
-                        self.order_repo.create_order_details(order_id, menu_item_id)
-            
-            return order_id
-        except Exception as e:
-            print(f"[ERROR] Error saving order from ORDER_READY: {e}")
-            return None
 
-    async def sts_sender(self, sts_ws, audio_queue):
+    async def sts_sender(self, sts_ws, audio_queue, shutdown_event: Optional[asyncio.Event] = None):
         """Send audio chunks to Deepgram STS."""
         print("sts_sender started")
         try:
             while True:
-                chunk = await audio_queue.get()
+                if shutdown_event and shutdown_event.is_set():
+                    break
+                try:
+                    chunk = await asyncio.wait_for(audio_queue.get(), timeout=0.5)
+                except asyncio.TimeoutError:
+                    continue
+                if chunk is None:
+                    break
                 await sts_ws.send(chunk)
         except (asyncio.CancelledError, websockets.exceptions.ConnectionClosed):
             print("sts_sender stopped")
@@ -205,612 +607,298 @@ class WebSocketService:
         streamsid_queue,
         call_id=None,
         user_id=None,
-        conversation_history=None,
-        menu_items=None,
-        restaurant_id=None
+        transport: Optional[Transport] = None,
+        shutdown_event: Optional[asyncio.Event] = None,
+        audio_queue: Optional[asyncio.Queue] = None,
+        state: Optional[StreamState] = None,
     ):
         """Receive messages from Deepgram STS and forward to Twilio."""
         print("sts_receiver started")
         streamsid = await streamsid_queue.get()
         start_time = asyncio.get_event_loop().time()
-        message_seq = 0
-
-        BUFFER_SIZE = 3200  # 100ms of 16kHz mono PCM16
-        audio_buffer = bytearray()
-        last_agent_audio_time = None
-        
-        if conversation_history is None:
-            conversation_history = []
-
-        async def flush_audio():
-            nonlocal audio_buffer, last_agent_audio_time
-            if audio_buffer:
-                payload = base64.b64encode(audio_buffer).decode("ascii")
-                msg = {"event": "media", "streamSid": streamsid, "media": {"payload": payload}}
-                try:
-                    await twilio_ws.send_text(json.dumps(msg))
-                    last_agent_audio_time = asyncio.get_event_loop().time()
-                    print(f"✅ Flushed {len(audio_buffer)} bytes to Twilio")
-                except Exception as e:
-                    print(f"Error sending buffered audio to Twilio: {e}")
-                audio_buffer.clear()
+        state = state or self._create_stream_state()
 
         try:
             async for message in sts_ws:
-                try:
-                    if isinstance(message, str):
-                        decoded = json.loads(message)
+                if isinstance(message, str):
+                    decoded = json.loads(message)
+                    message_type = decoded.get("type")
+                    now = time.perf_counter()
+                    if message_type == "History":
+                        pass  # Don't print history entries to reduce noise
+                    elif message_type == "ConversationText":
+                        role = decoded.get("role", "unknown")
+                        content = decoded.get("content", "")
+                        print(f"{role}: {content}")
+                    else:
                         print(f"Deepgram Message: {decoded}")
 
-                        # Handle Deepgram audio messages
-                        if decoded.get("type") in ["ConversationAudio", "AgentAudioDone"]:
-                            audio_payload = decoded.get("audio", "")
-                            if audio_payload:
-                                try:
-                                    audio_bytes = base64.b64decode(audio_payload)
-                                    audio_buffer.extend(audio_bytes)
-                                    while len(audio_buffer) >= BUFFER_SIZE:
-                                        chunk = audio_buffer[:BUFFER_SIZE]
-                                        del audio_buffer[:BUFFER_SIZE]
-                                        payload = base64.b64encode(chunk).decode("ascii")
-                                        msg = {"event": "media", "streamSid": streamsid, "media": {"payload": payload}}
-                                        await twilio_ws.send_text(json.dumps(msg))
-                                        last_agent_audio_time = asyncio.get_event_loop().time()
-                                        print(f"✅ Sent ConversationAudio {len(chunk)} bytes to Twilio")
-                                except Exception as e:
-                                    print(f"Error processing ConversationAudio: {e}")
+                    if message_type == "UserStartedSpeaking":
+                        state.last_user_started_speaking_time = now
+                        self._filler_manager.cancel(state)
+                    elif message_type == "ConversationText":
+                        role = decoded.get("role")
+                        self._track_conversation_turn(decoded, state, now)
+                        if role == "user":
+                            self._filler_manager.schedule(state, sts_ws)
+                        elif role == "assistant":
+                            self._filler_manager.cancel(state)
+                            log_assistant_text_latency(state, now)
+                    elif message_type in {"ConversationAudio", "AgentAudioDone", "AgentStartedSpeaking"}:
+                        self._filler_manager.cancel(state)
 
-                        await self.handle_text_message(decoded, twilio_ws, sts_ws, streamsid, last_agent_audio_time)
+                    farewell_finished = await self._maybe_finish_farewell(
+                        decoded, state, twilio_ws, sts_ws, streamsid, shutdown_event, audio_queue
+                    )
+                    if farewell_finished:
+                        break
 
-                        # Save transcript and collect conversation history
-                        if decoded.get("type") in ["ConversationText", "History"]:
-                            role = decoded.get("role")
-                            text = decoded.get("content")
-                            if text:
-                                # Note: Individual messages are collected in conversation_history
-                                # and saved to MySQL via process_and_store_data at call end
-                                # No need to store each message individually
-                                
-                                # Collect for conversation history
-                                conversation_history.append({
-                                    "role": role,
-                                    "content": text,
-                                    "timestamp": datetime.utcnow().isoformat()
-                                })
-                                
-                                # Check for ORDER_READY and save order immediately
-                                if role == "agent" and menu_items and restaurant_id:
-                                    if "ORDER_READY:" in text.upper():
-                                        print(f"[INFO] Detected ORDER_READY in conversation, saving order...")
-                                        await self.save_order_from_text(
-                                            text,
-                                            menu_items,
-                                            restaurant_id,
-                                            conversation_history
-                                        )
+                    self._update_barge_in_state(decoded, state)
+                    await self._handle_audio_payload(decoded, state, twilio_ws, streamsid)
+                    await self.handle_text_message(decoded, twilio_ws, sts_ws, streamsid, state.last_agent_audio_time)
+                    await self._route_function_calls(decoded, state, transport, sts_ws)
+                    self._store_transcript_entry(decoded, call_id, state)
 
-                        # Flush remaining audio when done
-                        if decoded.get("type") == "AgentAudioDone":
-                            await flush_audio()
+                    if decoded.get("type") == "AgentAudioDone" and not state.closing_after_farewell:
+                        await self._flush_audio_buffer(state, twilio_ws, streamsid)
                         continue
-                                
-                    audio_buffer.extend(message)
-                    while len(audio_buffer) >= BUFFER_SIZE:
-                        chunk = audio_buffer[:BUFFER_SIZE]
-                        del audio_buffer[:BUFFER_SIZE]
-                        payload = base64.b64encode(chunk).decode("ascii")
-                        msg = {"event": "media", "streamSid": streamsid, "media": {"payload": payload}}
-                        await twilio_ws.send_text(json.dumps(msg))
-                        last_agent_audio_time = asyncio.get_event_loop().time()
-                except asyncio.CancelledError:
-                    print("[INFO] sts_receiver: Cancellation detected in message loop")
-                    raise
-                except Exception as e:
-                    print(f"[ERROR] Error processing message in sts_receiver: {e}")
 
-            await flush_audio()
+                elif isinstance(message, (bytes, bytearray, memoryview)):
+                    await self._handle_binary_audio(message, state, twilio_ws, streamsid)
+                else:
+                    print(f"[WARN] Dropping unexpected Deepgram payload type: {type(message)}")
+                    continue
+
+            if not state.farewell_shutdown_complete:
+                await self._flush_audio_buffer(state, twilio_ws, streamsid)
         except (websockets.exceptions.ConnectionClosed, websockets.exceptions.ConnectionClosedOK):
-            print("[INFO] sts_receiver: Deepgram connection closed")
+            print("sts_receiver: Deepgram connection closed")
         except asyncio.CancelledError:
-            print("[INFO] sts_receiver cancelled")
-            await flush_audio()  # Flush before exiting
+            print("sts_receiver cancelled")
             raise
-        except Exception as e:
-            print(f"[ERROR] sts_receiver error: {e}")
-            import traceback
-            traceback.print_exc()
         finally:
             end_time = asyncio.get_event_loop().time()
             duration = int(end_time - start_time)
-            if call_id and user_id:
-                try:
-                    self.call_repo.update_call_cost(call_id, duration)
-                    print(f"[INFO] Updated call cost for call_id={call_id}, duration={duration}s")
-                except Exception as e:
-                    print(f"[ERROR] Error updating call cost: {e}")
-                    import traceback
-                    traceback.print_exc()
+            self._filler_manager.cancel(state)
+            try:
+                if call_id:
+                    self.call_service.update_call_cost(call_id, duration)
+            except Exception as exc:
+                print(f"[WARN] Error updating call cost: {exc}")
 
-    async def twilio_receiver(self, twilio_ws, audio_queue, streamsid_queue, twilio_number_queue, disconnect_event=None):
+    async def twilio_receiver(
+        self,
+        twilio_ws,
+        audio_queue,
+        streamsid_queue,
+        shutdown_event: Optional[asyncio.Event] = None,
+        to_number_queue: Optional[asyncio.Queue] = None,
+        from_number_queue: Optional[asyncio.Queue] = None,
+    ):
         """Receive audio from Twilio and forward to Deepgram."""
-        BUFFER_SIZE = 20 * 160  # 3200 bytes per 100ms
+        buffer_size = 20 * 160  # 3200 bytes per 100ms
         inbuffer = bytearray()
 
         try:
             async for message in twilio_ws.iter_text():
+                if shutdown_event and shutdown_event.is_set():
+                    break
                 data = json.loads(message)
                 event = data.get("event")
 
                 if event == "start":
                     streamsid = data["start"]["streamSid"]
                     await streamsid_queue.put(streamsid)
-                    
-                    # Extract Twilio phone number from start event customParameters
-                    print("params: ", data.get("start", {}).get("customParameters", {}))
-                    params = data.get("start", {}).get("customParameters", {})
+                    params = data.get("start", {}).get("customParameters", {}) or {}
                     to_number = params.get("toNumber")
                     from_number = params.get("fromNumber")
-                    
-                    print("📥 Twilio START event received")
-                    print(f"To Number: {to_number}")
-                    print(f"From Number: {from_number}")
-                    
-                    # Put toNumber into queue for restaurant lookup
-                    if to_number:
-                        await twilio_number_queue.put(to_number)
-                        print(f"📞 Stream started: {streamsid}, Twilio Number: {to_number}")
-                    else:
-                        print(f"📞 Stream started: {streamsid} (no Twilio number found in customParameters)")
-                        
+                    if to_number_queue and to_number:
+                        await to_number_queue.put(to_number)
+                    if from_number_queue and from_number:
+                        await from_number_queue.put(from_number)
+                    print(f"📞 Stream started: {streamsid}, to={to_number}, from={from_number}")
                 elif event == "media":
                     chunk = base64.b64decode(data["media"]["payload"])
                     if data["media"]["track"] == "inbound":
                         inbuffer.extend(chunk)
                 elif event == "stop":
-                    print("[INFO] Twilio stop event received - call ending")
-                    # Flush any remaining audio
-                    if inbuffer:
-                        await audio_queue.put(inbuffer[:])
-                        inbuffer.clear()
-                    # Signal disconnection
-                    if disconnect_event:
-                        disconnect_event.set()
+                    print("🛑 Twilio stop event received - closing gracefully")
                     break
 
-                while len(inbuffer) >= BUFFER_SIZE:
-                    await audio_queue.put(inbuffer[:BUFFER_SIZE])
-                    del inbuffer[:BUFFER_SIZE]
-            
-            # Flush any remaining audio before exiting
-            if inbuffer:
-                await audio_queue.put(inbuffer[:])
-                inbuffer.clear()
+                while len(inbuffer) >= buffer_size:
+                    await audio_queue.put(inbuffer[:buffer_size])
+                    del inbuffer[:buffer_size]
 
-        except (WebSocketDisconnect, ConnectionError) as e:
-            print(f"[INFO] Twilio receiver disconnected: {e}")
-            if disconnect_event:
-                disconnect_event.set()
+        except (WebSocketDisconnect, ConnectionError) as exc:
+            print(f"Twilio receiver disconnected: {exc}")
         except asyncio.CancelledError:
-            print("[INFO] twilio_receiver cancelled")
-            if disconnect_event:
-                disconnect_event.set()
+            print("twilio_receiver cancelled")
             raise
         except Exception as e:
-            print(f"[ERROR] Twilio receiver error: {e}")
-            if disconnect_event:
-                disconnect_event.set()
+            if shutdown_event and shutdown_event.is_set():
+                print("Twilio receiver closed after shutdown")
+            else:
+                print(f"Twilio receiver error: {e}")
 
-    async def process_and_store_data(
+    async def twilio_websocket_handler(
         self,
-        conversation_history: List[Dict[str, Any]],
-        menu_items: List[Dict[str, Any]],
-        restaurant_id: int
-    ):
-        """Extract and store structured data from conversation."""
-        try:
-            if not conversation_history:
-                print("[WARNING] No conversation history to process")
-                return
-            
-            # Combine all conversation text
-            conversation_text = " ".join([
-                f"{msg['role']}: {msg['content']}" 
-                for msg in conversation_history
-            ])
-            
-            # Check if order was already saved via ORDER_READY
-            order_already_saved = False
-            for msg in conversation_history:
-                if msg.get("role") == "agent" and "ORDER_READY:" in msg.get("content", "").upper():
-                    order_already_saved = True
-                    print("[INFO] Order was already saved via ORDER_READY, skipping duplicate order extraction")
-                    break
-            
-            # Extract structured data
-            extracted_data = self.data_extraction_service.extract_structured_data(
-                conversation_text,
-                conversation_history,
-                menu_items
-            )
-            
-            user_details = extracted_data.get("user_details")
-            order_details = extracted_data.get("order_details")
-            transcript_log = extracted_data.get("transcript_log")
-            
-            user_id = None
-            order_id = None
-            
-            # Store user if details were extracted
-            if user_details:
-                try:
-                    user_id = self.user_repo.create_or_update_user(user_details)
-                    print(f"[SUCCESS] User stored/updated: user_id={user_id}")
-                except Exception as e:
-                    print(f"[ERROR] Error storing user: {e}")
-                    import traceback
-                    traceback.print_exc()
-            
-            # Store order if details were extracted AND order wasn't already saved
-            if order_details and user_id and not order_already_saved:
-                try:
-                    order_id = self.order_repo.create_order(user_id, {
-                        "status": "pending",
-                        "total_amount": order_details.get("total_amount", 0.0),
-                        "order_details": order_details.get("items", []),
-                        "customization": order_details.get("customization", {})
-                    })
-                    print(f"[SUCCESS] Order created: order_id={order_id}")
-                    
-                    # Store order details
-                    for item in order_details.get("items", []):
-                        menu_item_id = item.get("menu_item_id")
-                        if menu_item_id:
-                            quantity = item.get("quantity", 1)
-                            for _ in range(quantity):
-                                self.order_repo.create_order_details(order_id, menu_item_id)
-                    print(f"[SUCCESS] Order details stored for order_id={order_id}")
-                except Exception as e:
-                    print(f"[ERROR] Error storing order: {e}")
-                    import traceback
-                    traceback.print_exc()
-            elif order_already_saved:
-                print("[INFO] Skipping order creation - already saved via ORDER_READY")
-            
-            # Store transcript (always save transcript, even if no user/order)
-            try:
-                transcript_id = self.transcript_repo.create_transcript(
-                    user_id,
-                    order_id,
-                    transcript_log
-                )
-                print(f"[SUCCESS] Transcript stored: transcript_id={transcript_id}")
-            except Exception as e:
-                print(f"[ERROR] Error storing transcript: {e}")
-                import traceback
-                traceback.print_exc()
-                
-        except Exception as e:
-            print(f"[ERROR] Error in process_and_store_data: {e}")
-            import traceback
-            traceback.print_exc()
+        twilio_ws: WebSocket,
+        user_id: str = "demo-user",
+        restaurant_twilio_number: Optional[str] = None,
+        caller_number: Optional[str] = None,
+    ) -> None:
+        """Main WebSocket handler for Twilio connections."""
 
-    async def _handle_deepgram_session(
-        self,
-        sts_ws,
-        restaurant_name: Optional[str],
-        menu_items: List[Dict[str, Any]],
-        faqs: List[Dict[str, Any]],
-        user_id: str,
-        restaurant_id: Optional[int],
-        audio_queue: asyncio.Queue,
-        streamsid_queue: asyncio.Queue,
-        websocket: WebSocket,
-        conversation_history: List[Dict[str, Any]],
-        disconnect_event: asyncio.Event,
-        receiver_task: asyncio.Task
-    ) -> tuple[Optional[int], Optional[asyncio.Task], Optional[asyncio.Task]]:
-        """
-        Handle Deepgram session setup and message processing.
-        
-        Returns:
-            Tuple of (call_id, sts_sender_task, sts_receiver_task)
-        """
-        # Build dynamic config with restaurant context
-        config_message = self.deepgram_service.load_config(
-            restaurant_name=restaurant_name,
-            menu_items=menu_items,
-            faqs=faqs
-        )
-        await sts_ws.send(json.dumps(config_message))
-        print("[INFO] Sent dynamic config to Deepgram with restaurant context")
+        await twilio_ws.accept()
+        async with self._connections_lock:
+            self._active_twilio.add(twilio_ws)
 
+        audio_queue: asyncio.Queue = asyncio.Queue()
+        streamsid_queue: asyncio.Queue = asyncio.Queue()
+        to_number_queue: asyncio.Queue = asyncio.Queue()
+        from_number_queue: asyncio.Queue = asyncio.Queue()
+        shutdown_event = asyncio.Event()
+        state = self._create_stream_state()
         call_id = None
-        try:
-            call_id = self.call_repo.create_call_session(
-                user_id, 
-                "twilio-demo", 
-                "deepgram-demo",
-                restaurant_id=str(restaurant_id) if restaurant_id else None
-            )
-            print(f"[INFO] Call session created: call_id={call_id}")
-        except Exception as e:
-            print(f"[ERROR] create_call_session error: {e}")
-            import traceback
-            traceback.print_exc()
+        transport: Optional[Transport] = None
+        restaurant_record: Optional[Dict[str, Any]] = None
+        deepgram_api_key: Optional[str] = None
+        deepgram_key_terms: Optional[Any] = None
 
-        # Create tasks for Deepgram operations
-        sts_sender_task = asyncio.create_task(self.sts_sender(sts_ws, audio_queue))
-        sts_receiver_task = asyncio.create_task(self.sts_receiver(
-            sts_ws, 
-            websocket, 
-            streamsid_queue, 
-            call_id, 
-            user_id,
-            conversation_history,
-            menu_items,
-            restaurant_id
-        ))
-
-        # Wait for disconnection event or any task to complete
-        try:
-            # Wait for either disconnection event or first task completion
-            done, pending = await asyncio.wait(
-                [
-                    asyncio.create_task(disconnect_event.wait()),
-                    sts_sender_task,
-                    sts_receiver_task,
-                    receiver_task
-                ],
-                return_when=asyncio.FIRST_COMPLETED
-            )
-            print(f"[INFO] Disconnection detected. Done: {len(done)}, Pending: {len(pending)}")
-            
-            # Cancel remaining tasks
-            for task in pending:
-                if not task.done():
-                    task.cancel()
-            
-            # Wait for cancellation with timeout
-            if pending:
-                try:
-                    await asyncio.wait_for(
-                        asyncio.gather(*pending, return_exceptions=True),
-                        timeout=1.0
-                    )
-                except asyncio.TimeoutError:
-                    print("[WARNING] Timeout waiting for tasks to cancel")
-        except Exception as e:
-            print(f"[ERROR] Error in wait: {e}")
-            import traceback
-            traceback.print_exc()
-        
-        return call_id, sts_sender_task, sts_receiver_task
-
-    async def twilio_websocket_handler(self, websocket: WebSocket, user_id: str = "demo-user"):
-        """Main WebSocket handler for Twilio connections with multitenancy."""
-        await websocket.accept()
-        
-        call_id = None
-        audio_queue = asyncio.Queue()
-        streamsid_queue = asyncio.Queue()
-        twilio_number_queue = asyncio.Queue()
-        conversation_history = []
-        restaurant_id = None
-        restaurant_name = None
-        menu_items = []
-        faqs = []
-        disconnect_event = asyncio.Event()  # Signal for disconnection
-        # Track tasks for cleanup
-        receiver_task = None
-        sts_sender_task = None
-        sts_receiver_task = None
-
-        try:
-            print("Twilio connected!")
-            
-            # Start twilio_receiver task FIRST to process incoming messages
-            receiver_task = asyncio.create_task(self.twilio_receiver(
-                websocket, 
-                audio_queue, 
+        twilio_task = asyncio.create_task(
+            self.twilio_receiver(
+                twilio_ws,
+                audio_queue,
                 streamsid_queue,
-                twilio_number_queue,
-                disconnect_event
-            ))
-            # Store in outer scope for finally block access
-            
-            # Wait for Twilio number from start event (receiver is now running)
-            deepgram_api_key = None
-            try:
-                twilio_number = await asyncio.wait_for(twilio_number_queue.get(), timeout=5.0)
-                print(f"📱 Twilio number received: {twilio_number}")
-                
-                # Get restaurant by Twilio number
-                restaurant = self.restaurant_repo.get_by_twilio_number(twilio_number)
-                if restaurant:
-                    restaurant_id = restaurant.get("id")
-                    restaurant_name = restaurant.get("name", "Restaurant")
-                    print(f"🏪 Restaurant found: {restaurant_name} (id={restaurant_id})")
-                    
-                    # Extract Deepgram API key from restaurant details
-                    deepgram_details = restaurant.get("deepgram_details")
-                    if deepgram_details:
-                        if isinstance(deepgram_details, str):
-                            try:
-                                deepgram_details = json.loads(deepgram_details)
-                            except json.JSONDecodeError:
-                                print(f"⚠️ Failed to parse deepgram_details JSON for restaurant {restaurant_id}")
-                                deepgram_details = None
-                        
-                        if isinstance(deepgram_details, dict):
-                            deepgram_api_key = deepgram_details.get("api_key") or deepgram_details.get("apiKey")
-                            if deepgram_api_key:
-                                print(f"🔑 Using Deepgram API key from restaurant {restaurant_id} details")
-                            else:
-                                print(f"⚠️ No API key found in deepgram_details for restaurant {restaurant_id}")
-                        else:
-                            print(f"⚠️ deepgram_details is not a valid dictionary for restaurant {restaurant_id}")
-                    else:
-                        print(f"⚠️ No deepgram_details found for restaurant {restaurant_id}, will use env variable")
-                    
-                    # Fetch menu items (only available)
-                    menu_items = self.menu_repo.get_available_items_by_restaurant(restaurant_id)
-                    print(f"📋 Fetched {len(menu_items)} available menu items")
-                    
-                    # Fetch FAQs
-                    faqs = self.faq_repo.get_by_restaurant(restaurant_id)
-                    print(f"❓ Fetched {len(faqs)} FAQs")
-                else:
-                    print(f"⚠️ No restaurant found for Twilio number: {twilio_number}")
-            except asyncio.TimeoutError:
-                print("⚠️ Twilio number not received within timeout, proceeding with default config")
-            
-            # Use async with to ensure Deepgram connection is properly closed
-            # Try restaurant credentials first, fallback to env variable if it fails
-            try:
-                # First attempt: Use restaurant credentials if available
-                if deepgram_api_key:
-                    try:
-                        print(f"[INFO] Attempting Deepgram connection with restaurant credentials...")
-                        async with self.deepgram_service.sts_connect(api_key=deepgram_api_key) as sts_ws:
-                            print("[INFO] Connected to Deepgram STS using restaurant credentials")
-                            call_id, sts_sender_task, sts_receiver_task = await self._handle_deepgram_session(
-                                sts_ws, restaurant_name, menu_items, faqs, 
-                                user_id, restaurant_id, audio_queue, streamsid_queue, 
-                                websocket, conversation_history, disconnect_event,
-                                receiver_task
-                            )
-                            return
-                    except Exception as e:
-                        print(f"⚠️ Failed to connect with restaurant Deepgram credentials: {e}")
-                        print(f"[INFO] Falling back to environment variable credentials...")
-                
-                # Fallback: Use environment variable
-                async with self.deepgram_service.sts_connect() as sts_ws:
-                    print("[INFO] Connected to Deepgram STS using environment variable credentials")
-                    call_id, sts_sender_task, sts_receiver_task = await self._handle_deepgram_session(
-                        sts_ws, restaurant_name, menu_items, faqs, 
-                        user_id, restaurant_id, audio_queue, streamsid_queue, 
-                        websocket, conversation_history, disconnect_event,
-                        receiver_task
-                    )
-                    
-                    print("[INFO] Exiting Deepgram connection context - connection will close automatically")
-            except Exception as e:
-                print(f"[ERROR] Error in Deepgram connection: {e}")
-                import traceback
-                traceback.print_exc()
+                shutdown_event,
+                to_number_queue,
+                from_number_queue,
+            )
+        )
 
-        except WebSocketDisconnect:
-            print("[INFO] Twilio WebSocket disconnected")
-        except Exception as e:
-            print(f"[ERROR] Error in twilio_websocket_handler: {e}")
-            import traceback
-            traceback.print_exc()
-        finally:
-            print("\n" + "="*70)
-            print("[INFO] ========== CALL END - STARTING CLEANUP ==========")
-            print("="*70)
-            print(f"[INFO] Conversation history length: {len(conversation_history)}")
-            print(f"[INFO] Menu items available: {len(menu_items) if menu_items else 0}")
-            print(f"[INFO] Restaurant ID: {restaurant_id}")
-            print(f"[INFO] Call ID: {call_id}")
-            
-            # Process and store extracted data FIRST (before cancelling tasks)
-            # This is critical - must happen even if other errors occur
-            print("\n[INFO] Step 1: Processing and storing extracted data...")
+        try:
+            # Use values provided by API first; fall back to Twilio start event if missing.
+            if not restaurant_twilio_number:
+                try:
+                    restaurant_twilio_number = await asyncio.wait_for(to_number_queue.get(), timeout=0.5)
+                except asyncio.TimeoutError:
+                    restaurant_twilio_number = None
+            if not caller_number:
+                try:
+                    caller_number = await asyncio.wait_for(from_number_queue.get(), timeout=0.5)
+                except asyncio.TimeoutError:
+                    caller_number = None
+
+            restaurant_record = self.restaurant_service.get_restaurant_by_twilio(restaurant_twilio_number)
+            if not restaurant_record:
+                print(f"[FATAL ERROR] No restaurant found with twilio number: {restaurant_twilio_number}")
+                raise Exception(f"Twilio number {restaurant_twilio_number} not registered with any restaurant.")
+            else:
+                print(f"Serving call for restaurant: {restaurant_record.get('name')}")
+
+            deepgram_details = restaurant_record.get("deepgram_details") if restaurant_record else None
+            if isinstance(deepgram_details, str):
+                try:
+                    deepgram_details = json.loads(deepgram_details)
+                except json.JSONDecodeError:
+                    deepgram_details = None
+            if isinstance(deepgram_details, dict):
+                deepgram_api_key = deepgram_details.get("api_key") or deepgram_details.get("apiKey")
+                deepgram_key_terms = deepgram_details.get("key_terms") or deepgram_details.get("keyTerms")
+                if isinstance(deepgram_api_key, str):
+                    deepgram_api_key = deepgram_api_key.strip() or None
+
+            call_resources = await self._prepare_call_resources(
+                restaurant_twilio_number, caller_number, restaurant_record, deepgram_key_terms
+            )
+
             try:
-                if conversation_history:
-                    print(f"[INFO] Found {len(conversation_history)} conversation messages")
-                    print(f"[INFO] Sample messages:")
-                    for i, msg in enumerate(conversation_history[:3]):
-                        print(f"  {i+1}. {msg.get('role', 'unknown')}: {msg.get('content', '')[:50]}...")
-                    
+                async with self.deepgram_service.sts_connect(api_key=deepgram_api_key) as sts_ws:
+                    async with self._connections_lock:
+                        self._active_deepgram.add(sts_ws)
+
                     try:
-                        await self.process_and_store_data(conversation_history, menu_items or [], restaurant_id)
-                        print("[SUCCESS] Data saved successfully to MySQL")
-                    except Exception as e:
-                        print(f"[ERROR] Error saving data: {e}")
-                        import traceback
-                        traceback.print_exc()
-                        # Try to at least save the transcript
-                        try:
-                            print("[INFO] Attempting to save transcript as fallback...")
-                            transcript_log = {
-                                "conversation": conversation_history,
-                                "timestamp": datetime.utcnow().isoformat()
-                            }
-                            transcript_id = self.transcript_repo.create_transcript(None, None, transcript_log)
-                            print(f"[SUCCESS] Transcript saved as fallback: transcript_id={transcript_id}")
-                        except Exception as fallback_error:
-                            print(f"[ERROR] Fallback transcript save also failed: {fallback_error}")
-                else:
-                    print("[WARNING] No conversation history to save - this might indicate a problem")
-            except Exception as e:
-                print(f"[CRITICAL ERROR] Failed to save data in finally block: {e}")
-                import traceback
-                traceback.print_exc()
-            
-            # Cancel only our specific tasks (not all system tasks)
-            print("\n[INFO] Step 2: Cancelling call-specific tasks...")
-            try:
-                # Only cancel tasks that are related to this call
-                # Don't cancel all tasks as that includes system tasks
-                tasks_to_cancel = []
-                if receiver_task and not receiver_task.done():
-                    tasks_to_cancel.append(receiver_task)
-                if sts_sender_task and not sts_sender_task.done():
-                    tasks_to_cancel.append(sts_sender_task)
-                if sts_receiver_task and not sts_receiver_task.done():
-                    tasks_to_cancel.append(sts_receiver_task)
-                
-                if tasks_to_cancel:
-                    print(f"[INFO] Cancelling {len(tasks_to_cancel)} call-specific tasks")
-                    for task in tasks_to_cancel:
-                        task.cancel()
-                    # Wait for tasks to be cancelled with timeout
-                    try:
-                        await asyncio.wait_for(
-                            asyncio.gather(*tasks_to_cancel, return_exceptions=True),
-                            timeout=1.0
+                        print("🔗 Connected to Deepgram STS")
+                        config_message = self.deepgram_service.load_config(
+                            think_prompt=call_resources.think_prompt,
+                            key_terms=call_resources.deepgram_key_terms or None,
+                            restaurant_name=call_resources.restaurant_name,
                         )
-                        print(f"[INFO] Cancelled {len(tasks_to_cancel)} tasks")
-                    except asyncio.TimeoutError:
-                        print(f"[WARNING] Timeout waiting for tasks to cancel")
-                    except Exception as e:
-                        print(f"[WARNING] Error during task cancellation: {e}")
-                else:
-                    print("[INFO] No call-specific tasks to cancel")
-            except Exception as e:
-                print(f"[ERROR] Error cancelling tasks: {e}")
-                import traceback
-                traceback.print_exc()
-            
-            # Close MySQL connections
-            print("\n[INFO] Step 3: Closing MySQL connections...")
-            try:
-                self.call_repo.close()
-                self.restaurant_repo.close()
-                self.menu_repo.close()
-                self.faq_repo.close()
-                self.user_repo.close()
-                self.order_repo.close()
-                self.transcript_repo.close()
-                print("[INFO] All MySQL connections closed")
-            except Exception as e:
-                print(f"[ERROR] Error closing MySQL connections: {e}")
-                import traceback
-                traceback.print_exc()
-            
-            # Close WebSocket if still open
-            print("\n[INFO] Step 4: Closing WebSocket...")
-            try:
-                if hasattr(websocket, 'client_state') and websocket.client_state.name != "DISCONNECTED":
-                    await websocket.close()
-                print("[INFO] Twilio WebSocket closed")
-            except Exception as e:
-                print(f"[ERROR] Error closing WebSocket: {e}")
-            
-            print("\n" + "="*70)
-            print("[INFO] ========== CALL CLEANUP COMPLETED ==========")
-            print("="*70 + "\n")
+                        config_message_json = json.dumps(config_message)
+                        print(f"Deepgram agent config: {config_message_json}")
+                        await sts_ws.send(config_message_json)
 
+                        transport = self._build_function_router(sts_ws)
+                        call_id = self._create_call_session(user_id, call_resources.restaurant_id)
+
+                        tasks = [
+                            twilio_task,
+                            asyncio.create_task(self.sts_sender(sts_ws, audio_queue, shutdown_event)),
+                            asyncio.create_task(
+                                self.sts_receiver(
+                                    sts_ws,
+                                    twilio_ws,
+                                    streamsid_queue,
+                                    call_id,
+                                    user_id,
+                                    transport,
+                                    shutdown_event,
+                                    audio_queue,
+                                    state,
+                                )
+                            ),
+                        ]
+                        try:
+                            await asyncio.gather(*tasks)
+                        finally:
+                            for task in tasks:
+                                if not task.done():
+                                    task.cancel()
+                            await asyncio.gather(*tasks, return_exceptions=True)
+                    finally:
+                        async with self._connections_lock:
+                            self._active_deepgram.discard(sts_ws)
+            except websockets.exceptions.InvalidStatusCode as exc:
+                if exc.status_code == 401:
+                    print(
+                        "[Deepgram] Unauthorized (401). Check that DEEPGRAM_API_KEY is valid "
+                        "for the restaurant or environment."
+                    )
+                raise
+        except WebSocketDisconnect:
+            print("Client disconnected")
+        except Exception as e:
+            print(f"Error in twilio_websocket_handler: {e}")
+        finally:
+            if twilio_task and not twilio_task.done():
+                twilio_task.cancel()
+                await asyncio.gather(twilio_task, return_exceptions=True)
+            async with self._connections_lock:
+                self._active_twilio.discard(twilio_ws)
+            try:
+                await twilio_ws.close()
+            except Exception:
+                pass
+
+            if state.conversation_history:
+                call_log = {
+                    "call_id": call_id,
+                    "conversation": state.conversation_history,
+                    "timestamp": datetime.utcnow().isoformat(),
+                }
+                transcript_user_id = None
+                try:
+                    transcript_user_id = int(user_id)
+                except (TypeError, ValueError):
+                    transcript_user_id = None
+                try:
+                    self.transcript_service.create_transcript(
+                        transcript_user_id,
+                        None,
+                        call_log,
+                    )
+                    print("[INFO] Transcript stored to MySQL")
+                except Exception as exc:
+                    print(f"[WARN] Failed to store transcript: {exc}")
+
+            print("🔌 Twilio connection closed")
