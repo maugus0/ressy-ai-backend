@@ -4,7 +4,6 @@ MySQL Reservation Repository for in-house reservation operations.
 from app.repositories.mysql_base import MySQLBaseRepository
 from typing import Dict, List, Optional
 from datetime import datetime
-import uuid
 from mysql.connector import Error as MySQLError
 
 
