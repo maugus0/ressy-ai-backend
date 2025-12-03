@@ -2,7 +2,7 @@
 In-House Reservation API routes for handling reservation operations.
 """
 from fastapi import APIRouter, HTTPException, Query
-from typing import Optional, Dict, Any
+from typing import Optional
 from app.services.reservation_service import ReservationService
 from pydantic import BaseModel, Field
 
