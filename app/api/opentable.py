@@ -64,7 +64,7 @@ async def get_availability(
 ):
     """
     Get table availability for a restaurant from OpenTable API.
-    
+
     - **restaurant_id**: Internal restaurant ID
     - **rid**: OpenTable restaurant ID
     - **start_date_time**: Start date and time
@@ -107,7 +107,7 @@ async def lock_slot(
 ):
     """
     Lock a booking slot for a reservation.
-    
+
     - **restaurant_id**: Internal restaurant ID
     - **rid**: OpenTable restaurant ID
     - **request**: Slot lock request body
@@ -143,7 +143,7 @@ async def create_reservation(
 ):
     """
     Create a reservation.
-    
+
     - **restaurant_id**: Internal restaurant ID
     - **rid**: OpenTable restaurant ID
     - **request**: Reservation creation request body
@@ -186,7 +186,7 @@ async def update_reservation(
 ):
     """
     Update an existing reservation.
-    
+
     - **restaurant_id**: Internal restaurant ID
     - **rid**: OpenTable restaurant ID
     - **confirmation_id**: Confirmation number
@@ -224,7 +224,7 @@ async def cancel_reservation(
 ):
     """
     Cancel a reservation.
-    
+
     - **restaurant_id**: Internal restaurant ID
     - **rid**: OpenTable restaurant ID
     - **confirmation_id**: Confirmation number
@@ -240,4 +240,4 @@ async def cancel_reservation(
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error cancelling reservation: {str(e)}")
-
+vation: {str(e)}")

@@ -43,7 +43,7 @@ async def get_availability(
 ):
     """
     Get table availability for a restaurant.
-    
+
     - **restaurant_id**: Restaurant ID
     - **start_date_time**: Start date and time
     - **forward_minutes**: Forward booking window
@@ -76,7 +76,7 @@ async def lock_slot(
 ):
     """
     Lock a booking slot for a reservation.
-    
+
     - **restaurant_id**: Restaurant ID
     - **request**: Slot lock request body
     """
@@ -105,7 +105,7 @@ async def create_reservation(
 ):
     """
     Create a reservation (pending status).
-    
+
     - **restaurant_id**: Restaurant ID
     - **request**: Reservation creation request body
     """
@@ -135,7 +135,7 @@ async def get_reservation(
 ):
     """
     Get a reservation by ID.
-    
+
     - **reservation_id**: Reservation ID
     """
     try:
@@ -157,7 +157,7 @@ async def cancel_reservation(
 ):
     """
     Cancel a reservation.
-    
+
     - **reservation_id**: Reservation ID
     """
     try:
@@ -167,4 +167,4 @@ async def cancel_reservation(
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error cancelling reservation: {str(e)}")
-
+vation: {str(e)}")

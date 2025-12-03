@@ -8,18 +8,18 @@ from app.config import settings
 
 class OpenTableClient:
     """Client for OpenTable API integration."""
-    
+
     def __init__(self, base_url: Optional[str] = None, bearer_token: Optional[str] = None):
         """
         Initialize OpenTable client.
-        
+
         Args:
             base_url: OpenTable API base URL (defaults to OPENTABLE_BASE_URL from config)
             bearer_token: Bearer token for authentication
         """
         self.base_url = base_url or settings.OPENTABLE_BASE_URL
         self.bearer_token = bearer_token
-    
+
     def _get_headers(self) -> Dict[str, str]:
         """Get headers for API requests."""
         headers = {
@@ -28,7 +28,7 @@ class OpenTableClient:
         if self.bearer_token:
             headers["Authorization"] = f"Bearer {self.bearer_token}"
         return headers
-    
+
     def get_availability(
         self,
         rid: int,
@@ -42,7 +42,7 @@ class OpenTableClient:
     ) -> Dict[str, Any]:
         """
         Get table availability for a restaurant.
-        
+
         Args:
             rid: Restaurant ID
             start_date_time: Start date and time in format yyyy-mm-ddThh:ss
@@ -52,7 +52,7 @@ class OpenTableClient:
             require_attributes: Table types (comma-separated)
             include_credit_card_results: Include credit card results
             include_experiences: Include experiences
-        
+
         Returns:
             API response as dictionary
         """
@@ -60,7 +60,7 @@ class OpenTableClient:
         params = {
             "start_date_time": start_date_time
         }
-        
+
         if forward_minutes is not None:
             params["forward_minutes"] = forward_minutes
         if backward_minutes is not None:
@@ -73,11 +73,11 @@ class OpenTableClient:
             params["include_credit_card_results"] = str(include_credit_card_results).lower()
         if include_experiences is not None:
             params["include_experiences"] = str(include_experiences).lower()
-        
+
         response = requests.get(url, params=params, headers=self._get_headers())
         response.raise_for_status()
         return response.json()
-    
+
     def lock_slot(
         self,
         rid: int,
@@ -90,7 +90,7 @@ class OpenTableClient:
     ) -> Dict[str, Any]:
         """
         Lock a booking slot.
-        
+
         Args:
             rid: Restaurant ID
             party_size: Party size
@@ -99,29 +99,29 @@ class OpenTableClient:
             experience: Experience details (optional)
             dining_area_id: Dining area ID (optional)
             environment: Environment (e.g., "Indoor", "Outdoor") (optional)
-        
+
         Returns:
             API response with reservation_token and expires_at
         """
         url = f"{self.base_url}/v2/booking/{rid}/slot_locks"
-        
+
         payload = {
             "party_size": party_size,
             "date_time": date_time,
             "reservation_attribute": reservation_attribute
         }
-        
+
         if experience:
             payload["experience"] = experience
         if dining_area_id:
             payload["dining_area_id"] = dining_area_id
         if environment:
             payload["environment"] = environment
-        
+
         response = requests.post(url, json=payload, headers=self._get_headers(), timeout=30)
         response.raise_for_status()
         return response.json()
-    
+
     def create_reservation(
         self,
         rid: int,
@@ -140,7 +140,7 @@ class OpenTableClient:
     ) -> Dict[str, Any]:
         """
         Create a reservation.
-        
+
         Args:
             rid: Restaurant ID
             reservation_token: Token from slot lock
@@ -155,12 +155,12 @@ class OpenTableClient:
             dining_area_id: Dining area ID (optional)
             environment: Environment (optional)
             experience: Experience details (optional)
-        
+
         Returns:
             API response with confirmation details
         """
         url = f"{self.base_url}/v2/booking/{rid}/reservations"
-        
+
         payload = {
             "reservation_token": reservation_token,
             "first_name": first_name,
@@ -169,7 +169,7 @@ class OpenTableClient:
             "phone": phone,
             "reservation_attribute": reservation_attribute
         }
-        
+
         if special_request:
             payload["special_request"] = special_request
         if credit_card:
@@ -182,11 +182,11 @@ class OpenTableClient:
             payload["environment"] = environment
         if experience:
             payload["experience"] = experience
-        
+
         response = requests.post(url, json=payload, headers=self._get_headers(), timeout=30)
         response.raise_for_status()
         return response.json()
-    
+
     def update_reservation(
         self,
         rid: int,
@@ -200,7 +200,7 @@ class OpenTableClient:
     ) -> Dict[str, Any]:
         """
         Update a reservation.
-        
+
         Args:
             rid: Restaurant ID
             confirmation_id: Confirmation number
@@ -210,14 +210,14 @@ class OpenTableClient:
             reservation_token: Reservation token (optional)
             special_request: Special request (optional)
             experience: Experience details (optional)
-        
+
         Returns:
             API response with updated reservation details
         """
         url = f"{self.base_url}/v2/booking/{rid}/reservations/{rid}-{confirmation_id}"
-        
+
         payload = {}
-        
+
         if party_size is not None:
             payload["party_size"] = party_size
         if date_time:
@@ -230,11 +230,11 @@ class OpenTableClient:
             payload["special_request"] = special_request
         if experience:
             payload["experience"] = experience
-        
+
         response = requests.put(url, json=payload, headers=self._get_headers())
         response.raise_for_status()
         return response.json()
-    
+
     def cancel_reservation(
         self,
         rid: int,
@@ -242,23 +242,25 @@ class OpenTableClient:
     ) -> bool:
         """
         Cancel a reservation.
-        
+
         Args:
             rid: Restaurant ID
             confirmation_id: Confirmation number
-        
+
         Returns:
             True if successful
         """
         url = f"{self.base_url}/v2/booking/{rid}/reservations/{rid}-{confirmation_id}"
-        
+
         payload = {
             "status": "CancelledWeb"
         }
-        
+
         response = requests.put(url, json=payload, headers=self._get_headers())
         response.raise_for_status()
         # Successful cancellation returns 200 OK with empty body
         return response.status_code == 200
-
-
+response = requests.put(url, json=payload, headers=self._get_headers())
+        response.raise_for_status()
+        # Successful cancellation returns 200 OK with empty body
+        return response.status_code == 200

@@ -8,7 +8,7 @@ import json
 
 class MySQLOpenTableLogRepository(MySQLBaseRepository):
     """Repository for OpenTable API log data access in MySQL."""
-    
+
     def create_log(
         self,
         restaurant_id: int,
@@ -21,7 +21,7 @@ class MySQLOpenTableLogRepository(MySQLBaseRepository):
     ) -> int:
         """
         Create an OpenTable API log entry.
-        
+
         Args:
             restaurant_id: Restaurant ID
             endpoint: API endpoint
@@ -30,7 +30,7 @@ class MySQLOpenTableLogRepository(MySQLBaseRepository):
             response_payload: Response payload as dictionary
             status_code: HTTP status code
             error_message: Error message if any
-        
+
         Returns:
             Log ID
         """
@@ -47,10 +47,10 @@ class MySQLOpenTableLogRepository(MySQLBaseRepository):
                 updated_at
             ) VALUES (%s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
         """
-        
+
         request_json = json.dumps(request_payload) if request_payload else None
         response_json = json.dumps(response_payload) if response_payload else None
-        
+
         return self._execute_insert(query, (
             restaurant_id,
             endpoint,
@@ -60,7 +60,7 @@ class MySQLOpenTableLogRepository(MySQLBaseRepository):
             status_code,
             error_message
         ))
-    
+
     def get_logs_by_restaurant(
         self,
         restaurant_id: int,
@@ -69,17 +69,17 @@ class MySQLOpenTableLogRepository(MySQLBaseRepository):
     ) -> list:
         """
         Get OpenTable API logs for a restaurant.
-        
+
         Args:
             restaurant_id: Restaurant ID
             limit: Maximum number of logs to return
             offset: Offset for pagination
-        
+
         Returns:
             List of log dictionaries
         """
         query = """
-            SELECT 
+            SELECT
                 id,
                 restaurant_id,
                 endpoint,
@@ -96,19 +96,19 @@ class MySQLOpenTableLogRepository(MySQLBaseRepository):
             LIMIT %s OFFSET %s
         """
         return self._execute_query(query, (restaurant_id, limit, offset))
-    
+
     def get_log_by_id(self, log_id: int) -> Optional[Dict]:
         """
         Get a specific log entry by ID.
-        
+
         Args:
             log_id: Log ID
-        
+
         Returns:
             Log dictionary or None
         """
         query = """
-            SELECT 
+            SELECT
                 id,
                 restaurant_id,
                 endpoint,
@@ -125,5 +125,5 @@ class MySQLOpenTableLogRepository(MySQLBaseRepository):
         """
         results = self._execute_query(query, (log_id,))
         return results[0] if results else None
-
-
+cute_query(query, (log_id,))
+        return results[0] if results else None

@@ -9,7 +9,7 @@ from mysql.connector import Error as MySQLError
 
 class MySQLReservationRepository(MySQLBaseRepository):
     """Repository for in-house reservation data access in MySQL."""
-    
+
     # Table Availability Requests
     def create_availability_request(
         self,
@@ -22,7 +22,7 @@ class MySQLReservationRepository(MySQLBaseRepository):
         # Try with reservation_type, fallback if column doesn't exist
         try:
             query = """
-                INSERT INTO Table_Availability_Requests 
+                INSERT INTO Table_Availability_Requests
                 (restaurant_id, start_date_time, party_size, reservation_type)
                 VALUES (%s, %s, %s, %s)
             """
@@ -33,7 +33,7 @@ class MySQLReservationRepository(MySQLBaseRepository):
         except Exception:
             # If reservation_type column doesn't exist, insert without it
             query = """
-                INSERT INTO Table_Availability_Requests 
+                INSERT INTO Table_Availability_Requests
                 (restaurant_id, start_date_time, party_size)
                 VALUES (%s, %s, %s)
             """
@@ -41,7 +41,7 @@ class MySQLReservationRepository(MySQLBaseRepository):
                 query,
                 (restaurant_id, start_date_time, party_size)
             )
-    
+
     def get_availability_requests(
         self,
         restaurant_id: int,
@@ -53,7 +53,7 @@ class MySQLReservationRepository(MySQLBaseRepository):
         # Try query with reservation_type, fallback if column doesn't exist
         try:
             query = """
-                SELECT 
+                SELECT
                     id,
                     restaurant_id,
                     start_date_time,
@@ -65,22 +65,22 @@ class MySQLReservationRepository(MySQLBaseRepository):
                 WHERE restaurant_id = %s AND reservation_type = %s
             """
             params = [restaurant_id, reservation_type]
-            
+
             if start_date_time:
                 query += " AND start_date_time >= %s"
                 params.append(start_date_time)
-            
+
             if end_date_time:
                 query += " AND start_date_time <= %s"
                 params.append(end_date_time)
-            
+
             query += " ORDER BY start_date_time ASC"
-            
+
             return self._execute_query(query, tuple(params))
         except Exception:
             # If reservation_type column doesn't exist, query without it
             query = """
-                SELECT 
+                SELECT
                     id,
                     restaurant_id,
                     start_date_time,
@@ -91,23 +91,23 @@ class MySQLReservationRepository(MySQLBaseRepository):
                 WHERE restaurant_id = %s
             """
             params = [restaurant_id]
-            
+
             if start_date_time:
                 query += " AND start_date_time >= %s"
                 params.append(start_date_time)
-            
+
             if end_date_time:
                 query += " AND start_date_time <= %s"
                 params.append(end_date_time)
-            
+
             query += " ORDER BY start_date_time ASC"
-            
+
             results = self._execute_query(query, tuple(params))
             # Add default reservation_type to results
             for result in results:
                 result['reservation_type'] = 'inhouse'
             return results
-    
+
     # Slot Bookings
     def create_slot_booking(
         self,
@@ -122,7 +122,7 @@ class MySQLReservationRepository(MySQLBaseRepository):
         # Try with reservation_type, fallback if column doesn't exist
         try:
             query = """
-                INSERT INTO Slot_Bookings 
+                INSERT INTO Slot_Bookings
                 (restaurant_id, reservation_type, date_time, expires_at, status, reservation_token)
                 VALUES (%s, %s, %s, %s, %s, %s)
             """
@@ -133,7 +133,7 @@ class MySQLReservationRepository(MySQLBaseRepository):
         except Exception:
             # If reservation_type column doesn't exist, insert without it
             query = """
-                INSERT INTO Slot_Bookings 
+                INSERT INTO Slot_Bookings
                 (restaurant_id, date_time, expires_at, status, reservation_token)
                 VALUES (%s, %s, %s, %s, %s)
             """
@@ -141,7 +141,7 @@ class MySQLReservationRepository(MySQLBaseRepository):
                 query,
                 (restaurant_id, date_time, expires_at, status, reservation_token)
             )
-    
+
     def get_available_slots(
         self,
         restaurant_id: int,
@@ -154,7 +154,7 @@ class MySQLReservationRepository(MySQLBaseRepository):
         # Try query with reservation_type, fallback if column doesn't exist
         try:
             query = """
-                SELECT 
+                SELECT
                     id,
                     restaurant_id,
                     reservation_type,
@@ -165,26 +165,26 @@ class MySQLReservationRepository(MySQLBaseRepository):
                     created_at,
                     updated_at
                 FROM Slot_Bookings
-                WHERE restaurant_id = %s 
+                WHERE restaurant_id = %s
                     AND reservation_type = %s
-                    AND date_time >= %s 
+                    AND date_time >= %s
                     AND date_time <= %s
                     AND status = 'available'
                     AND expires_at > NOW()
             """
             params = [restaurant_id, reservation_type, start_date_time, end_date_time]
-            
+
             if party_size:
                 # For now, we'll assume slots can accommodate any party size
                 # You might want to add a party_size column to Slot_Bookings if needed
                 pass
-            
+
             query += " ORDER BY date_time ASC"
             return self._execute_query(query, tuple(params))
         except Exception:
             # If reservation_type column doesn't exist, query without it
             query = """
-                SELECT 
+                SELECT
                     id,
                     restaurant_id,
                     date_time,
@@ -194,20 +194,20 @@ class MySQLReservationRepository(MySQLBaseRepository):
                     created_at,
                     updated_at
                 FROM Slot_Bookings
-                WHERE restaurant_id = %s 
-                    AND date_time >= %s 
+                WHERE restaurant_id = %s
+                    AND date_time >= %s
                     AND date_time <= %s
                     AND status = 'available'
                     AND expires_at > NOW()
             """
             params = [restaurant_id, start_date_time, end_date_time]
-            
+
             if party_size:
                 pass
-            
+
             query += " ORDER BY date_time ASC"
             return self._execute_query(query, tuple(params))
-    
+
     def get_locked_slots(
         self,
         restaurant_id: int,
@@ -219,12 +219,12 @@ class MySQLReservationRepository(MySQLBaseRepository):
         # Try query with reservation_type, fallback if column doesn't exist
         try:
             query = """
-                SELECT 
+                SELECT
                     date_time
                 FROM Slot_Bookings
-                WHERE restaurant_id = %s 
+                WHERE restaurant_id = %s
                     AND reservation_type = %s
-                    AND date_time >= %s 
+                    AND date_time >= %s
                     AND date_time <= %s
                     AND status IN ('reserved', 'locked')
                     AND (expires_at IS NULL OR expires_at > NOW())
@@ -235,11 +235,11 @@ class MySQLReservationRepository(MySQLBaseRepository):
         except Exception:
             # If reservation_type column doesn't exist, query without it
             query = """
-                SELECT 
+                SELECT
                     date_time
                 FROM Slot_Bookings
-                WHERE restaurant_id = %s 
-                    AND date_time >= %s 
+                WHERE restaurant_id = %s
+                    AND date_time >= %s
                     AND date_time <= %s
                     AND status IN ('reserved', 'locked')
                     AND (expires_at IS NULL OR expires_at > NOW())
@@ -247,7 +247,7 @@ class MySQLReservationRepository(MySQLBaseRepository):
             params = [restaurant_id, start_date_time, end_date_time]
             query += " ORDER BY date_time ASC"
             return self._execute_query(query, tuple(params))
-    
+
     def get_slot_by_token(
         self,
         reservation_token: str,
@@ -257,7 +257,7 @@ class MySQLReservationRepository(MySQLBaseRepository):
         # Try query with reservation_type, fallback if column doesn't exist
         try:
             query = """
-                SELECT 
+                SELECT
                     id,
                     restaurant_id,
                     reservation_type,
@@ -276,7 +276,7 @@ class MySQLReservationRepository(MySQLBaseRepository):
         except Exception:
             # If reservation_type column doesn't exist, query without it
             query = """
-                SELECT 
+                SELECT
                     id,
                     restaurant_id,
                     date_time,
@@ -291,7 +291,7 @@ class MySQLReservationRepository(MySQLBaseRepository):
             """
             results = self._execute_query(query, (reservation_token,))
             return results[0] if results else None
-    
+
     def lock_slot(
         self,
         slot_id: int,
@@ -307,7 +307,7 @@ class MySQLReservationRepository(MySQLBaseRepository):
         """
         affected = self._execute_update(query, (reservation_token, slot_id))
         return affected > 0
-    
+
     def update_slot_status(
         self,
         slot_id: int,
@@ -322,7 +322,7 @@ class MySQLReservationRepository(MySQLBaseRepository):
         """
         affected = self._execute_update(query, (status, slot_id))
         return affected > 0
-    
+
     def expire_slots(self) -> int:
         """Expire slots that have passed their expiration time."""
         query = """
@@ -333,7 +333,7 @@ class MySQLReservationRepository(MySQLBaseRepository):
                 AND expires_at <= NOW()
         """
         return self._execute_update(query)
-    
+
     # Reservations
     def create_reservation(
         self,
@@ -350,8 +350,8 @@ class MySQLReservationRepository(MySQLBaseRepository):
         # Try with reservation_type, fallback if column doesn't exist
         try:
             query = """
-                INSERT INTO Reservations 
-                (reservation_type, table_availability_request_id, slot_booking_id, user_id, 
+                INSERT INTO Reservations
+                (reservation_type, table_availability_request_id, slot_booking_id, user_id,
                  confirmation_number, status, last_cancel_time, manage_reservation_url)
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             """
@@ -363,8 +363,8 @@ class MySQLReservationRepository(MySQLBaseRepository):
         except Exception:
             # If reservation_type column doesn't exist, insert without it
             query = """
-                INSERT INTO Reservations 
-                (table_availability_request_id, slot_booking_id, user_id, 
+                INSERT INTO Reservations
+                (table_availability_request_id, slot_booking_id, user_id,
                  confirmation_number, status, last_cancel_time, manage_reservation_url)
                 VALUES (%s, %s, %s, %s, %s, %s, %s)
             """
@@ -373,7 +373,7 @@ class MySQLReservationRepository(MySQLBaseRepository):
                 (table_availability_request_id, slot_booking_id, user_id,
                  confirmation_number, status, last_cancel_time, manage_reservation_url)
             )
-    
+
     def get_reservation_by_id(
         self,
         reservation_id: int,
@@ -383,7 +383,7 @@ class MySQLReservationRepository(MySQLBaseRepository):
         # First, try to query without reservation_type filter to see if reservation exists
         # This works regardless of whether the column exists
         query = """
-            SELECT 
+            SELECT
                 r.id,
                 r.table_availability_request_id,
                 r.slot_booking_id,
@@ -405,12 +405,12 @@ class MySQLReservationRepository(MySQLBaseRepository):
             LIMIT 1
         """
         results = self._execute_query(query, (reservation_id,))
-        
+
         if not results:
             return None
-        
+
         result = results[0]
-        
+
         # Try to get reservation_type if column exists
         try:
             query_with_type = """
@@ -430,9 +430,9 @@ class MySQLReservationRepository(MySQLBaseRepository):
         except Exception:
             # Column doesn't exist, use default
             result['reservation_type'] = 'inhouse'
-        
+
         return result
-    
+
     def get_reservation_by_confirmation(
         self,
         confirmation_number: str,
@@ -442,7 +442,7 @@ class MySQLReservationRepository(MySQLBaseRepository):
         # Try query with reservation_type, fallback if column doesn't exist
         try:
             query = """
-                SELECT 
+                SELECT
                     r.id,
                     r.reservation_type,
                     r.table_availability_request_id,
@@ -469,7 +469,7 @@ class MySQLReservationRepository(MySQLBaseRepository):
         except Exception:
             # If reservation_type column doesn't exist, query without it
             query = """
-                SELECT 
+                SELECT
                     r.id,
                     r.table_availability_request_id,
                     r.slot_booking_id,
@@ -496,7 +496,7 @@ class MySQLReservationRepository(MySQLBaseRepository):
                 result['reservation_type'] = 'inhouse'  # Set default
                 return result
             return None
-    
+
     def get_reservations_by_restaurant(
         self,
         restaurant_id: int,
@@ -511,7 +511,7 @@ class MySQLReservationRepository(MySQLBaseRepository):
         # Try query with reservation_type, fallback if column doesn't exist
         try:
             query = """
-                SELECT 
+                SELECT
                     r.id,
                     r.reservation_type,
                     r.table_availability_request_id,
@@ -533,22 +533,22 @@ class MySQLReservationRepository(MySQLBaseRepository):
                 WHERE sb.restaurant_id = %s AND r.reservation_type = %s
             """
             params = [restaurant_id, reservation_type]
-            
+
             if status:
                 query += " AND r.status = %s"
                 params.append(status)
-            
+
             if start_date:
                 query += " AND sb.date_time >= %s"
                 params.append(start_date)
-            
+
             if end_date:
                 query += " AND sb.date_time <= %s"
                 params.append(end_date)
-            
+
             query += " ORDER BY sb.date_time DESC LIMIT %s OFFSET %s"
             params.extend([limit, offset])
-            
+
             return self._execute_query(query, tuple(params))
         except (MySQLError, Exception) as e:
             # Check if error is about unknown column
@@ -561,7 +561,7 @@ class MySQLReservationRepository(MySQLBaseRepository):
                 raise
             # If reservation_type column doesn't exist, query without it
             query = """
-                SELECT 
+                SELECT
                     r.id,
                     r.table_availability_request_id,
                     r.slot_booking_id,
@@ -582,28 +582,94 @@ class MySQLReservationRepository(MySQLBaseRepository):
                 WHERE sb.restaurant_id = %s
             """
             params = [restaurant_id]
-            
+
             if status:
                 query += " AND r.status = %s"
                 params.append(status)
-            
+
             if start_date:
                 query += " AND sb.date_time >= %s"
                 params.append(start_date)
-            
+
             if end_date:
                 query += " AND sb.date_time <= %s"
                 params.append(end_date)
-            
+
             query += " ORDER BY sb.date_time DESC LIMIT %s OFFSET %s"
             params.extend([limit, offset])
-            
+
             results = self._execute_query(query, tuple(params))
             # Add default reservation_type to results
             for result in results:
                 result['reservation_type'] = 'inhouse'
             return results
-    
+
+    def get_reservations_count_by_restaurant(
+        self,
+        restaurant_id: int,
+        reservation_type: str = 'inhouse',
+        status: Optional[str] = None,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None
+    ) -> int:
+        """Get count of reservations for a restaurant."""
+        # Try query with reservation_type, fallback if column doesn't exist
+        try:
+            query = """
+                SELECT COUNT(*) as count
+                FROM Reservations r
+                INNER JOIN Slot_Bookings sb ON r.slot_booking_id = sb.id
+                WHERE sb.restaurant_id = %s AND r.reservation_type = %s
+            """
+            params = [restaurant_id, reservation_type]
+
+            if status:
+                query += " AND r.status = %s"
+                params.append(status)
+
+            if start_date:
+                query += " AND sb.date_time >= %s"
+                params.append(start_date)
+
+            if end_date:
+                query += " AND sb.date_time <= %s"
+                params.append(end_date)
+
+            results = self._execute_query(query, tuple(params))
+            return results[0]['count'] if results else 0
+        except (MySQLError, Exception) as e:
+            # Check if error is about unknown column
+            error_msg = str(e).lower()
+            if 'unknown column' in error_msg and 'reservation_type' in error_msg:
+                # Column doesn't exist, use fallback query
+                pass
+            else:
+                # Different error, re-raise it
+                raise
+            # If reservation_type column doesn't exist, query without it
+            query = """
+                SELECT COUNT(*) as count
+                FROM Reservations r
+                INNER JOIN Slot_Bookings sb ON r.slot_booking_id = sb.id
+                WHERE sb.restaurant_id = %s
+            """
+            params = [restaurant_id]
+
+            if status:
+                query += " AND r.status = %s"
+                params.append(status)
+
+            if start_date:
+                query += " AND sb.date_time >= %s"
+                params.append(start_date)
+
+            if end_date:
+                query += " AND sb.date_time <= %s"
+                params.append(end_date)
+
+            results = self._execute_query(query, tuple(params))
+            return results[0]['count'] if results else 0
+
     def update_reservation_status(
         self,
         reservation_id: int,
@@ -618,7 +684,7 @@ class MySQLReservationRepository(MySQLBaseRepository):
         """
         affected = self._execute_update(query, (status, reservation_id))
         return affected > 0
-    
+
     def finalize_reservation(
         self,
         reservation_id: int,
@@ -643,7 +709,7 @@ class MySQLReservationRepository(MySQLBaseRepository):
             """
             affected = self._execute_update(query, (reservation_id,))
         return affected > 0
-    
+
     def cancel_reservation(
         self,
         reservation_id: int
@@ -657,4 +723,3 @@ class MySQLReservationRepository(MySQLBaseRepository):
         """
         affected = self._execute_update(query, (reservation_id,))
         return affected > 0
-

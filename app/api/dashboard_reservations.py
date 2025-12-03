@@ -26,7 +26,7 @@ async def finalize_reservation(
 ):
     """
     Finalize a reservation by changing status from 'pending' to 'confirmed'.
-    
+
     - **reservation_id**: Reservation ID
     - **request**: Finalization request body (optional confirmation_number)
     """
@@ -57,7 +57,7 @@ async def get_restaurant_reservations(
 ):
     """
     Get reservations for a restaurant.
-    
+
     - **restaurant_id**: Restaurant ID
     - **status**: Filter by status
     - **start_date**: Filter by start date
@@ -91,7 +91,7 @@ async def get_reservation_dashboard(
 ):
     """
     Get a reservation by ID.
-    
+
     - **reservation_id**: Reservation ID
     """
     try:
@@ -113,7 +113,7 @@ async def cancel_reservation_dashboard(
 ):
     """
     Cancel a reservation.
-    
+
     - **reservation_id**: Reservation ID
     """
     try:
@@ -123,4 +123,4 @@ async def cancel_reservation_dashboard(
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error cancelling reservation: {str(e)}")
-
+on: {str(e)}")

@@ -19,7 +19,7 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
         # Try to get restaurant with opening/closing times, fallback to basic query if columns don't exist
         try:
             query = """
-                SELECT 
+                SELECT
                     id,
                     name,
                     address,
@@ -49,10 +49,10 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
                     result['closing_time'] = '22:00:00'
                 return result
             return None
-        except Exception as e:
+        except Exception:
             # If columns don't exist, use basic query with defaults
             query = """
-                SELECT 
+                SELECT
                     id,
                     name,
                     address,
@@ -77,7 +77,7 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
                 result['closing_time'] = '22:00:00'
                 return result
             return None
-    
+
     def get_by_id(self, restaurant_id: int) -> Optional[Dict]:
         """
         Get restaurant by ID.
@@ -85,7 +85,7 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
         # Try to get restaurant with opening/closing times, fallback to basic query if columns don't exist
         try:
             query = """
-                SELECT 
+                SELECT
                     id,
                     name,
                     address,
@@ -115,10 +115,10 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
                     result['closing_time'] = '22:00:00'
                 return result
             return None
-        except Exception as e:
+        except Exception:
             # If columns don't exist, use basic query with defaults
             query = """
-                SELECT 
+                SELECT
                     id,
                     name,
                     address,
@@ -178,9 +178,6 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
             ),
         )
 
-    def get_by_id(self, restaurant_id: int) -> Dict[str, Any]:
-        results = self._execute_query("SELECT * FROM Restaurants WHERE id = %s LIMIT 1", (restaurant_id,))
-        return results[0] if results else {}
 
     def get_all(self) -> List[Dict[str, Any]]:
         return self._execute_query("SELECT * FROM Restaurants ORDER BY created_at DESC")
