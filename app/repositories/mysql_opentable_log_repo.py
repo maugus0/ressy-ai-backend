@@ -2,9 +2,10 @@
 MySQL OpenTable API Log Repository for logging OpenTable API calls.
 """
 
-from app.repositories.mysql_base import MySQLBaseRepository
-from typing import Dict, Optional
 import json
+from typing import Dict, Optional
+
+from app.repositories.mysql_base import MySQLBaseRepository
 
 
 class MySQLOpenTableLogRepository(MySQLBaseRepository):

@@ -5,24 +5,25 @@ from xml.sax.saxutils import escape
 
 from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
-from app.api import (
-    auth,
-    calls,
-    admin,
-    users,
-    menus,
-    restaurants,
-    specials,
-    orders,
-    order_history,
-    transcripts,
-    faqs,
-    opentable,
-    reservations,
-    dashboard_reservations,
-)
 from starlette.requests import Request
 from starlette.responses import Response
+
+from app.api import (
+    admin,
+    auth,
+    calls,
+    dashboard_reservations,
+    faqs,
+    menus,
+    opentable,
+    order_history,
+    orders,
+    reservations,
+    restaurants,
+    specials,
+    transcripts,
+    users,
+)
 from app.api.websocket import twilio_websocket_handler
 
 app = FastAPI(title="RessyAI Backend", version="1.0.0")

@@ -2,10 +2,12 @@
 Dashboard API routes for in-house reservation management.
 """
 
-from fastapi import APIRouter, HTTPException, Query
 from typing import Optional
-from app.services.reservation_service import ReservationService
+
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
+
+from app.services.reservation_service import ReservationService
 
 router = APIRouter()
 reservation_service = ReservationService()

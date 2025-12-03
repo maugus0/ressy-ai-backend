@@ -2,8 +2,10 @@
 OpenTable API Client for making requests to OpenTable's API.
 """
 
+from typing import Any, Dict, Optional
+
 import requests
-from typing import Dict, Optional, Any
+
 from app.config import settings
 
 

@@ -2,8 +2,9 @@
 OpenTable Service for handling OpenTable API operations and logging.
 """
 
-from typing import Dict, Optional, Any
 import json
+from typing import Any, Dict, Optional
+
 from app.integrations.opentable_client import OpenTableClient
 from app.repositories.mysql_opentable_log_repo import MySQLOpenTableLogRepository
 from app.repositories.mysql_restaurant_repo import MySQLRestaurantRepository
