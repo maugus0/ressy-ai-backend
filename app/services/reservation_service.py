@@ -12,7 +12,7 @@ from app.repositories.mysql_user_repo import MySQLUserRepository
 class ReservationService:
     """Service for in-house reservation operations."""
     
-    RESERVATION_TYPE = 'inhouse'
+    RESERVATION_TYPE = 'in-house'
     SLOT_DURATION_MINUTES = 90  # Default slot duration
     SLOT_EXPIRY_MINUTES = 15  # Time before slot expires
     SLOT_INTERVAL_MINUTES = 15  # Interval between slots
