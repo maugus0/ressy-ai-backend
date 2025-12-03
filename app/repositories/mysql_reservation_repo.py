@@ -1,6 +1,7 @@
 """
 MySQL Reservation Repository for in-house reservation operations.
 """
+
 from app.repositories.mysql_base import MySQLBaseRepository
 from typing import Dict, List, Optional
 from datetime import datetime
@@ -12,11 +13,7 @@ class MySQLReservationRepository(MySQLBaseRepository):
 
     # Table Availability Requests
     def create_availability_request(
-        self,
-        restaurant_id: int,
-        start_date_time: datetime,
-        party_size: int,
-        reservation_type: str = 'inhouse'
+        self, restaurant_id: int, start_date_time: datetime, party_size: int, reservation_type: str = "inhouse"
     ) -> int:
         """Create a table availability request."""
         # Try with reservation_type, fallback if column doesn't exist
@@ -26,10 +23,7 @@ class MySQLReservationRepository(MySQLBaseRepository):
                 (restaurant_id, start_date_time, party_size, reservation_type)
                 VALUES (%s, %s, %s, %s)
             """
-            return self._execute_insert(
-                query,
-                (restaurant_id, start_date_time, party_size, reservation_type)
-            )
+            return self._execute_insert(query, (restaurant_id, start_date_time, party_size, reservation_type))
         except Exception:
             # If reservation_type column doesn't exist, insert without it
             query = """
@@ -37,17 +31,14 @@ class MySQLReservationRepository(MySQLBaseRepository):
                 (restaurant_id, start_date_time, party_size)
                 VALUES (%s, %s, %s)
             """
-            return self._execute_insert(
-                query,
-                (restaurant_id, start_date_time, party_size)
-            )
+            return self._execute_insert(query, (restaurant_id, start_date_time, party_size))
 
     def get_availability_requests(
         self,
         restaurant_id: int,
         start_date_time: Optional[datetime] = None,
         end_date_time: Optional[datetime] = None,
-        reservation_type: str = 'inhouse'
+        reservation_type: str = "inhouse",
     ) -> List[Dict]:
         """Get availability requests for a restaurant."""
         # Try query with reservation_type, fallback if column doesn't exist
@@ -105,7 +96,7 @@ class MySQLReservationRepository(MySQLBaseRepository):
             results = self._execute_query(query, tuple(params))
             # Add default reservation_type to results
             for result in results:
-                result['reservation_type'] = 'inhouse'
+                result["reservation_type"] = "inhouse"
             return results
 
     # Slot Bookings
@@ -115,8 +106,8 @@ class MySQLReservationRepository(MySQLBaseRepository):
         date_time: datetime,
         expires_at: datetime,
         reservation_token: str,
-        reservation_type: str = 'inhouse',
-        status: str = 'available'
+        reservation_type: str = "inhouse",
+        status: str = "available",
     ) -> int:
         """Create a slot booking."""
         # Try with reservation_type, fallback if column doesn't exist
@@ -127,8 +118,7 @@ class MySQLReservationRepository(MySQLBaseRepository):
                 VALUES (%s, %s, %s, %s, %s, %s)
             """
             return self._execute_insert(
-                query,
-                (restaurant_id, reservation_type, date_time, expires_at, status, reservation_token)
+                query, (restaurant_id, reservation_type, date_time, expires_at, status, reservation_token)
             )
         except Exception:
             # If reservation_type column doesn't exist, insert without it
@@ -137,10 +127,7 @@ class MySQLReservationRepository(MySQLBaseRepository):
                 (restaurant_id, date_time, expires_at, status, reservation_token)
                 VALUES (%s, %s, %s, %s, %s)
             """
-            return self._execute_insert(
-                query,
-                (restaurant_id, date_time, expires_at, status, reservation_token)
-            )
+            return self._execute_insert(query, (restaurant_id, date_time, expires_at, status, reservation_token))
 
     def get_available_slots(
         self,
@@ -148,7 +135,7 @@ class MySQLReservationRepository(MySQLBaseRepository):
         start_date_time: datetime,
         end_date_time: datetime,
         party_size: Optional[int] = None,
-        reservation_type: str = 'inhouse'
+        reservation_type: str = "inhouse",
     ) -> List[Dict]:
         """Get available slots for a restaurant within a time range."""
         # Try query with reservation_type, fallback if column doesn't exist
@@ -209,11 +196,7 @@ class MySQLReservationRepository(MySQLBaseRepository):
             return self._execute_query(query, tuple(params))
 
     def get_locked_slots(
-        self,
-        restaurant_id: int,
-        start_date_time: datetime,
-        end_date_time: datetime,
-        reservation_type: str = 'inhouse'
+        self, restaurant_id: int, start_date_time: datetime, end_date_time: datetime, reservation_type: str = "inhouse"
     ) -> List[Dict]:
         """Get locked/reserved slots for a restaurant within a time range."""
         # Try query with reservation_type, fallback if column doesn't exist
@@ -248,11 +231,7 @@ class MySQLReservationRepository(MySQLBaseRepository):
             query += " ORDER BY date_time ASC"
             return self._execute_query(query, tuple(params))
 
-    def get_slot_by_token(
-        self,
-        reservation_token: str,
-        reservation_type: str = 'inhouse'
-    ) -> Optional[Dict]:
+    def get_slot_by_token(self, reservation_token: str, reservation_type: str = "inhouse") -> Optional[Dict]:
         """Get a slot booking by reservation token."""
         # Try query with reservation_type, fallback if column doesn't exist
         try:
@@ -292,11 +271,7 @@ class MySQLReservationRepository(MySQLBaseRepository):
             results = self._execute_query(query, (reservation_token,))
             return results[0] if results else None
 
-    def lock_slot(
-        self,
-        slot_id: int,
-        reservation_token: str
-    ) -> bool:
+    def lock_slot(self, slot_id: int, reservation_token: str) -> bool:
         """Lock a slot by updating its status to 'reserved'."""
         query = """
             UPDATE Slot_Bookings
@@ -308,11 +283,7 @@ class MySQLReservationRepository(MySQLBaseRepository):
         affected = self._execute_update(query, (reservation_token, slot_id))
         return affected > 0
 
-    def update_slot_status(
-        self,
-        slot_id: int,
-        status: str
-    ) -> bool:
+    def update_slot_status(self, slot_id: int, status: str) -> bool:
         """Update slot status."""
         query = """
             UPDATE Slot_Bookings
@@ -341,10 +312,10 @@ class MySQLReservationRepository(MySQLBaseRepository):
         user_id: int,
         confirmation_number: str,
         table_availability_request_id: Optional[int] = None,
-        reservation_type: str = 'inhouse',
-        status: str = 'pending',
+        reservation_type: str = "inhouse",
+        status: str = "pending",
         last_cancel_time: Optional[datetime] = None,
-        manage_reservation_url: Optional[str] = None
+        manage_reservation_url: Optional[str] = None,
     ) -> int:
         """Create a reservation."""
         # Try with reservation_type, fallback if column doesn't exist
@@ -357,8 +328,16 @@ class MySQLReservationRepository(MySQLBaseRepository):
             """
             return self._execute_insert(
                 query,
-                (reservation_type, table_availability_request_id, slot_booking_id, user_id,
-                 confirmation_number, status, last_cancel_time, manage_reservation_url)
+                (
+                    reservation_type,
+                    table_availability_request_id,
+                    slot_booking_id,
+                    user_id,
+                    confirmation_number,
+                    status,
+                    last_cancel_time,
+                    manage_reservation_url,
+                ),
             )
         except Exception:
             # If reservation_type column doesn't exist, insert without it
@@ -370,15 +349,18 @@ class MySQLReservationRepository(MySQLBaseRepository):
             """
             return self._execute_insert(
                 query,
-                (table_availability_request_id, slot_booking_id, user_id,
-                 confirmation_number, status, last_cancel_time, manage_reservation_url)
+                (
+                    table_availability_request_id,
+                    slot_booking_id,
+                    user_id,
+                    confirmation_number,
+                    status,
+                    last_cancel_time,
+                    manage_reservation_url,
+                ),
             )
 
-    def get_reservation_by_id(
-        self,
-        reservation_id: int,
-        reservation_type: str = 'inhouse'
-    ) -> Optional[Dict]:
+    def get_reservation_by_id(self, reservation_id: int, reservation_type: str = "inhouse") -> Optional[Dict]:
         """Get a reservation by ID."""
         # First, try to query without reservation_type filter to see if reservation exists
         # This works regardless of whether the column exists
@@ -420,23 +402,21 @@ class MySQLReservationRepository(MySQLBaseRepository):
                 LIMIT 1
             """
             type_results = self._execute_query(query_with_type, (reservation_id,))
-            if type_results and type_results[0].get('reservation_type'):
-                result['reservation_type'] = type_results[0]['reservation_type']
+            if type_results and type_results[0].get("reservation_type"):
+                result["reservation_type"] = type_results[0]["reservation_type"]
                 # If filtering by reservation_type was requested and it doesn't match, return None
-                if reservation_type and result['reservation_type'] != reservation_type:
+                if reservation_type and result["reservation_type"] != reservation_type:
                     return None
             else:
-                result['reservation_type'] = 'inhouse'  # Set default
+                result["reservation_type"] = "inhouse"  # Set default
         except Exception:
             # Column doesn't exist, use default
-            result['reservation_type'] = 'inhouse'
+            result["reservation_type"] = "inhouse"
 
         return result
 
     def get_reservation_by_confirmation(
-        self,
-        confirmation_number: str,
-        reservation_type: str = 'inhouse'
+        self, confirmation_number: str, reservation_type: str = "inhouse"
     ) -> Optional[Dict]:
         """Get a reservation by confirmation number."""
         # Try query with reservation_type, fallback if column doesn't exist
@@ -493,19 +473,19 @@ class MySQLReservationRepository(MySQLBaseRepository):
             results = self._execute_query(query, (confirmation_number,))
             if results:
                 result = results[0]
-                result['reservation_type'] = 'inhouse'  # Set default
+                result["reservation_type"] = "inhouse"  # Set default
                 return result
             return None
 
     def get_reservations_by_restaurant(
         self,
         restaurant_id: int,
-        reservation_type: str = 'inhouse',
+        reservation_type: str = "inhouse",
         status: Optional[str] = None,
         start_date: Optional[datetime] = None,
         end_date: Optional[datetime] = None,
         limit: int = 100,
-        offset: int = 0
+        offset: int = 0,
     ) -> List[Dict]:
         """Get reservations for a restaurant."""
         # Try query with reservation_type, fallback if column doesn't exist
@@ -553,7 +533,7 @@ class MySQLReservationRepository(MySQLBaseRepository):
         except (MySQLError, Exception) as e:
             # Check if error is about unknown column
             error_msg = str(e).lower()
-            if 'unknown column' in error_msg and 'reservation_type' in error_msg:
+            if "unknown column" in error_msg and "reservation_type" in error_msg:
                 # Column doesn't exist, use fallback query
                 pass
             else:
@@ -601,16 +581,16 @@ class MySQLReservationRepository(MySQLBaseRepository):
             results = self._execute_query(query, tuple(params))
             # Add default reservation_type to results
             for result in results:
-                result['reservation_type'] = 'inhouse'
+                result["reservation_type"] = "inhouse"
             return results
 
     def get_reservations_count_by_restaurant(
         self,
         restaurant_id: int,
-        reservation_type: str = 'inhouse',
+        reservation_type: str = "inhouse",
         status: Optional[str] = None,
         start_date: Optional[datetime] = None,
-        end_date: Optional[datetime] = None
+        end_date: Optional[datetime] = None,
     ) -> int:
         """Get count of reservations for a restaurant."""
         # Try query with reservation_type, fallback if column doesn't exist
@@ -636,11 +616,11 @@ class MySQLReservationRepository(MySQLBaseRepository):
                 params.append(end_date)
 
             results = self._execute_query(query, tuple(params))
-            return results[0]['count'] if results else 0
+            return results[0]["count"] if results else 0
         except (MySQLError, Exception) as e:
             # Check if error is about unknown column
             error_msg = str(e).lower()
-            if 'unknown column' in error_msg and 'reservation_type' in error_msg:
+            if "unknown column" in error_msg and "reservation_type" in error_msg:
                 # Column doesn't exist, use fallback query
                 pass
             else:
@@ -668,13 +648,9 @@ class MySQLReservationRepository(MySQLBaseRepository):
                 params.append(end_date)
 
             results = self._execute_query(query, tuple(params))
-            return results[0]['count'] if results else 0
+            return results[0]["count"] if results else 0
 
-    def update_reservation_status(
-        self,
-        reservation_id: int,
-        status: str
-    ) -> bool:
+    def update_reservation_status(self, reservation_id: int, status: str) -> bool:
         """Update reservation status."""
         query = """
             UPDATE Reservations
@@ -685,11 +661,7 @@ class MySQLReservationRepository(MySQLBaseRepository):
         affected = self._execute_update(query, (status, reservation_id))
         return affected > 0
 
-    def finalize_reservation(
-        self,
-        reservation_id: int,
-        confirmation_number: Optional[str] = None
-    ) -> bool:
+    def finalize_reservation(self, reservation_id: int, confirmation_number: Optional[str] = None) -> bool:
         """Finalize a reservation by changing status from 'pending' to 'confirmed'."""
         if confirmation_number:
             query = """
@@ -710,10 +682,7 @@ class MySQLReservationRepository(MySQLBaseRepository):
             affected = self._execute_update(query, (reservation_id,))
         return affected > 0
 
-    def cancel_reservation(
-        self,
-        reservation_id: int
-    ) -> bool:
+    def cancel_reservation(self, reservation_id: int) -> bool:
         """Cancel a reservation."""
         query = """
             UPDATE Reservations

@@ -1,6 +1,7 @@
 """
 OpenTable API Client for making requests to OpenTable's API.
 """
+
 import requests
 from typing import Dict, Optional, Any
 from app.config import settings
@@ -22,9 +23,7 @@ class OpenTableClient:
 
     def _get_headers(self) -> Dict[str, str]:
         """Get headers for API requests."""
-        headers = {
-            "Content-Type": "application/json"
-        }
+        headers = {"Content-Type": "application/json"}
         if self.bearer_token:
             headers["Authorization"] = f"Bearer {self.bearer_token}"
         return headers
@@ -38,7 +37,7 @@ class OpenTableClient:
         party_size: Optional[int] = None,
         require_attributes: Optional[str] = None,
         include_credit_card_results: Optional[bool] = None,
-        include_experiences: Optional[bool] = None
+        include_experiences: Optional[bool] = None,
     ) -> Dict[str, Any]:
         """
         Get table availability for a restaurant.
@@ -57,9 +56,7 @@ class OpenTableClient:
             API response as dictionary
         """
         url = f"{self.base_url}/v2/availability/{rid}"
-        params = {
-            "start_date_time": start_date_time
-        }
+        params = {"start_date_time": start_date_time}
 
         if forward_minutes is not None:
             params["forward_minutes"] = forward_minutes
@@ -86,7 +83,7 @@ class OpenTableClient:
         reservation_attribute: str = "default",
         experience: Optional[Dict[str, Any]] = None,
         dining_area_id: Optional[int] = None,
-        environment: Optional[str] = None
+        environment: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Lock a booking slot.
@@ -105,11 +102,7 @@ class OpenTableClient:
         """
         url = f"{self.base_url}/v2/booking/{rid}/slot_locks"
 
-        payload = {
-            "party_size": party_size,
-            "date_time": date_time,
-            "reservation_attribute": reservation_attribute
-        }
+        payload = {"party_size": party_size, "date_time": date_time, "reservation_attribute": reservation_attribute}
 
         if experience:
             payload["experience"] = experience
@@ -136,7 +129,7 @@ class OpenTableClient:
         restaurant_email_marketing_opt_in: Optional[str] = None,
         dining_area_id: Optional[str] = None,
         environment: Optional[str] = None,
-        experience: Optional[Dict[str, Any]] = None
+        experience: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """
         Create a reservation.
@@ -167,7 +160,7 @@ class OpenTableClient:
             "last_name": last_name,
             "email_address": email_address,
             "phone": phone,
-            "reservation_attribute": reservation_attribute
+            "reservation_attribute": reservation_attribute,
         }
 
         if special_request:
@@ -196,7 +189,7 @@ class OpenTableClient:
         reservation_attribute: Optional[str] = None,
         reservation_token: Optional[str] = None,
         special_request: Optional[str] = None,
-        experience: Optional[Dict[str, Any]] = None
+        experience: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """
         Update a reservation.
@@ -235,11 +228,7 @@ class OpenTableClient:
         response.raise_for_status()
         return response.json()
 
-    def cancel_reservation(
-        self,
-        rid: int,
-        confirmation_id: int
-    ) -> bool:
+    def cancel_reservation(self, rid: int, confirmation_id: int) -> bool:
         """
         Cancel a reservation.
 
@@ -252,15 +241,9 @@ class OpenTableClient:
         """
         url = f"{self.base_url}/v2/booking/{rid}/reservations/{rid}-{confirmation_id}"
 
-        payload = {
-            "status": "CancelledWeb"
-        }
+        payload = {"status": "CancelledWeb"}
 
         response = requests.put(url, json=payload, headers=self._get_headers())
-        response.raise_for_status()
-        # Successful cancellation returns 200 OK with empty body
-        return response.status_code == 200
-response = requests.put(url, json=payload, headers=self._get_headers())
         response.raise_for_status()
         # Successful cancellation returns 200 OK with empty body
         return response.status_code == 200

@@ -1,6 +1,7 @@
 """
 Dashboard API routes for in-house reservation management.
 """
+
 from fastapi import APIRouter, HTTPException, Query
 from typing import Optional
 from app.services.reservation_service import ReservationService
@@ -16,14 +17,8 @@ class FinalizeReservationRequest(BaseModel):
 
 
 # ---------- FINALIZE RESERVATION (Dashboard Only) ----------
-@router.put(
-    "/reservations/{reservation_id}/finalize",
-    summary="Finalize a reservation (Dashboard only)"
-)
-async def finalize_reservation(
-    reservation_id: int,
-    request: FinalizeReservationRequest
-):
+@router.put("/reservations/{reservation_id}/finalize", summary="Finalize a reservation (Dashboard only)")
+async def finalize_reservation(reservation_id: int, request: FinalizeReservationRequest):
     """
     Finalize a reservation by changing status from 'pending' to 'confirmed'.
 
@@ -32,8 +27,7 @@ async def finalize_reservation(
     """
     try:
         result = reservation_service.finalize_reservation(
-            reservation_id=reservation_id,
-            confirmation_number=request.confirmation_number
+            reservation_id=reservation_id, confirmation_number=request.confirmation_number
         )
         return result
     except ValueError as e:
@@ -43,17 +37,14 @@ async def finalize_reservation(
 
 
 # ---------- GET RESERVATIONS BY RESTAURANT (Dashboard) ----------
-@router.get(
-    "/restaurants/{restaurant_id}/reservations",
-    summary="Get reservations for a restaurant (Dashboard)"
-)
+@router.get("/restaurants/{restaurant_id}/reservations", summary="Get reservations for a restaurant (Dashboard)")
 async def get_restaurant_reservations(
     restaurant_id: int,
     status: Optional[str] = Query(None, description="Filter by status (pending, confirmed, cancelled, completed)"),
     start_date: Optional[str] = Query(None, description="Filter by start date (ISO format)"),
     end_date: Optional[str] = Query(None, description="Filter by end date (ISO format)"),
     limit: int = Query(100, ge=1, le=1000, description="Limit results"),
-    offset: int = Query(0, ge=0, description="Offset for pagination")
+    offset: int = Query(0, ge=0, description="Offset for pagination"),
 ):
     """
     Get reservations for a restaurant.
@@ -72,7 +63,7 @@ async def get_restaurant_reservations(
             start_date=start_date,
             end_date=end_date,
             limit=limit,
-            offset=offset
+            offset=offset,
         )
         return result
     except ValueError as e:
@@ -82,13 +73,8 @@ async def get_restaurant_reservations(
 
 
 # ---------- GET RESERVATION BY ID (Dashboard) ----------
-@router.get(
-    "/reservations/{reservation_id}",
-    summary="Get a reservation by ID (Dashboard)"
-)
-async def get_reservation_dashboard(
-    reservation_id: int
-):
+@router.get("/reservations/{reservation_id}", summary="Get a reservation by ID (Dashboard)")
+async def get_reservation_dashboard(reservation_id: int):
     """
     Get a reservation by ID.
 
@@ -104,13 +90,8 @@ async def get_reservation_dashboard(
 
 
 # ---------- CANCEL RESERVATION (Dashboard) ----------
-@router.put(
-    "/reservations/{reservation_id}/cancel",
-    summary="Cancel a reservation (Dashboard)"
-)
-async def cancel_reservation_dashboard(
-    reservation_id: int
-):
+@router.put("/reservations/{reservation_id}/cancel", summary="Cancel a reservation (Dashboard)")
+async def cancel_reservation_dashboard(reservation_id: int):
     """
     Cancel a reservation.
 
@@ -123,4 +104,3 @@ async def cancel_reservation_dashboard(
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error cancelling reservation: {str(e)}")
-on: {str(e)}")

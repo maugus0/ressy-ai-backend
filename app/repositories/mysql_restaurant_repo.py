@@ -43,10 +43,10 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
             if results:
                 result = results[0]
                 # Set defaults if columns don't exist
-                if 'opening_time' not in result or result.get('opening_time') is None:
-                    result['opening_time'] = '09:00:00'
-                if 'closing_time' not in result or result.get('closing_time') is None:
-                    result['closing_time'] = '22:00:00'
+                if "opening_time" not in result or result.get("opening_time") is None:
+                    result["opening_time"] = "09:00:00"
+                if "closing_time" not in result or result.get("closing_time") is None:
+                    result["closing_time"] = "22:00:00"
                 return result
             return None
         except Exception:
@@ -73,8 +73,8 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
             results = self._execute_query(query, (twilio_phone_number,))
             if results:
                 result = results[0]
-                result['opening_time'] = '09:00:00'
-                result['closing_time'] = '22:00:00'
+                result["opening_time"] = "09:00:00"
+                result["closing_time"] = "22:00:00"
                 return result
             return None
 
@@ -109,10 +109,10 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
             if results:
                 result = results[0]
                 # Set defaults if columns don't exist
-                if 'opening_time' not in result or result.get('opening_time') is None:
-                    result['opening_time'] = '09:00:00'
-                if 'closing_time' not in result or result.get('closing_time') is None:
-                    result['closing_time'] = '22:00:00'
+                if "opening_time" not in result or result.get("opening_time") is None:
+                    result["opening_time"] = "09:00:00"
+                if "closing_time" not in result or result.get("closing_time") is None:
+                    result["closing_time"] = "22:00:00"
                 return result
             return None
         except Exception:
@@ -139,8 +139,8 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
             results = self._execute_query(query, (restaurant_id,))
             if results:
                 result = results[0]
-                result['opening_time'] = '09:00:00'
-                result['closing_time'] = '22:00:00'
+                result["opening_time"] = "09:00:00"
+                result["closing_time"] = "22:00:00"
                 return result
             return None
 
@@ -177,7 +177,6 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
                 data.get("is_credit_card_required_for_reservation", False),
             ),
         )
-
 
     def get_all(self) -> List[Dict[str, Any]]:
         return self._execute_query("SELECT * FROM Restaurants ORDER BY created_at DESC")

@@ -1,6 +1,7 @@
 """
 In-House Reservation Service for handling table reservations.
 """
+
 from typing import Dict, Optional, Any
 from datetime import datetime, timedelta
 import uuid
@@ -12,7 +13,7 @@ from app.repositories.mysql_user_repo import MySQLUserRepository
 class ReservationService:
     """Service for in-house reservation operations."""
 
-    RESERVATION_TYPE = 'inhouse'
+    RESERVATION_TYPE = "inhouse"
     SLOT_DURATION_MINUTES = 90  # Default slot duration
     SLOT_EXPIRY_MINUTES = 15  # Time before slot expires
     SLOT_INTERVAL_MINUTES = 15  # Interval between slots
@@ -28,7 +29,7 @@ class ReservationService:
         start_date_time: str,
         forward_minutes: Optional[int] = None,
         backward_minutes: Optional[int] = None,
-        party_size: Optional[int] = None
+        party_size: Optional[int] = None,
     ) -> Dict[str, Any]:
         """
         Get table availability for a restaurant.
@@ -49,25 +50,25 @@ class ReservationService:
             raise ValueError(f"Restaurant with ID {restaurant_id} not found")
 
         # Get opening and closing times
-        opening_time_str = restaurant.get('opening_time', '09:00:00')
-        closing_time_str = restaurant.get('closing_time', '22:00:00')
+        opening_time_str = restaurant.get("opening_time", "09:00:00")
+        closing_time_str = restaurant.get("closing_time", "22:00:00")
 
         # Parse opening and closing times
         try:
-            opening_time = datetime.strptime(str(opening_time_str), '%H:%M:%S').time()
-            closing_time = datetime.strptime(str(closing_time_str), '%H:%M:%S').time()
+            opening_time = datetime.strptime(str(opening_time_str), "%H:%M:%S").time()
+            closing_time = datetime.strptime(str(closing_time_str), "%H:%M:%S").time()
         except (ValueError, TypeError):
             # Default to 9 AM - 10 PM if parsing fails
-            opening_time = datetime.strptime('09:00:00', '%H:%M:%S').time()
-            closing_time = datetime.strptime('22:00:00', '%H:%M:%S').time()
+            opening_time = datetime.strptime("09:00:00", "%H:%M:%S").time()
+            closing_time = datetime.strptime("22:00:00", "%H:%M:%S").time()
 
         # Use restaurant's forward/backward minutes if not provided
-        forward = forward_minutes or restaurant.get('forward_minutes', 1440)  # Default 24 hours
-        backward = backward_minutes or restaurant.get('backward_minutes', 0)
+        forward = forward_minutes or restaurant.get("forward_minutes", 1440)  # Default 24 hours
+        backward = backward_minutes or restaurant.get("backward_minutes", 0)
 
         # Parse start date time
         try:
-            start_dt = datetime.fromisoformat(start_date_time.replace('Z', '+00:00'))
+            start_dt = datetime.fromisoformat(start_date_time.replace("Z", "+00:00"))
             # Remove timezone info for local time calculations
             if start_dt.tzinfo:
                 start_dt = start_dt.replace(tzinfo=None)
@@ -83,13 +84,13 @@ class ReservationService:
             restaurant_id=restaurant_id,
             start_date_time=search_start_dt,
             end_date_time=end_dt,
-            reservation_type=self.RESERVATION_TYPE
+            reservation_type=self.RESERVATION_TYPE,
         )
 
         # Create a set of locked slot datetimes for quick lookup
         locked_datetimes = set()
         for locked_slot in locked_slots:
-            slot_dt = locked_slot['date_time']
+            slot_dt = locked_slot["date_time"]
             if isinstance(slot_dt, datetime):
                 # Normalize to minute precision (remove seconds/microseconds)
                 slot_dt = slot_dt.replace(second=0, microsecond=0)
@@ -136,10 +137,7 @@ class ReservationService:
                 # Check if slot is locked
                 slot_dt_normalized = current_slot.replace(second=0, microsecond=0)
                 if slot_dt_normalized not in locked_datetimes:
-                    slots.append({
-                        "date_time": current_slot.isoformat(),
-                        "available": True
-                    })
+                    slots.append({"date_time": current_slot.isoformat(), "available": True})
 
                 # Move to next slot (15 minutes later)
                 current_slot += timedelta(minutes=self.SLOT_INTERVAL_MINUTES)
@@ -154,15 +152,11 @@ class ReservationService:
             "backward_minutes": backward,
             "party_size": party_size,
             "slots": slots,
-            "total_available": len(slots)
+            "total_available": len(slots),
         }
 
     def lock_slot(
-        self,
-        restaurant_id: int,
-        party_size: int,
-        date_time: str,
-        reservation_attribute: str = "default"
+        self, restaurant_id: int, party_size: int, date_time: str, reservation_attribute: str = "default"
     ) -> Dict[str, Any]:
         """
         Lock a booking slot.
@@ -182,21 +176,21 @@ class ReservationService:
             raise ValueError(f"Restaurant with ID {restaurant_id} not found")
 
         # Get opening and closing times
-        opening_time_str = restaurant.get('opening_time', '09:00:00')
-        closing_time_str = restaurant.get('closing_time', '22:00:00')
+        opening_time_str = restaurant.get("opening_time", "09:00:00")
+        closing_time_str = restaurant.get("closing_time", "22:00:00")
 
         # Parse opening and closing times
         try:
-            opening_time = datetime.strptime(str(opening_time_str), '%H:%M:%S').time()
-            closing_time = datetime.strptime(str(closing_time_str), '%H:%M:%S').time()
+            opening_time = datetime.strptime(str(opening_time_str), "%H:%M:%S").time()
+            closing_time = datetime.strptime(str(closing_time_str), "%H:%M:%S").time()
         except (ValueError, TypeError):
             # Default to 9 AM - 10 PM if parsing fails
-            opening_time = datetime.strptime('09:00:00', '%H:%M:%S').time()
-            closing_time = datetime.strptime('22:00:00', '%H:%M:%S').time()
+            opening_time = datetime.strptime("09:00:00", "%H:%M:%S").time()
+            closing_time = datetime.strptime("22:00:00", "%H:%M:%S").time()
 
         # Parse date time
         try:
-            slot_dt = datetime.fromisoformat(date_time.replace('Z', '+00:00'))
+            slot_dt = datetime.fromisoformat(date_time.replace("Z", "+00:00"))
             # Remove timezone info for local time calculations
             if slot_dt.tzinfo:
                 slot_dt = slot_dt.replace(tzinfo=None)
@@ -208,14 +202,16 @@ class ReservationService:
         # Validate slot is within opening/closing hours
         slot_time = slot_dt.time()
         if slot_time < opening_time or slot_time >= closing_time:
-            raise ValueError(f"Slot time {slot_time} is outside restaurant operating hours ({opening_time} - {closing_time})")
+            raise ValueError(
+                f"Slot time {slot_time} is outside restaurant operating hours ({opening_time} - {closing_time})"
+            )
 
         # Check if slot is already locked
         locked_slots = self.reservation_repo.get_locked_slots(
             restaurant_id=restaurant_id,
             start_date_time=slot_dt,
             end_date_time=slot_dt + timedelta(minutes=1),
-            reservation_type=self.RESERVATION_TYPE
+            reservation_type=self.RESERVATION_TYPE,
         )
 
         if locked_slots:
@@ -231,7 +227,7 @@ class ReservationService:
             expires_at=expires_at,
             reservation_token=reservation_token,
             reservation_type=self.RESERVATION_TYPE,
-            status='reserved'
+            status="reserved",
         )
 
         return {
@@ -239,7 +235,7 @@ class ReservationService:
             "date_time": date_time,
             "party_size": party_size,
             "expires_at": expires_at.isoformat(),
-            "slot_id": slot_id
+            "slot_id": slot_id,
         }
 
     def create_reservation(
@@ -249,7 +245,7 @@ class ReservationService:
         name: str,
         phone_number: str,
         email_address: Optional[str] = None,
-        special_request: Optional[str] = None
+        special_request: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Create a reservation (pending status).
@@ -267,26 +263,22 @@ class ReservationService:
         """
         # Get slot by token
         slot = self.reservation_repo.get_slot_by_token(
-            reservation_token=reservation_token,
-            reservation_type=self.RESERVATION_TYPE
+            reservation_token=reservation_token, reservation_type=self.RESERVATION_TYPE
         )
 
         if not slot:
             raise ValueError("Invalid or expired reservation token")
 
-        if slot['status'] != 'reserved':
+        if slot["status"] != "reserved":
             raise ValueError("Slot is not reserved or has expired")
 
         # Check if slot has expired
-        if isinstance(slot['expires_at'], datetime):
-            if slot['expires_at'] < datetime.now():
+        if isinstance(slot["expires_at"], datetime):
+            if slot["expires_at"] < datetime.now():
                 raise ValueError("Reservation token has expired")
 
         # Create or get user
-        user_data = {
-            "name": name,
-            "phone_number": phone_number
-        }
+        user_data = {"name": name, "phone_number": phone_number}
         # Add email if provided
         if email_address:
             user_data["email"] = email_address
@@ -297,26 +289,24 @@ class ReservationService:
 
         # Create reservation with pending status
         reservation_id = self.reservation_repo.create_reservation(
-            slot_booking_id=slot['id'],
+            slot_booking_id=slot["id"],
             user_id=user_id,
             confirmation_number=confirmation_number,
             reservation_type=self.RESERVATION_TYPE,
-            status='pending'
+            status="pending",
         )
 
         return {
             "reservation_id": reservation_id,
             "confirmation_number": confirmation_number,
             "status": "pending",
-            "date_time": slot['date_time'].isoformat() if isinstance(slot['date_time'], datetime) else slot['date_time'],
-            "message": "Reservation created successfully. Awaiting confirmation from restaurant."
+            "date_time": (
+                slot["date_time"].isoformat() if isinstance(slot["date_time"], datetime) else slot["date_time"]
+            ),
+            "message": "Reservation created successfully. Awaiting confirmation from restaurant.",
         }
 
-    def finalize_reservation(
-        self,
-        reservation_id: int,
-        confirmation_number: Optional[str] = None
-    ) -> Dict[str, Any]:
+    def finalize_reservation(self, reservation_id: int, confirmation_number: Optional[str] = None) -> Dict[str, Any]:
         """
         Finalize a reservation (dashboard only).
         Changes status from 'pending' to 'confirmed'.
@@ -329,40 +319,34 @@ class ReservationService:
             Finalized reservation response
         """
         reservation = self.reservation_repo.get_reservation_by_id(
-            reservation_id=reservation_id,
-            reservation_type=self.RESERVATION_TYPE
+            reservation_id=reservation_id, reservation_type=self.RESERVATION_TYPE
         )
 
         if not reservation:
             raise ValueError(f"Reservation with ID {reservation_id} not found")
 
-        if reservation['status'] != 'pending':
+        if reservation["status"] != "pending":
             raise ValueError(f"Reservation is not in pending status. Current status: {reservation['status']}")
 
         # Finalize reservation
         if not self.reservation_repo.finalize_reservation(
-            reservation_id=reservation_id,
-            confirmation_number=confirmation_number
+            reservation_id=reservation_id, confirmation_number=confirmation_number
         ):
             raise ValueError("Failed to finalize reservation")
 
         # Get updated reservation
         updated_reservation = self.reservation_repo.get_reservation_by_id(
-            reservation_id=reservation_id,
-            reservation_type=self.RESERVATION_TYPE
+            reservation_id=reservation_id, reservation_type=self.RESERVATION_TYPE
         )
 
         return {
             "reservation_id": reservation_id,
-            "confirmation_number": updated_reservation['confirmation_number'],
+            "confirmation_number": updated_reservation["confirmation_number"],
             "status": "confirmed",
-            "message": "Reservation confirmed successfully"
+            "message": "Reservation confirmed successfully",
         }
 
-    def get_reservation(
-        self,
-        reservation_id: int
-    ) -> Dict[str, Any]:
+    def get_reservation(self, reservation_id: int) -> Dict[str, Any]:
         """
         Get a reservation by ID.
 
@@ -373,8 +357,7 @@ class ReservationService:
             Reservation details
         """
         reservation = self.reservation_repo.get_reservation_by_id(
-            reservation_id=reservation_id,
-            reservation_type=self.RESERVATION_TYPE
+            reservation_id=reservation_id, reservation_type=self.RESERVATION_TYPE
         )
 
         if not reservation:
@@ -389,7 +372,7 @@ class ReservationService:
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
         limit: int = 100,
-        offset: int = 0
+        offset: int = 0,
     ) -> Dict[str, Any]:
         """
         Get reservations for a restaurant.
@@ -410,13 +393,13 @@ class ReservationService:
 
         if start_date:
             try:
-                start_dt = datetime.fromisoformat(start_date.replace('Z', '+00:00'))
+                start_dt = datetime.fromisoformat(start_date.replace("Z", "+00:00"))
             except ValueError:
                 raise ValueError(f"Invalid start_date format: {start_date}")
 
         if end_date:
             try:
-                end_dt = datetime.fromisoformat(end_date.replace('Z', '+00:00'))
+                end_dt = datetime.fromisoformat(end_date.replace("Z", "+00:00"))
             except ValueError:
                 raise ValueError(f"Invalid end_date format: {end_date}")
 
@@ -427,7 +410,7 @@ class ReservationService:
             start_date=start_dt,
             end_date=end_dt,
             limit=limit,
-            offset=offset
+            offset=offset,
         )
 
         total_count = self.reservation_repo.get_reservations_count_by_restaurant(
@@ -435,19 +418,12 @@ class ReservationService:
             reservation_type=self.RESERVATION_TYPE,
             status=status,
             start_date=start_dt,
-            end_date=end_dt
+            end_date=end_dt,
         )
 
-        return {
-            "restaurant_id": restaurant_id,
-            "reservations": reservations,
-            "total": total_count
-        }
+        return {"restaurant_id": restaurant_id, "reservations": reservations, "total": total_count}
 
-    def cancel_reservation(
-        self,
-        reservation_id: int
-    ) -> Dict[str, Any]:
+    def cancel_reservation(self, reservation_id: int) -> Dict[str, Any]:
         """
         Cancel a reservation.
 
@@ -458,29 +434,23 @@ class ReservationService:
             Cancellation response
         """
         reservation = self.reservation_repo.get_reservation_by_id(
-            reservation_id=reservation_id,
-            reservation_type=self.RESERVATION_TYPE
+            reservation_id=reservation_id, reservation_type=self.RESERVATION_TYPE
         )
 
         if not reservation:
             raise ValueError(f"Reservation with ID {reservation_id} not found")
 
-        if reservation['status'] in ['cancelled', 'completed']:
+        if reservation["status"] in ["cancelled", "completed"]:
             raise ValueError(f"Cannot cancel reservation with status: {reservation['status']}")
 
         if not self.reservation_repo.cancel_reservation(reservation_id):
             raise ValueError("Failed to cancel reservation")
 
         # Update slot status back to available
-        self.reservation_repo.update_slot_status(
-            slot_id=reservation['slot_booking_id'],
-            status='available'
-        )
+        self.reservation_repo.update_slot_status(slot_id=reservation["slot_booking_id"], status="available")
 
         return {
             "reservation_id": reservation_id,
             "status": "cancelled",
-            "message": "Reservation cancelled successfully"
-        }
-      "message": "Reservation cancelled successfully"
+            "message": "Reservation cancelled successfully",
         }

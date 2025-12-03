@@ -1,6 +1,7 @@
 """
 MySQL OpenTable API Log Repository for logging OpenTable API calls.
 """
+
 from app.repositories.mysql_base import MySQLBaseRepository
 from typing import Dict, Optional
 import json
@@ -17,7 +18,7 @@ class MySQLOpenTableLogRepository(MySQLBaseRepository):
         request_payload: Optional[Dict] = None,
         response_payload: Optional[Dict] = None,
         status_code: Optional[int] = None,
-        error_message: Optional[str] = None
+        error_message: Optional[str] = None,
     ) -> int:
         """
         Create an OpenTable API log entry.
@@ -51,22 +52,11 @@ class MySQLOpenTableLogRepository(MySQLBaseRepository):
         request_json = json.dumps(request_payload) if request_payload else None
         response_json = json.dumps(response_payload) if response_payload else None
 
-        return self._execute_insert(query, (
-            restaurant_id,
-            endpoint,
-            method,
-            request_json,
-            response_json,
-            status_code,
-            error_message
-        ))
+        return self._execute_insert(
+            query, (restaurant_id, endpoint, method, request_json, response_json, status_code, error_message)
+        )
 
-    def get_logs_by_restaurant(
-        self,
-        restaurant_id: int,
-        limit: int = 100,
-        offset: int = 0
-    ) -> list:
+    def get_logs_by_restaurant(self, restaurant_id: int, limit: int = 100, offset: int = 0) -> list:
         """
         Get OpenTable API logs for a restaurant.
 
@@ -124,6 +114,4 @@ class MySQLOpenTableLogRepository(MySQLBaseRepository):
             LIMIT 1
         """
         results = self._execute_query(query, (log_id,))
-        return results[0] if results else None
-cute_query(query, (log_id,))
         return results[0] if results else None
