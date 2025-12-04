@@ -11,6 +11,7 @@ dnspython>=2.6.1
 python-multipart
 certifi==2023.11.17
 mysql-connector-python>=8.0.0
-requests>=2.31.0
+requests>=2.32.4
+urllib3>=2.5.0
 pytest
 pytest-asyncio
