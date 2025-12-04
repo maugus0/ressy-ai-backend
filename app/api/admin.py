@@ -1,11 +1,13 @@
+from typing import Any, Dict, Optional
+
 from fastapi import APIRouter, Depends, HTTPException, Query
-from typing import Optional, Dict, Any
-from app.middleware.admin_middleware import require_admin_role
-from app.services.admin_service import AdminService
-from app.services.admin_restaurant_service import AdminRestaurantService
-from app.services.admin_auth_service import AdminAuthService
 from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel, Field
+
+from app.middleware.admin_middleware import require_admin_role
+from app.services.admin_auth_service import AdminAuthService
+from app.services.admin_restaurant_service import AdminRestaurantService
+from app.services.admin_service import AdminService
 
 router = APIRouter()
 admin_service = AdminService()

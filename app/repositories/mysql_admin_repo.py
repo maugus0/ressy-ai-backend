@@ -2,9 +2,10 @@
 MySQL Admin Repository for Ressy Administrator operations.
 """
 
-from app.repositories.mysql_base import MySQLBaseRepository
-from typing import Dict, Optional
 import json
+from typing import Dict, Optional
+
+from app.repositories.mysql_base import MySQLBaseRepository
 
 
 class MySQLAdminRepository(MySQLBaseRepository):

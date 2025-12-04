@@ -2,9 +2,11 @@
 Admin Middleware for JWT authentication and permission checking.
 """
 
-from fastapi import HTTPException, Depends
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from typing import Dict
+
+from fastapi import Depends, HTTPException
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+
 from app.services.admin_auth_service import AdminAuthService
 
 security = HTTPBearer()
