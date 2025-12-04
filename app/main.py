@@ -5,7 +5,22 @@ from xml.sax.saxutils import escape
 
 from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
-from app.api import auth, calls, admin, users, menus, restaurants, specials, orders, order_history, transcripts, faqs, opentable, reservations, dashboard_reservations
+from app.api import (
+    auth,
+    calls,
+    admin,
+    users,
+    menus,
+    restaurants,
+    specials,
+    orders,
+    order_history,
+    transcripts,
+    faqs,
+    opentable,
+    reservations,
+    dashboard_reservations,
+)
 from starlette.requests import Request
 from starlette.responses import Response
 from app.api.websocket import twilio_websocket_handler

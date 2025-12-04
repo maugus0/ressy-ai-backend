@@ -1,19 +1,21 @@
 """
 MySQL Admin Repository for Ressy Administrator operations.
 """
+
 from app.repositories.mysql_base import MySQLBaseRepository
-from typing import Dict, Optional, List
+from typing import Dict, Optional
 import json
+
 
 class MySQLAdminRepository(MySQLBaseRepository):
     """Repository for Ressy Administrator data access in MySQL."""
-    
+
     def get_by_email(self, email: str) -> Optional[Dict]:
         """
         Get administrator by email.
         """
         query = """
-            SELECT 
+            SELECT
                 ra.uuid,
                 ra.email,
                 ra.password,
@@ -33,17 +35,19 @@ class MySQLAdminRepository(MySQLBaseRepository):
         if results:
             result = results[0]
             # Parse JSON routes
-            if result.get('routes'):
-                result['routes'] = json.loads(result['routes']) if isinstance(result['routes'], str) else result['routes']
+            if result.get("routes"):
+                result["routes"] = (
+                    json.loads(result["routes"]) if isinstance(result["routes"], str) else result["routes"]
+                )
             return result
         return None
-    
+
     def get_by_uuid(self, uuid: str) -> Optional[Dict]:
         """
         Get administrator by UUID.
         """
         query = """
-            SELECT 
+            SELECT
                 ra.uuid,
                 ra.email,
                 ra.password,
@@ -63,17 +67,19 @@ class MySQLAdminRepository(MySQLBaseRepository):
         if results:
             result = results[0]
             # Parse JSON routes
-            if result.get('routes'):
-                result['routes'] = json.loads(result['routes']) if isinstance(result['routes'], str) else result['routes']
+            if result.get("routes"):
+                result["routes"] = (
+                    json.loads(result["routes"]) if isinstance(result["routes"], str) else result["routes"]
+                )
             return result
         return None
-    
+
     def get_role_by_name(self, role_name: str) -> Optional[Dict]:
         """
         Get role by name.
         """
         query = """
-            SELECT 
+            SELECT
                 cr.id,
                 cr.role,
                 cr.permission_id,
@@ -89,8 +95,9 @@ class MySQLAdminRepository(MySQLBaseRepository):
         if results:
             result = results[0]
             # Parse JSON routes
-            if result.get('routes'):
-                result['routes'] = json.loads(result['routes']) if isinstance(result['routes'], str) else result['routes']
+            if result.get("routes"):
+                result["routes"] = (
+                    json.loads(result["routes"]) if isinstance(result["routes"], str) else result["routes"]
+                )
             return result
         return None
-
