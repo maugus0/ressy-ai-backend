@@ -1,11 +1,14 @@
 """
 OpenTable API routes for handling reservation operations.
 """
+
+from typing import Any, Dict, Optional
+
 from fastapi import APIRouter, Depends, HTTPException, Query
-from typing import Optional, Dict, Any
-from app.middleware.auth_middleware import get_current_active_user, require_role
-from app.services.opentable_service import OpenTableService
 from pydantic import BaseModel, Field
+
+from app.middleware.auth_middleware import get_current_active_user
+from app.services.opentable_service import OpenTableService
 
 router = APIRouter()
 opentable_service = OpenTableService()
@@ -46,10 +49,7 @@ class UpdateReservationRequest(BaseModel):
 
 
 # ---------- GET AVAILABILITY ----------
-@router.get(
-    "/availability/{restaurant_id}/{rid}",
-    summary="Get table availability for a restaurant"
-)
+@router.get("/availability/{restaurant_id}/{rid}", summary="Get table availability for a restaurant")
 async def get_availability(
     restaurant_id: int,
     rid: int,
@@ -60,11 +60,11 @@ async def get_availability(
     require_attributes: Optional[str] = Query(None, description="Table types (comma-separated)"),
     include_credit_card_results: Optional[bool] = Query(None, description="Include credit card results"),
     include_experiences: Optional[bool] = Query(None, description="Include experiences"),
-    current_user: dict = Depends(get_current_active_user)
+    current_user: dict = Depends(get_current_active_user),
 ):
     """
     Get table availability for a restaurant from OpenTable API.
-    
+
     - **restaurant_id**: Internal restaurant ID
     - **rid**: OpenTable restaurant ID
     - **start_date_time**: Start date and time
@@ -85,7 +85,7 @@ async def get_availability(
             party_size=party_size,
             require_attributes=require_attributes,
             include_credit_card_results=include_credit_card_results,
-            include_experiences=include_experiences
+            include_experiences=include_experiences,
         )
         return result
     except ValueError as e:
@@ -95,19 +95,13 @@ async def get_availability(
 
 
 # ---------- LOCK SLOT ----------
-@router.post(
-    "/booking/{restaurant_id}/{rid}/slot_locks",
-    summary="Lock a booking slot"
-)
+@router.post("/booking/{restaurant_id}/{rid}/slot_locks", summary="Lock a booking slot")
 async def lock_slot(
-    restaurant_id: int,
-    rid: int,
-    request: LockSlotRequest,
-    current_user: dict = Depends(get_current_active_user)
+    restaurant_id: int, rid: int, request: LockSlotRequest, current_user: dict = Depends(get_current_active_user)
 ):
     """
     Lock a booking slot for a reservation.
-    
+
     - **restaurant_id**: Internal restaurant ID
     - **rid**: OpenTable restaurant ID
     - **request**: Slot lock request body
@@ -121,7 +115,7 @@ async def lock_slot(
             reservation_attribute=request.reservation_attribute,
             experience=request.experience,
             dining_area_id=request.dining_area_id,
-            environment=request.environment
+            environment=request.environment,
         )
         return result
     except ValueError as e:
@@ -131,19 +125,16 @@ async def lock_slot(
 
 
 # ---------- CREATE RESERVATION ----------
-@router.post(
-    "/booking/{restaurant_id}/{rid}/reservations",
-    summary="Create a reservation"
-)
+@router.post("/booking/{restaurant_id}/{rid}/reservations", summary="Create a reservation")
 async def create_reservation(
     restaurant_id: int,
     rid: int,
     request: CreateReservationRequest,
-    current_user: dict = Depends(get_current_active_user)
+    current_user: dict = Depends(get_current_active_user),
 ):
     """
     Create a reservation.
-    
+
     - **restaurant_id**: Internal restaurant ID
     - **rid**: OpenTable restaurant ID
     - **request**: Reservation creation request body
@@ -163,7 +154,7 @@ async def create_reservation(
             restaurant_email_marketing_opt_in=request.restaurant_email_marketing_opt_in,
             dining_area_id=request.dining_area_id,
             environment=request.environment,
-            experience=request.experience
+            experience=request.experience,
         )
         return result
     except ValueError as e:
@@ -173,20 +164,17 @@ async def create_reservation(
 
 
 # ---------- UPDATE RESERVATION ----------
-@router.put(
-    "/booking/{restaurant_id}/{rid}/reservations/{confirmation_id}",
-    summary="Update a reservation"
-)
+@router.put("/booking/{restaurant_id}/{rid}/reservations/{confirmation_id}", summary="Update a reservation")
 async def update_reservation(
     restaurant_id: int,
     rid: int,
     confirmation_id: int,
     request: UpdateReservationRequest,
-    current_user: dict = Depends(get_current_active_user)
+    current_user: dict = Depends(get_current_active_user),
 ):
     """
     Update an existing reservation.
-    
+
     - **restaurant_id**: Internal restaurant ID
     - **rid**: OpenTable restaurant ID
     - **confirmation_id**: Confirmation number
@@ -202,7 +190,7 @@ async def update_reservation(
             reservation_attribute=request.reservation_attribute,
             reservation_token=request.reservation_token,
             special_request=request.special_request,
-            experience=request.experience
+            experience=request.experience,
         )
         return result
     except ValueError as e:
@@ -212,32 +200,23 @@ async def update_reservation(
 
 
 # ---------- CANCEL RESERVATION ----------
-@router.put(
-    "/booking/{restaurant_id}/{rid}/reservations/{confirmation_id}/cancel",
-    summary="Cancel a reservation"
-)
+@router.put("/booking/{restaurant_id}/{rid}/reservations/{confirmation_id}/cancel", summary="Cancel a reservation")
 async def cancel_reservation(
-    restaurant_id: int,
-    rid: int,
-    confirmation_id: int,
-    current_user: dict = Depends(get_current_active_user)
+    restaurant_id: int, rid: int, confirmation_id: int, current_user: dict = Depends(get_current_active_user)
 ):
     """
     Cancel a reservation.
-    
+
     - **restaurant_id**: Internal restaurant ID
     - **rid**: OpenTable restaurant ID
     - **confirmation_id**: Confirmation number
     """
     try:
         result = opentable_service.cancel_reservation(
-            restaurant_id=restaurant_id,
-            rid=rid,
-            confirmation_id=confirmation_id
+            restaurant_id=restaurant_id, rid=rid, confirmation_id=confirmation_id
         )
         return result
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error cancelling reservation: {str(e)}")
-
