@@ -79,45 +79,63 @@ class MySQLBaseRepository:
     def _execute_query(self, query: str, params: tuple = None) -> List[Dict[str, Any]]:
         """Execute SELECT query and return results."""
         self._ensure_connected()
+        cursor = None
         try:
             cursor = self.connection.cursor(dictionary=True)
             cursor.execute(query, params)
             results = cursor.fetchall()
-            cursor.close()
             return results
         except Error as e:
             print(f"Error executing query: {e}")
             raise
+        finally:
+            if cursor:
+                try:
+                    cursor.close()
+                except Exception:
+                    pass
 
     def _execute_insert(self, query: str, params: tuple = None) -> int:
         """Execute INSERT query and return last insert ID."""
         self._ensure_connected()
+        cursor = None
         try:
             cursor = self.connection.cursor()
             cursor.execute(query, params)
             self.connection.commit()
             last_id = cursor.lastrowid
-            cursor.close()
             return last_id
         except Error as e:
             self.connection.rollback()
             print(f"Error executing insert: {e}")
             raise
+        finally:
+            if cursor:
+                try:
+                    cursor.close()
+                except Exception:
+                    pass
 
     def _execute_update(self, query: str, params: tuple = None) -> int:
         """Execute UPDATE query and return affected rows."""
         self._ensure_connected()
+        cursor = None
         try:
             cursor = self.connection.cursor()
             cursor.execute(query, params)
             self.connection.commit()
             affected = cursor.rowcount
-            cursor.close()
             return affected
         except Error as e:
             self.connection.rollback()
             print(f"Error executing update: {e}")
             raise
+        finally:
+            if cursor:
+                try:
+                    cursor.close()
+                except Exception:
+                    pass
 
     def close(self):
         """Close database connection."""
