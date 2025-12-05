@@ -3,20 +3,20 @@
 
 -- Add reservation_type to Table_Availability_Requests
 ALTER TABLE Table_Availability_Requests
-ADD COLUMN reservation_type VARCHAR(20) NOT NULL DEFAULT 'inhouse' 
-COMMENT 'Reservation type: opentable or inhouse'
+ADD COLUMN reservation_type VARCHAR(20) NOT NULL DEFAULT 'in-house' 
+COMMENT 'Reservation type: opentable or in-house'
 AFTER party_size;
 
 -- Add reservation_type to Slot_Bookings
 ALTER TABLE Slot_Bookings
-ADD COLUMN reservation_type VARCHAR(20) NOT NULL DEFAULT 'inhouse' 
-COMMENT 'Reservation type: opentable or inhouse'
+ADD COLUMN reservation_type VARCHAR(20) NOT NULL DEFAULT 'in-house' 
+COMMENT 'Reservation type: opentable or in-house'
 AFTER restaurant_id;
 
 -- Add reservation_type to Reservations
 ALTER TABLE Reservations
-ADD COLUMN reservation_type VARCHAR(20) NOT NULL DEFAULT 'inhouse' 
-COMMENT 'Reservation type: opentable or inhouse'
+ADD COLUMN reservation_type VARCHAR(20) NOT NULL DEFAULT 'in-house' 
+COMMENT 'Reservation type: opentable or in-house'
 AFTER id;
 
 -- Add indexes for better query performance

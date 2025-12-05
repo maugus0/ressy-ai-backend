@@ -65,7 +65,7 @@ class AdminAuthService:
             "exp": int((now + timedelta(hours=settings.JWT_EXPIRE_HOURS)).timestamp()),
         }
 
-        token = jwt.encode(payload, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
+        token = jwt.encode(payload, settings.JWT_PRIVATE_KEY, algorithm=settings.JWT_ALGORITHM)
         # Ensure token is a string (PyJWT may return bytes in some versions)
         if isinstance(token, bytes):
             return token.decode("utf-8")
@@ -76,7 +76,7 @@ class AdminAuthService:
         Verify JWT token and return payload.
         """
         try:
-            payload = jwt.decode(token, settings.JWT_SECRET_KEY, algorithms=[settings.JWT_ALGORITHM])
+            payload = jwt.decode(token, settings.JWT_PUBLIC_KEY, algorithms=[settings.JWT_ALGORITHM])
 
             # Verify token type
             if payload.get("type") != "admin":
