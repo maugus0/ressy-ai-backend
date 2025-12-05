@@ -70,15 +70,16 @@ class MySQLReservationRepository(MySQLBaseRepository):
         reservation_token: str,
         reservation_type: str = "in-house",
         status: str = "available",
+        party_size: Optional[int] = None,
     ) -> int:
         """Create a slot booking."""
         query = """
             INSERT INTO Slot_Bookings
-            (restaurant_id, reservation_type, date_time, expires_at, status, reservation_token)
-            VALUES (%s, %s, %s, %s, %s, %s)
+            (restaurant_id, reservation_type, date_time, expires_at, status, reservation_token, party_size)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
         """
         return self._execute_insert(
-            query, (restaurant_id, reservation_type, date_time, expires_at, status, reservation_token)
+            query, (restaurant_id, reservation_type, date_time, expires_at, status, reservation_token, party_size)
         )
 
     def get_available_slots(
@@ -160,6 +161,7 @@ class MySQLReservationRepository(MySQLBaseRepository):
                 expires_at,
                 status,
                 reservation_token,
+                party_size,
                 created_at,
                 updated_at
             FROM Slot_Bookings
@@ -220,13 +222,15 @@ class MySQLReservationRepository(MySQLBaseRepository):
         status: str = "pending",
         last_cancel_time: Optional[datetime] = None,
         manage_reservation_url: Optional[str] = None,
+        special_request: Optional[str] = None,
+        party_size: Optional[int] = None,
     ) -> int:
         """Create a reservation."""
         query = """
             INSERT INTO Reservations
             (reservation_type, table_availability_request_id, slot_booking_id, user_id,
-             confirmation_number, status, last_cancel_time, manage_reservation_url)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+             confirmation_number, status, last_cancel_time, manage_reservation_url, special_request, party_size)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """
         return self._execute_insert(
             query,
@@ -239,6 +243,8 @@ class MySQLReservationRepository(MySQLBaseRepository):
                 status,
                 last_cancel_time,
                 manage_reservation_url,
+                special_request,
+                party_size,
             ),
         )
 
