@@ -361,7 +361,7 @@ class OpenTableService:
         Returns:
             Updated reservation response
         """
-        endpoint = f"/v2/booking/{rid}/reservations/{rid}-{confirmation_id}"
+        endpoint = f"/v2/booking/{rid}/reservations/{confirmation_id}"
         request_payload = {
             "party_size": party_size,
             "date_time": date_time,
@@ -421,7 +421,7 @@ class OpenTableService:
         Returns:
             Success response
         """
-        endpoint = f"/v2/booking/{rid}/reservations/{rid}-{confirmation_id}"
+        endpoint = f"/v2/booking/{rid}/reservations/{confirmation_id}"
         request_payload = {"status": "CancelledWeb"}
 
         try:

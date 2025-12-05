@@ -209,7 +209,7 @@ class OpenTableClient:
         Returns:
             API response with updated reservation details
         """
-        url = f"{self.base_url}/v2/booking/{rid}/reservations/{rid}-{confirmation_id}"
+        url = f"{self.base_url}/v2/booking/{rid}/reservations/{confirmation_id}"
 
         payload = {}
 
@@ -241,7 +241,7 @@ class OpenTableClient:
         Returns:
             True if successful
         """
-        url = f"{self.base_url}/v2/booking/{rid}/reservations/{rid}-{confirmation_id}"
+        url = f"{self.base_url}/v2/booking/{rid}/reservations/{confirmation_id}"
 
         payload = {"status": "CancelledWeb"}
 
