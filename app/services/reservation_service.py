@@ -77,7 +77,9 @@ class ReservationService:
             closing_time = datetime.strptime("22:00:00", "%H:%M:%S").time()
 
         # Use restaurant's forward/backward minutes if not provided
-        forward = forward_minutes if forward_minutes is not None else restaurant.get("forward_minutes", 1440)  # Default 24 hours
+        forward = (
+            forward_minutes if forward_minutes is not None else restaurant.get("forward_minutes", 1440)
+        )  # Default 24 hours
         backward = backward_minutes if backward_minutes is not None else restaurant.get("backward_minutes", 0)
 
         # Parse start date time
