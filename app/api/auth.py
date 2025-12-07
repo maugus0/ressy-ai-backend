@@ -68,7 +68,7 @@ def _extract_request_meta(request: Request) -> tuple[str | None, str | None]:
 )
 async def admin_login(body: LoginRequest, request: Request):
     """
-    Admin login endpoint for RessyAI platform administrators.
+    Admin login endpoint for RessyAI platform admin users (CRM).
 
     **Authentication**: Public (no token required)
 

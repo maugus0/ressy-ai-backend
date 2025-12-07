@@ -1,8 +1,9 @@
-from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
-from pydantic import BaseModel, ConfigDict, ValidationError, ValidationInfo, field_validator, model_validator
+from fastapi import APIRouter, Body, Depends, Query, status
+from pydantic import BaseModel, ConfigDict, ValidationInfo, field_validator, model_validator
 
 from app.middleware.auth_middleware import get_current_admin_user
 from app.services.faq_service import FAQService
+from app.utils.payload_validator import validate_payload
 
 
 def _require_non_empty(value: str | None, field_name: str) -> str:
@@ -52,23 +53,8 @@ class FAQBulkCreateRequest(BaseModel):
         return self
 
 
-def _parse_payload(model, payload: dict):
-    return model.model_validate(payload)
-
-
 def _validate_payload(model, payload: dict):
-    try:
-        return _parse_payload(model, payload or {})
-    except ValidationError as exc:
-        serialized_errors = []
-        for err in exc.errors():
-            ctx = err.get("ctx") or {}
-            ctx_serialized = {k: str(v) for k, v in ctx.items()} if ctx else None
-            err_copy = {k: v for k, v in err.items() if k != "ctx"}
-            if ctx_serialized:
-                err_copy["ctx"] = ctx_serialized
-            serialized_errors.append(err_copy)
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=serialized_errors)
+    return validate_payload(model, payload)
 
 
 def get_faq_service() -> FAQService:
@@ -103,7 +89,7 @@ async def create_faq(
     payload: dict | None = Body(None, description="FAQ payload with question and answer"),
     faq_service: FAQService = Depends(get_faq_service),
 ):
-    data = _validate_payload(FAQCreateRequest, payload or {}).model_dump()
+    data = _validate_payload(FAQCreateRequest, payload).model_dump()
     return faq_service.create_faq(restaurant_id, data)
 
 
@@ -169,7 +155,7 @@ async def update_faq(
     payload: dict | None = Body(None, description="FAQ payload with question and/or answer"),
     faq_service: FAQService = Depends(get_faq_service),
 ):
-    data = _validate_payload(FAQUpdateRequest, payload or {}).model_dump(exclude_unset=True)
+    data = _validate_payload(FAQUpdateRequest, payload).model_dump(exclude_unset=True)
     return faq_service.update_faq(faq_id, data)
 
 
@@ -212,6 +198,6 @@ async def bulk_create_faqs(
     payload: dict | None = Body(None, description="Payload containing an array of FAQ objects"),
     faq_service: FAQService = Depends(get_faq_service),
 ):
-    data = _validate_payload(FAQBulkCreateRequest, payload or {})
+    data = _validate_payload(FAQBulkCreateRequest, payload)
     created = faq_service.bulk_create_faqs(restaurant_id, [faq.model_dump() for faq in data.faqs])
     return {"items": created}

@@ -5,8 +5,7 @@ Admin-only CRUD operations for menu items including categories, availability, sp
 
 from typing import Optional
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
-from pydantic import ValidationError
+from fastapi import APIRouter, Body, Depends, Query, status
 
 from app.middleware.auth_middleware import get_current_admin_user
 from app.models.menu_models import (
@@ -20,22 +19,12 @@ from app.models.menu_models import (
     ToggleSpecialRequest,
 )
 from app.services.menu_service import MenuService
+from app.utils.payload_validator import validate_payload
 
 
 def _validate_payload(model, payload: dict):
     """Validate payload against a Pydantic model."""
-    try:
-        return model.model_validate(payload or {})
-    except ValidationError as exc:
-        serialized_errors = []
-        for err in exc.errors():
-            ctx = err.get("ctx") or {}
-            ctx_serialized = {k: str(v) for k, v in ctx.items()} if ctx else None
-            err_copy = {k: v for k, v in err.items() if k != "ctx"}
-            if ctx_serialized:
-                err_copy["ctx"] = ctx_serialized
-            serialized_errors.append(err_copy)
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=serialized_errors) from exc
+    return validate_payload(model, payload)
 
 
 def get_menu_service() -> MenuService:
