@@ -1,15 +1,29 @@
-fastapi
-uvicorn
+# Core framework - keep pinned for stability
+fastapi==0.115.5
+uvicorn[standard]==0.32.1
 websockets==12.0
-boto3==1.34.0
+
+# AWS - allow patch updates
+boto3>=1.35.36,<1.36.0
+
+# Security/auth - keep pinned
 python-dotenv==1.0.0
 bcrypt==4.0.1
 pyjwt==2.8.0
-cryptography>=41.0.0
-email-validator>=2.1.0
-dnspython>=2.6.1
-python-multipart
-certifi==2023.11.17
-mysql-connector-python>=8.0.0
-pytest
-pytest-asyncio
+cryptography>=43.0.1,<44.0.0
+
+# Validation and networking
+email-validator>=2.2.0,<3.0.0
+dnspython>=2.6.1,<3.0.0
+python-multipart>=0.0.12,<0.1.0
+certifi>=2023.11.17
+requests>=2.32.3,<3.0.0
+# urllib3: boto3 1.35.x for Python 3.9 requires <1.27, requests needs >=1.21.1
+urllib3>=1.25.4,<1.27.0
+
+# Database
+mysql-connector-python>=9.1.0,<10.0.0
+
+# Testing
+pytest>=8.3.0,<9.0.0
+pytest-asyncio>=0.24.0,<0.25.0

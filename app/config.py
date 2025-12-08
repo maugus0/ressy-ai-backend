@@ -58,6 +58,7 @@ class Settings:
     TRANSCRIPTS_TABLE: str = "ConversationTranscripts"
     FAQS_TABLE: str = "FAQs"
     USERS_TABLE: str = "Users"
+    OPENTABLE_API_LOGS_TABLE: str = "OpenTable_API_Logs"
 
 
 settings = Settings()
