@@ -16,9 +16,9 @@ admin_service = AdminService()
 async def get_all_users(current_user: dict = Depends(get_current_admin_user)):
     """
     Get all users in the system.
-    
+
     **Authentication**: Required (admin role only)
-    
+
     **Response**: List of all users including:
     - User IDs, emails, roles
     - Permissions and restaurant associations

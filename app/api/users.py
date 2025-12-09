@@ -18,16 +18,16 @@ user_service = UserService()
 async def create_user(data: dict, current_user: dict = Depends(get_current_active_user)):
     """
     Create a new user account.
-    
+
     **Authentication**: Required (admin role only)
-    
+
     **Request Body**: User data including:
     - email: User email address
     - password: User password
     - role: User role (manager, staff, etc.)
     - restaurant_id: ID of the restaurant the user belongs to
     - Other user details
-    
+
     **Response**: Created user object with all details.
     """
     return user_service.create_user(data)
@@ -44,12 +44,12 @@ async def create_user(data: dict, current_user: dict = Depends(get_current_activ
 async def list_users(restaurant_id: str, current_user: dict = Depends(get_current_active_user)):
     """
     Get a list of all users.
-    
+
     **Authentication**: Required (admin role only)
-    
+
     **Path Parameters**:
     - restaurant_id: Restaurant ID (parameter accepted but not currently used for filtering)
-    
+
     **Response**: List of all users with their details.
     """
     return user_service.list_users()
@@ -66,14 +66,14 @@ async def list_users(restaurant_id: str, current_user: dict = Depends(get_curren
 async def update_user(user_id: str, data: dict, current_user: dict = Depends(get_current_active_user)):
     """
     Update user information.
-    
+
     **Authentication**: Required (admin role only)
-    
+
     **Path Parameters**:
     - user_id: Unique identifier of the user to update
-    
+
     **Request Body**: Dictionary with fields to update (email, role, permissions, etc.)
-    
+
     **Response**: Updated user object.
     """
     return user_service.update_user(user_id, data)
@@ -90,14 +90,14 @@ async def update_user(user_id: str, data: dict, current_user: dict = Depends(get
 async def delete_user(user_id: str, current_user: dict = Depends(get_current_active_user)):
     """
     Delete a user account from the system.
-    
+
     **Authentication**: Required (admin role only)
-    
+
     **Path Parameters**:
     - user_id: Unique identifier of the user to delete
-    
+
     **Warning**: This action is permanent and cannot be undone.
-    
+
     **Response**: Confirmation of deletion.
     """
     return user_service.delete_user(user_id)

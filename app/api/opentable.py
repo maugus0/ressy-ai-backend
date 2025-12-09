@@ -58,24 +58,32 @@ class UpdateReservationRequest(BaseModel):
 async def get_availability(
     restaurant_id: int,
     rid: int,
-    start_date_time: str = Query(..., description="Start date and time in format yyyy-mm-ddThh:ss (e.g., 2024-01-15T18:00:00)"),
+    start_date_time: str = Query(
+        ..., description="Start date and time in format yyyy-mm-ddThh:ss (e.g., 2024-01-15T18:00:00)"
+    ),
     forward_minutes: Optional[int] = Query(None, description="Forward booking window in minutes from start_date_time"),
-    backward_minutes: Optional[int] = Query(None, description="Backward booking window in minutes from start_date_time"),
+    backward_minutes: Optional[int] = Query(
+        None, description="Backward booking window in minutes from start_date_time"
+    ),
     party_size: Optional[int] = Query(None, gt=0, description="Filter availability by party size"),
-    require_attributes: Optional[str] = Query(None, description="Comma-separated list of required table attributes (e.g., 'outdoor,window')"),
-    include_credit_card_results: Optional[bool] = Query(None, description="Include availability that requires credit card on file"),
+    require_attributes: Optional[str] = Query(
+        None, description="Comma-separated list of required table attributes (e.g., 'outdoor,window')"
+    ),
+    include_credit_card_results: Optional[bool] = Query(
+        None, description="Include availability that requires credit card on file"
+    ),
     include_experiences: Optional[bool] = Query(None, description="Include special dining experiences in results"),
     current_user: dict = Depends(get_current_active_user),
 ):
     """
     Get table availability for a restaurant from OpenTable API.
-    
+
     **Authentication**: Required (authenticated user)
-    
+
     **Path Parameters**:
     - restaurant_id: Internal restaurant ID in our system
     - rid: OpenTable restaurant ID (OpenTable's identifier for the restaurant)
-    
+
     **Query Parameters**:
     - start_date_time: Starting date and time for availability check (required, format: yyyy-mm-ddThh:ss)
     - forward_minutes: How many minutes forward to check availability
@@ -84,7 +92,7 @@ async def get_availability(
     - require_attributes: Filter by table attributes (comma-separated, e.g., "outdoor,window")
     - include_credit_card_results: Include slots requiring credit card on file
     - include_experiences: Include special dining experiences
-    
+
     **Response**: List of available time slots from OpenTable including:
     - Available dates and times
     - Table capacity and attributes
@@ -123,13 +131,13 @@ async def lock_slot(
 ):
     """
     Lock a booking slot for a reservation through OpenTable.
-    
+
     **Authentication**: Required (authenticated user)
-    
+
     **Path Parameters**:
     - restaurant_id: Internal restaurant ID in our system
     - rid: OpenTable restaurant ID
-    
+
     **Request Body**:
     - party_size: Number of guests (required, must be > 0)
     - date_time: Desired reservation date and time in format yyyy-mm-ddThh:ss (required)
@@ -137,11 +145,11 @@ async def lock_slot(
     - experience: Optional experience details dictionary
     - dining_area_id: Optional specific dining area ID
     - environment: Optional environment preference (e.g., "Indoor", "Outdoor")
-    
-    **Response**: 
+
+    **Response**:
     - reservation_token: OpenTable reservation token (expires after OpenTable's time limit)
     - Locked slot information including date, time, party size, and table details
-    
+
     **Note**: The slot lock expires after OpenTable's configured time period. You must create the reservation using the token before it expires.
     """
     try:
@@ -177,13 +185,13 @@ async def create_reservation(
 ):
     """
     Create a new reservation through OpenTable.
-    
+
     **Authentication**: Required (authenticated user)
-    
+
     **Path Parameters**:
     - restaurant_id: Internal restaurant ID in our system
     - rid: OpenTable restaurant ID
-    
+
     **Request Body**:
     - reservation_token: Token obtained from OpenTable slot lock endpoint (required)
     - first_name: Customer's first name (required)
@@ -197,13 +205,13 @@ async def create_reservation(
     - dining_area_id: Specific dining area ID (optional)
     - environment: Environment preference (optional)
     - experience: Experience details (optional)
-    
-    **Response**: 
+
+    **Response**:
     - confirmation_number: OpenTable confirmation number
     - reservation_id: Internal reservation ID
     - All reservation details including date, time, party size, customer information
     - Status and booking confirmation
-    
+
     **Note**: The reservation is created directly in OpenTable's system and automatically synced to our database.
     """
     try:
@@ -246,14 +254,14 @@ async def update_reservation(
 ):
     """
     Update an existing reservation in OpenTable.
-    
+
     **Authentication**: Required (authenticated user)
-    
+
     **Path Parameters**:
     - restaurant_id: Internal restaurant ID in our system
     - rid: OpenTable restaurant ID
     - confirmation_id: OpenTable confirmation number of the reservation to update
-    
+
     **Request Body** (all fields optional, only include fields to update):
     - party_size: New party size
     - date_time: New date and time in format yyyy-mm-ddThh:ss
@@ -261,13 +269,13 @@ async def update_reservation(
     - reservation_token: New reservation token if changing time slot
     - special_request: Updated special requests
     - experience: Updated experience details
-    
+
     **Response**: Updated reservation object with:
     - All modified fields
     - Updated timestamps
     - Confirmation number (unchanged)
     - Current status
-    
+
     **Note**: Updates are made in OpenTable's system first, then synced to our database. Some changes may require a new slot lock if the time slot is changing.
     """
     try:
@@ -301,20 +309,20 @@ async def cancel_reservation(
 ):
     """
     Cancel a reservation in OpenTable.
-    
+
     **Authentication**: Required (authenticated user)
-    
+
     **Path Parameters**:
     - restaurant_id: Internal restaurant ID in our system
     - rid: OpenTable restaurant ID
     - confirmation_id: OpenTable confirmation number of the reservation to cancel
-    
+
     **Response**: Updated reservation object with:
     - Status changed to "cancelled"
     - Cancellation timestamp
     - All other reservation details preserved
     - Cancellation confirmation from OpenTable
-    
+
     **Note**: Once cancelled, a reservation cannot be reactivated. The cancellation is processed in OpenTable's system and automatically synced to our database. A new reservation must be created if needed.
     """
     try:

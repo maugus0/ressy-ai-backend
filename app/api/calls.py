@@ -25,13 +25,13 @@ async def get_call_history(
 ):
     """
     Get call history for the authenticated user.
-    
+
     **Authentication**: Required (admin, manager, or staff role)
-    
+
     **Query Parameters**:
     - restaurant_id: Optional restaurant ID to filter calls (restaurant users see only their restaurant's calls)
     - limit: Maximum number of calls to return (default: 50)
-    
+
     **Response**: List of call records including:
     - call_id, user_id, start_time, end_time
     - duration_seconds, cost, status
@@ -52,12 +52,12 @@ async def get_call_history(
 async def get_call_transcripts(call_id: str):
     """
     Get all transcript segments for a specific call.
-    
+
     **Authentication**: Public (no authentication required)
-    
+
     **Path Parameters**:
     - call_id: Unique identifier of the call
-    
+
     **Response**: List of transcript segments including:
     - transcript_id, call_id, text
     - timestamp, is_final (boolean indicating if transcript is final)
@@ -76,9 +76,9 @@ async def get_call_transcripts(call_id: str):
 async def get_analytics_summary(current_user: dict = Depends(get_current_active_user)):
     """
     Get call analytics summary for the platform.
-    
+
     **Authentication**: Required (admin role only)
-    
+
     **Response**: Analytics summary including:
     - total_calls: Total number of calls
     - total_cost: Total cost in USD

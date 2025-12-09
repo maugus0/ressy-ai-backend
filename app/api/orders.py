@@ -18,18 +18,18 @@ order_service = OrderService()
 async def create_order(restaurant_id: str, data: dict, current_user: dict = Depends(get_current_active_user)):
     """
     Create a new order for a restaurant.
-    
+
     **Authentication**: Required (admin or restaurant client role)
-    
+
     **Path Parameters**:
     - restaurant_id: ID of the restaurant the order belongs to
-    
+
     **Request Body**: Order data including:
     - items: List of menu items with quantities
     - customer information
     - special instructions
     - Other order details
-    
+
     **Response**: Created order object with order ID and all details.
     """
     return order_service.create_order(restaurant_id, data)
@@ -46,12 +46,12 @@ async def create_order(restaurant_id: str, data: dict, current_user: dict = Depe
 async def list_orders(restaurant_id: str, current_user: dict = Depends(get_current_active_user)):
     """
     Get all orders for a restaurant.
-    
+
     **Authentication**: Required (admin or restaurant client role)
-    
+
     **Path Parameters**:
     - restaurant_id: ID of the restaurant
-    
+
     **Response**: List of all orders for the restaurant.
     """
     return order_service.list_orders(restaurant_id)
@@ -68,12 +68,12 @@ async def list_orders(restaurant_id: str, current_user: dict = Depends(get_curre
 async def get_order(order_id: str, current_user: dict = Depends(get_current_active_user)):
     """
     Get detailed information for a specific order.
-    
+
     **Authentication**: Required (admin or restaurant client role)
-    
+
     **Path Parameters**:
     - order_id: Unique identifier of the order
-    
+
     **Response**: Complete order object with items, customer info, and status.
     """
     return order_service.get_order(order_id)
@@ -90,14 +90,14 @@ async def get_order(order_id: str, current_user: dict = Depends(get_current_acti
 async def update_order(order_id: str, data: dict, current_user: dict = Depends(get_current_active_user)):
     """
     Update order information.
-    
+
     **Authentication**: Required (admin or restaurant client role)
-    
+
     **Path Parameters**:
     - order_id: Unique identifier of the order to update
-    
+
     **Request Body**: Dictionary with fields to update (e.g., status, items, special instructions)
-    
+
     **Response**: Updated order object.
     """
     return order_service.update_order(order_id, data)
@@ -114,14 +114,14 @@ async def update_order(order_id: str, data: dict, current_user: dict = Depends(g
 async def delete_order(order_id: str, current_user: dict = Depends(get_current_active_user)):
     """
     Delete an order from the system.
-    
+
     **Authentication**: Required (admin role only)
-    
+
     **Path Parameters**:
     - order_id: Unique identifier of the order to delete
-    
+
     **Warning**: This action is permanent and cannot be undone.
-    
+
     **Response**: Confirmation of deletion.
     """
     return order_service.delete_order(order_id)

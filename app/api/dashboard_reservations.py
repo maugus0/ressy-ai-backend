@@ -28,21 +28,21 @@ class FinalizeReservationRequest(BaseModel):
 async def finalize_reservation(reservation_id: int, request: FinalizeReservationRequest):
     """
     Finalize a reservation (Dashboard only).
-    
+
     **Authentication**: Public (no authentication required for dashboard operations)
-    
+
     **Path Parameters**:
     - reservation_id: Unique identifier of the reservation to finalize
-    
+
     **Request Body**:
     - confirmation_number: Optional custom confirmation number (if not provided, system generates one)
-    
+
     **Response**: Updated reservation object with:
     - Status changed from "pending" to "confirmed"
     - Confirmation number assigned (custom or auto-generated)
     - Finalized timestamp
     - All other reservation details
-    
+
     **Note**: Only reservations in "pending" status can be finalized. This operation is typically performed by restaurant staff through the dashboard.
     """
     try:
@@ -65,27 +65,33 @@ async def finalize_reservation(reservation_id: int, request: FinalizeReservation
 )
 async def get_restaurant_reservations(
     restaurant_id: int,
-    status: Optional[str] = Query(None, description="Filter by status: 'pending', 'confirmed', 'cancelled', or 'completed'"),
-    start_date: Optional[str] = Query(None, description="Filter reservations from this date onwards (ISO format, e.g., 2024-01-15)"),
-    end_date: Optional[str] = Query(None, description="Filter reservations up to this date (ISO format, e.g., 2024-01-20)"),
+    status: Optional[str] = Query(
+        None, description="Filter by status: 'pending', 'confirmed', 'cancelled', or 'completed'"
+    ),
+    start_date: Optional[str] = Query(
+        None, description="Filter reservations from this date onwards (ISO format, e.g., 2024-01-15)"
+    ),
+    end_date: Optional[str] = Query(
+        None, description="Filter reservations up to this date (ISO format, e.g., 2024-01-20)"
+    ),
     limit: int = Query(100, ge=1, le=1000, description="Maximum number of reservations to return (1-1000)"),
     offset: int = Query(0, ge=0, description="Number of reservations to skip for pagination"),
 ):
     """
     Get reservations for a restaurant (Dashboard).
-    
+
     **Authentication**: Public (no authentication required for dashboard operations)
-    
+
     **Path Parameters**:
     - restaurant_id: Unique identifier of the restaurant
-    
+
     **Query Parameters**:
     - status: Optional filter by reservation status
     - start_date: Optional filter for reservations on or after this date
     - end_date: Optional filter for reservations on or before this date
     - limit: Maximum number of results (default: 100, max: 1000)
     - offset: Number of results to skip for pagination (default: 0)
-    
+
     **Response**: Paginated list of reservations including:
     - List of reservation objects matching the filters
     - Total count of matching reservations (for pagination)
@@ -117,12 +123,12 @@ async def get_restaurant_reservations(
 async def get_reservation_dashboard(reservation_id: int):
     """
     Get a reservation by ID (Dashboard).
-    
+
     **Authentication**: Public (no authentication required for dashboard operations)
-    
+
     **Path Parameters**:
     - reservation_id: Unique identifier of the reservation
-    
+
     **Response**: Complete reservation object including:
     - Reservation ID and confirmation number
     - Customer information (name, phone, email)
@@ -151,17 +157,17 @@ async def get_reservation_dashboard(reservation_id: int):
 async def cancel_reservation_dashboard(reservation_id: int):
     """
     Cancel a reservation (Dashboard).
-    
+
     **Authentication**: Public (no authentication required for dashboard operations)
-    
+
     **Path Parameters**:
     - reservation_id: Unique identifier of the reservation to cancel
-    
+
     **Response**: Updated reservation object with:
     - Status changed to "cancelled"
     - Cancellation timestamp
     - All other reservation details preserved
-    
+
     **Note**: Once cancelled, a reservation cannot be reactivated. Restaurant staff should use this endpoint to handle customer cancellations or manage overbookings.
     """
     try:

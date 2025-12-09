@@ -18,15 +18,15 @@ restaurant_service = RestaurantService()
 async def create_restaurant(data: dict, current_user: dict = Depends(get_current_active_user)):
     """
     Create a new restaurant.
-    
+
     **Authentication**: Required (admin role only)
-    
+
     **Request Body**: Restaurant data including:
     - name: Restaurant name
     - address: Restaurant address
     - phone_number: Contact phone number
     - Other restaurant configuration fields
-    
+
     **Response**: Created restaurant object with all details and assigned ID.
     """
     return restaurant_service.create_restaurant(data)
@@ -43,9 +43,9 @@ async def create_restaurant(data: dict, current_user: dict = Depends(get_current
 async def list_restaurants(current_user: dict = Depends(get_current_active_user)):
     """
     Get a list of all restaurants.
-    
+
     **Authentication**: Required (admin role only)
-    
+
     **Response**: List of all restaurants with complete details.
     """
     return restaurant_service.list_restaurants()
@@ -62,12 +62,12 @@ async def list_restaurants(current_user: dict = Depends(get_current_active_user)
 async def get_restaurant(restaurant_id: str, current_user: dict = Depends(get_current_active_user)):
     """
     Get detailed information for a specific restaurant.
-    
+
     **Authentication**: Required (admin role only)
-    
+
     **Path Parameters**:
     - restaurant_id: Unique identifier of the restaurant
-    
+
     **Response**: Complete restaurant object with all details.
     """
     return restaurant_service.get_restaurant(restaurant_id)
@@ -84,14 +84,14 @@ async def get_restaurant(restaurant_id: str, current_user: dict = Depends(get_cu
 async def update_restaurant(restaurant_id: str, data: dict, current_user: dict = Depends(get_current_active_user)):
     """
     Update restaurant information.
-    
+
     **Authentication**: Required (admin role only)
-    
+
     **Path Parameters**:
     - restaurant_id: Unique identifier of the restaurant to update
-    
+
     **Request Body**: Dictionary with fields to update (partial updates supported)
-    
+
     **Response**: Updated restaurant object.
     """
     return restaurant_service.update_restaurant(restaurant_id, data)
@@ -108,14 +108,14 @@ async def update_restaurant(restaurant_id: str, data: dict, current_user: dict =
 async def delete_restaurant(restaurant_id: str, current_user: dict = Depends(get_current_active_user)):
     """
     Delete a restaurant from the system.
-    
+
     **Authentication**: Required (admin role only)
-    
+
     **Path Parameters**:
     - restaurant_id: Unique identifier of the restaurant to delete
-    
+
     **Warning**: This action is permanent and cannot be undone.
-    
+
     **Response**: Confirmation of deletion.
     """
     return restaurant_service.delete_restaurant(restaurant_id)

@@ -42,24 +42,30 @@ class FinalizeReservationRequest(BaseModel):
 async def get_availability(
     restaurant_id: int,
     start_date_time: str = Query(..., description="Start date and time in ISO format (e.g., 2024-01-15T18:00:00)"),
-    forward_minutes: Optional[int] = Query(None, description="Forward booking window in minutes from start_date_time (default: restaurant's forward booking limit)"),
-    backward_minutes: Optional[int] = Query(None, description="Backward booking window in minutes from start_date_time (default: restaurant's backward booking limit)"),
+    forward_minutes: Optional[int] = Query(
+        None,
+        description="Forward booking window in minutes from start_date_time (default: restaurant's forward booking limit)",
+    ),
+    backward_minutes: Optional[int] = Query(
+        None,
+        description="Backward booking window in minutes from start_date_time (default: restaurant's backward booking limit)",
+    ),
     party_size: Optional[int] = Query(None, gt=0, description="Filter availability by party size (optional)"),
 ):
     """
     Get table availability for a restaurant.
-    
+
     **Authentication**: Public (no authentication required)
-    
+
     **Path Parameters**:
     - restaurant_id: Unique identifier of the restaurant
-    
+
     **Query Parameters**:
     - start_date_time: Starting date and time for availability check (required, ISO format)
     - forward_minutes: How many minutes forward to check availability (optional)
     - backward_minutes: How many minutes backward to check availability (optional)
     - party_size: Filter by specific party size (optional)
-    
+
     **Response**: List of available time slots with:
     - Available dates and times
     - Table capacity information
@@ -90,21 +96,21 @@ async def get_availability(
 async def lock_slot(restaurant_id: int, request: LockSlotRequest):
     """
     Lock a booking slot for a reservation.
-    
+
     **Authentication**: Public (no authentication required)
-    
+
     **Path Parameters**:
     - restaurant_id: Unique identifier of the restaurant
-    
+
     **Request Body**:
     - party_size: Number of guests (required, must be > 0)
     - date_time: Desired reservation date and time in ISO format (required)
     - reservation_attribute: Table type or special requirement (default: "default")
-    
-    **Response**: 
+
+    **Response**:
     - reservation_token: Token to use when creating the reservation (expires after a short time)
     - Locked slot information including date, time, and party size
-    
+
     **Note**: The slot lock expires after a short period. You must create the reservation using the token before it expires.
     """
     try:
@@ -131,25 +137,25 @@ async def lock_slot(restaurant_id: int, request: LockSlotRequest):
 async def create_reservation(restaurant_id: int, request: CreateReservationRequest):
     """
     Create a new reservation.
-    
+
     **Authentication**: Public (no authentication required)
-    
+
     **Path Parameters**:
     - restaurant_id: Unique identifier of the restaurant
-    
+
     **Request Body**:
     - reservation_token: Token obtained from slot lock endpoint (required)
     - name: Customer's full name (required)
     - phone_number: Customer's phone number (required)
     - email_address: Customer's email address (optional)
     - special_request: Special requests or notes (optional)
-    
-    **Response**: 
+
+    **Response**:
     - reservation_id: Unique identifier of the created reservation
     - confirmation_number: Confirmation number (may be null if not yet finalized)
     - status: Reservation status (initially "pending")
     - All reservation details including date, time, party size, and customer information
-    
+
     **Note**: The reservation starts in "pending" status and must be finalized by the restaurant through the dashboard.
     """
     try:
@@ -178,12 +184,12 @@ async def create_reservation(restaurant_id: int, request: CreateReservationReque
 async def get_reservation(reservation_id: int):
     """
     Get detailed information for a specific reservation.
-    
+
     **Authentication**: Public (no authentication required)
-    
+
     **Path Parameters**:
     - reservation_id: Unique identifier of the reservation
-    
+
     **Response**: Complete reservation object including:
     - Reservation ID and confirmation number
     - Customer information (name, phone, email)
@@ -211,17 +217,17 @@ async def get_reservation(reservation_id: int):
 async def cancel_reservation(reservation_id: int):
     """
     Cancel a reservation.
-    
+
     **Authentication**: Public (no authentication required)
-    
+
     **Path Parameters**:
     - reservation_id: Unique identifier of the reservation to cancel
-    
+
     **Response**: Updated reservation object with:
     - Status changed to "cancelled"
     - Cancellation timestamp
     - All other reservation details preserved
-    
+
     **Note**: Once cancelled, a reservation cannot be reactivated. A new reservation must be created if needed.
     """
     try:

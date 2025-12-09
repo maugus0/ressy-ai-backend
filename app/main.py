@@ -20,7 +20,6 @@ from app.api import (
     orders,
     reservations,
     restaurants,
-    specials,
     transcripts,
     users,
 )
@@ -49,15 +48,11 @@ app = FastAPI(
         },
         {
             "name": "Menus",
-            "description": "Menu management endpoints. Create and manage restaurant menus, menu items, and categories.",
+            "description": "Menu management endpoints. Full CRUD operations for menu items including categories, availability, specials, and bulk operations. Admin access only.",
         },
         {
             "name": "Restaurants",
             "description": "Restaurant management endpoints. Create, update, and manage restaurant information and settings.",
-        },
-        {
-            "name": "Specials",
-            "description": "Restaurant specials and promotions management. Create and manage daily specials, promotions, and featured items.",
         },
         {
             "name": "Orders",
@@ -107,9 +102,8 @@ app.include_router(auth.router, prefix="/api/v1/auth", tags=["Authentication"])
 app.include_router(calls.router, prefix="/api/v1/calls", tags=["Calls"])
 app.include_router(admin.router, prefix="/api/v1/admin", tags=["Administration"])
 app.include_router(users.router, prefix="/api/v1/users", tags=["Users"])
-app.include_router(menus.router, prefix="/api/v1/menu", tags=["Menus"])
+app.include_router(menus.router)
 app.include_router(restaurants.router, prefix="/api/v1/restaurants", tags=["Restaurants"])
-app.include_router(specials.router, prefix="/api/v1/specials", tags=["Specials"])
 app.include_router(orders.router, prefix="/api/v1/orders", tags=["Orders"])
 app.include_router(order_history.router, prefix="/api/v1/order-history", tags=["Order History"])
 app.include_router(transcripts.router, prefix="/api/v1/transcripts", tags=["Transcripts"])
@@ -124,14 +118,14 @@ app.include_router(dashboard_reservations.router, prefix="/api/v1/dashboard", ta
 async def twilio_websocket(websocket: WebSocket):
     """
     WebSocket endpoint for Twilio audio streaming.
-    
+
     **Purpose**: Real-time bidirectional audio streaming between Twilio and Deepgram STS
     for voice agent call processing.
-    
+
     **Query Parameters**:
     - fromNumber: Phone number of the caller
     - toNumber: Restaurant's Twilio phone number
-    
+
     **Protocol**: WebSocket (not REST API)
     **Note**: This endpoint is used internally by the voice agent system and does not appear in OpenAPI/Swagger documentation.
     """
@@ -150,18 +144,18 @@ async def twilio_websocket(websocket: WebSocket):
 async def voice(request: Request):
     """
     Twilio voice webhook endpoint.
-    
+
     **Purpose**: Receives incoming call webhooks from Twilio and sets up WebSocket streaming.
-    
+
     **Request**: Form data from Twilio including:
     - From: Caller's phone number
     - To: Restaurant's Twilio phone number
     - CallSid: Twilio call session ID
-    
+
     **Response**: TwiML XML that instructs Twilio to:
     - Connect the call to the WebSocket stream at /twilio
     - Stream audio bidirectionally for voice agent processing
-    
+
     **Note**: This is a Twilio webhook endpoint, not a standard REST API endpoint.
     """
     try:

@@ -54,7 +54,6 @@ ressy-ai-backend/
 │   │   ├── orders.py          # Order endpoints
 │   │   ├── reservations.py    # In-house reservation endpoints
 │   │   ├── restaurants.py     # Restaurant endpoints
-│   │   ├── specials.py        # Specials/promotions endpoints
 │   │   ├── transcripts.py     # Transcript management endpoints
 │   │   ├── users.py           # User management endpoints
 │   │   └── websocket.py       # WebSocket handler
@@ -93,7 +92,6 @@ ressy-ai-backend/
 │   │   ├── order_service.py
 │   │   ├── reservation_service.py
 │   │   ├── restaurant_service.py
-│   │   ├── special_service.py
 │   │   ├── transcript_service.py
 │   │   ├── twilio_service.py
 │   │   ├── user_service.py
@@ -526,19 +524,16 @@ All endpoints are organized by tags in the Swagger documentation:
   - `PUT /restaurants/{id}` - Update restaurant
   - `DELETE /restaurants/{id}` - Delete restaurant
 
-- **Menus** (`/menu/*`):
-  - `POST /menu/{restaurant_id}` - Create menu (admin only)
-  - `GET /menu/{restaurant_id}` - List menus
-  - `GET /menu/{restaurant_id}/{menu_id}` - Get menu details
-  - `PUT /menu/{restaurant_id}/{menu_id}` - Update menu
-  - `DELETE /menu/{restaurant_id}/{menu_id}` - Delete menu
-
-- **Specials** (`/specials/*`):
-  - `POST /specials/{restaurant_id}` - Create special (admin only)
-  - `GET /specials/{restaurant_id}` - List specials
-  - `GET /specials/{restaurant_id}/{special_id}` - Get special details
-  - `PUT /specials/{restaurant_id}/{special_id}` - Update special
-  - `DELETE /specials/{restaurant_id}/{special_id}` - Delete special
+- **Menus** (`/api/v1/admin/*`) - Admin only:
+  - `POST /api/v1/admin/restaurants/{restaurant_id}/menu` - Create menu item
+  - `GET /api/v1/admin/restaurants/{restaurant_id}/menu` - List menu items (paginated, with filters)
+  - `GET /api/v1/admin/menu/{menu_id}` - Get menu item by ID
+  - `PUT /api/v1/admin/menu/{menu_id}` - Update menu item
+  - `DELETE /api/v1/admin/menu/{menu_id}` - Delete menu item
+  - `PATCH /api/v1/admin/menu/{menu_id}/availability` - Toggle item availability
+  - `PATCH /api/v1/admin/menu/{menu_id}/special` - Toggle special status
+  - `PATCH /api/v1/admin/restaurants/{restaurant_id}/menu/bulk-availability` - Bulk update availability
+  - `GET /api/v1/admin/restaurants/{restaurant_id}/menu/categories` - Get menu categories
 
 - **Orders** (`/orders/*`):
   - `POST /orders/{restaurant_id}` - Create order

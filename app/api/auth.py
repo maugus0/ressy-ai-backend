@@ -11,17 +11,20 @@ security = HTTPBearer()
 
 class LoginRequest(BaseModel):
     """Request model for user login."""
+
     email: EmailStr = Field(..., description="User email address")
     password: str = Field(..., min_length=1, description="User password")
 
 
 class RefreshRequest(BaseModel):
     """Request model for token refresh."""
+
     refresh_token: str = Field(..., description="Refresh token to exchange for new tokens")
 
 
 class TokenPairResponse(BaseModel):
     """Response model containing access and refresh tokens."""
+
     access_token: str = Field(..., description="JWT access token for API authentication")
     refresh_token: str = Field(..., description="Refresh token for obtaining new access tokens")
     token_type: str = Field(default="Bearer", description="Token type, typically 'Bearer'")
@@ -30,6 +33,7 @@ class TokenPairResponse(BaseModel):
 
 class AdminLoginResponse(TokenPairResponse):
     """Response model for admin user login."""
+
     uuid: str = Field(..., description="Unique user identifier")
     email: EmailStr = Field(..., description="User email address")
     role: str = Field(..., description="User role (e.g., 'admin', 'super_admin')")
@@ -39,6 +43,7 @@ class AdminLoginResponse(TokenPairResponse):
 
 class ClientLoginResponse(TokenPairResponse):
     """Response model for restaurant admin/client login."""
+
     uuid: str = Field(..., description="Unique user identifier")
     email: EmailStr = Field(..., description="User email address")
     role: str = Field(..., description="User role (e.g., 'manager', 'staff')")
@@ -64,13 +69,13 @@ def _extract_request_meta(request: Request) -> tuple[str | None, str | None]:
 async def admin_login(body: LoginRequest, request: Request):
     """
     Admin login endpoint for RessyAI platform administrators.
-    
+
     **Authentication**: Public (no token required)
-    
+
     **Request Body**:
     - email: Admin user's email address
     - password: Admin user's password
-    
+
     **Response**:
     - access_token: JWT token for API authentication
     - refresh_token: Token for refreshing access tokens
@@ -99,13 +104,13 @@ async def admin_login(body: LoginRequest, request: Request):
 async def client_login(body: LoginRequest, request: Request):
     """
     Restaurant admin/client login endpoint for restaurant staff and managers.
-    
+
     **Authentication**: Public (no token required)
-    
+
     **Request Body**:
     - email: Restaurant user's email address
     - password: Restaurant user's password
-    
+
     **Response**:
     - access_token: JWT token for API authentication
     - refresh_token: Token for refreshing access tokens
@@ -136,18 +141,18 @@ async def client_login(body: LoginRequest, request: Request):
 async def refresh_tokens(body: RefreshRequest, request: Request):
     """
     Refresh token rotation endpoint for obtaining new access tokens.
-    
+
     **Authentication**: Public (requires valid refresh_token in request body)
-    
+
     **Request Body**:
     - refresh_token: Valid refresh token obtained from login
-    
+
     **Response**:
     - access_token: New JWT access token
     - refresh_token: New refresh token (old one is invalidated)
     - token_type: Token type (Bearer)
     - expires_in: Access token expiration time in seconds
-    
+
     **Note**: The old refresh token is invalidated upon successful refresh.
     """
     user_agent, ip_address = _extract_request_meta(request)
@@ -163,13 +168,13 @@ async def refresh_tokens(body: RefreshRequest, request: Request):
 async def logout(credentials: HTTPAuthorizationCredentials = Depends(security)):
     """
     Logout endpoint to revoke the current user session.
-    
+
     **Authentication**: Required (Bearer token)
-    
-    **Effect**: 
+
+    **Effect**:
     - Revokes the session identified by the token's session ID (sid)
     - Invalidates the current access token
-    
+
     **Response**:
     - Success message confirming logout
     """
