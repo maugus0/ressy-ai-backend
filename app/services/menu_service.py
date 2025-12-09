@@ -309,6 +309,12 @@ class MenuService:
 
         # Fetch and return updated item
         updated_item = self.menu_repo.get_by_id(menu_id)
+        if not updated_item:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to retrieve updated menu item",
+            )
+
         self._enrich_with_restaurant_name(updated_item)
         return updated_item
 
@@ -336,6 +342,12 @@ class MenuService:
 
         # Fetch and return updated item
         updated_item = self.menu_repo.get_by_id(menu_id)
+        if not updated_item:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to retrieve updated menu item",
+            )
+
         self._enrich_with_restaurant_name(updated_item)
         return updated_item
 
