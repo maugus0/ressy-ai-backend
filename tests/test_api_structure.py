@@ -63,10 +63,9 @@ def test_services_import():
 
 def test_models_import():
     """Test that models can be imported."""
-    from app.models import call_models, database, user_models
+    from app.models import call_models, menu_models
 
-    assert database is not None
-    assert user_models is not None
+    assert menu_models is not None
     assert call_models is not None
 
 
