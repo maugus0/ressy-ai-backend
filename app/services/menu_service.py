@@ -99,14 +99,36 @@ class MenuService:
         # Validate restaurant exists
         restaurant = self._validate_restaurant(restaurant_id)
 
+        # Validate item name is not duplicate within the restaurant
+        item_name = data.get("item_name")
+        if item_name and self.menu_repo.item_name_exists(restaurant_id, item_name):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"A menu item with the name '{item_name}' already exists in this restaurant",
+            )
+
         # Validate suggested_items if provided
         suggested_items = data.get("suggested_items")
         if suggested_items:
+            # Remove duplicates (already handled in model, but double-check)
+            suggested_items = list(dict.fromkeys(suggested_items))  # Preserve order, remove duplicates
+
+            # Validate all suggested items exist
             if not self.menu_repo.validate_suggested_items(suggested_items):
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="One or more suggested item IDs do not exist",
                 )
+
+            # Validate all suggested items belong to the same restaurant
+            if not self.menu_repo.validate_suggested_items_belong_to_restaurant(suggested_items, restaurant_id):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="All suggested items must belong to the same restaurant",
+                )
+
+            # Update data with deduplicated list
+            data["suggested_items"] = suggested_items
 
         # Create the menu item
         menu_id = self.menu_repo.create_menu(restaurant_id, data)
@@ -234,14 +256,49 @@ class MenuService:
             self._enrich_with_restaurant_name(existing_item)
             return existing_item
 
+        # Validate item name is not duplicate if being updated
+        if "item_name" in update_fields:
+            item_name = update_fields["item_name"]
+            restaurant_id = existing_item.get("restaurant_id")
+            if item_name and self.menu_repo.item_name_exists(restaurant_id, item_name, exclude_menu_id=menu_id):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"A menu item with the name '{item_name}' already exists in this restaurant",
+                )
+
         # Validate suggested_items if provided
         if "suggested_items" in update_fields:
             suggested_items = update_fields["suggested_items"]
-            if suggested_items and not self.menu_repo.validate_suggested_items(suggested_items):
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="One or more suggested item IDs do not exist",
-                )
+            if suggested_items:
+                # Remove duplicates (already handled in model, but double-check)
+                suggested_items = list(dict.fromkeys(suggested_items))  # Preserve order, remove duplicates
+
+                # Prevent circular reference (item cannot suggest itself)
+                if menu_id in suggested_items:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="A menu item cannot suggest itself",
+                    )
+
+                # Validate all suggested items exist
+                if not self.menu_repo.validate_suggested_items(suggested_items):
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="One or more suggested item IDs do not exist",
+                    )
+
+                # Validate all suggested items belong to the same restaurant
+                restaurant_id = existing_item.get("restaurant_id")
+                if restaurant_id and not self.menu_repo.validate_suggested_items_belong_to_restaurant(
+                    suggested_items, restaurant_id
+                ):
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="All suggested items must belong to the same restaurant",
+                    )
+
+                # Update with deduplicated list
+                update_fields["suggested_items"] = suggested_items
 
         # Update the item
         self.menu_repo.update_by_id(menu_id, update_fields)
@@ -375,6 +432,16 @@ class MenuService:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="menu_item_ids cannot be empty",
+            )
+
+        # Remove duplicates from menu_item_ids
+        menu_item_ids = list(dict.fromkeys(menu_item_ids))  # Preserve order, remove duplicates
+
+        # Validate all items exist
+        if not self.menu_repo.items_exist(menu_item_ids):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="One or more menu item IDs do not exist",
             )
 
         # Verify all items belong to the restaurant

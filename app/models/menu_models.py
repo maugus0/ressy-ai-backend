@@ -18,8 +18,12 @@ class MenuItemCreate(BaseModel):
     )
     item_name: str = Field(..., max_length=255, description="Name of the menu item")
     item_desc: Optional[str] = Field(None, description="Detailed description of the menu item")
-    price: Decimal = Field(..., gt=0, decimal_places=2, description="Price of the item (must be positive)")
-    avg_prep_time: Optional[int] = Field(None, ge=0, description="Average preparation time in minutes")
+    price: Decimal = Field(
+        ..., gt=0, le=10000, decimal_places=2, description="Price of the item (must be positive, max $10,000)"
+    )
+    avg_prep_time: Optional[int] = Field(
+        None, ge=0, le=300, description="Average preparation time in minutes (max 300 minutes)"
+    )
     suggested_items: Optional[List[int]] = Field(default=None, description="Array of suggested menu item IDs")
     is_available: Optional[bool] = Field(True, description="Whether the item is currently available")
     is_special: Optional[bool] = Field(False, description="Whether the item is marked as a special")
@@ -29,9 +33,36 @@ class MenuItemCreate(BaseModel):
     @field_validator("price")
     @classmethod
     def validate_price(cls, v):
-        """Ensure price is positive."""
+        """Ensure price is positive and within reasonable limit."""
         if v is not None and v <= 0:
             raise ValueError("Price must be greater than 0")
+        if v is not None and v > 10000:
+            raise ValueError("Price cannot exceed $10,000")
+        return v
+
+    @field_validator("avg_prep_time")
+    @classmethod
+    def validate_prep_time(cls, v):
+        """Ensure prep time is within reasonable limit."""
+        if v is not None and v < 0:
+            raise ValueError("Average prep time cannot be negative")
+        if v is not None and v > 300:
+            raise ValueError("Average prep time cannot exceed 300 minutes (5 hours)")
+        return v
+
+    @field_validator("suggested_items")
+    @classmethod
+    def validate_suggested_items(cls, v):
+        """Remove duplicates from suggested items list."""
+        if v is not None:
+            # Remove duplicates while preserving order
+            seen = set()
+            unique_items = []
+            for item in v:
+                if item not in seen:
+                    seen.add(item)
+                    unique_items.append(item)
+            return unique_items if unique_items else None
         return v
 
     @field_validator("item_name")
@@ -50,8 +81,12 @@ class MenuItemUpdate(BaseModel):
     sub_category: Optional[str] = Field(None, max_length=100, description="Menu sub-category")
     item_name: Optional[str] = Field(None, max_length=255, description="Name of the menu item")
     item_desc: Optional[str] = Field(None, description="Detailed description of the menu item")
-    price: Optional[Decimal] = Field(None, gt=0, decimal_places=2, description="Price of the item (must be positive)")
-    avg_prep_time: Optional[int] = Field(None, ge=0, description="Average preparation time in minutes")
+    price: Optional[Decimal] = Field(
+        None, gt=0, le=10000, decimal_places=2, description="Price of the item (must be positive, max $10,000)"
+    )
+    avg_prep_time: Optional[int] = Field(
+        None, ge=0, le=300, description="Average preparation time in minutes (max 300 minutes)"
+    )
     suggested_items: Optional[List[int]] = Field(None, description="Array of suggested menu item IDs")
     is_available: Optional[bool] = Field(None, description="Whether the item is currently available")
     is_special: Optional[bool] = Field(None, description="Whether the item is marked as a special")
@@ -61,9 +96,36 @@ class MenuItemUpdate(BaseModel):
     @field_validator("price")
     @classmethod
     def validate_price(cls, v):
-        """Ensure price is positive if provided."""
+        """Ensure price is positive and within reasonable limit if provided."""
         if v is not None and v <= 0:
             raise ValueError("Price must be greater than 0")
+        if v is not None and v > 10000:
+            raise ValueError("Price cannot exceed $10,000")
+        return v
+
+    @field_validator("avg_prep_time")
+    @classmethod
+    def validate_prep_time(cls, v):
+        """Ensure prep time is within reasonable limit if provided."""
+        if v is not None and v < 0:
+            raise ValueError("Average prep time cannot be negative")
+        if v is not None and v > 300:
+            raise ValueError("Average prep time cannot exceed 300 minutes (5 hours)")
+        return v
+
+    @field_validator("suggested_items")
+    @classmethod
+    def validate_suggested_items(cls, v):
+        """Remove duplicates from suggested items list."""
+        if v is not None:
+            # Remove duplicates while preserving order
+            seen = set()
+            unique_items = []
+            for item in v:
+                if item not in seen:
+                    seen.add(item)
+                    unique_items.append(item)
+            return unique_items if unique_items else None
         return v
 
     @field_validator("item_name")
@@ -75,8 +137,8 @@ class MenuItemUpdate(BaseModel):
         return str(v).strip() if v else v
 
 
-class MenuItemData(BaseModel):
-    """Data model for a menu item."""
+class MenuItemResponse(BaseModel):
+    """Response model for a menu item."""
 
     id: int = Field(..., description="Unique identifier for the menu item")
     restaurant_id: int = Field(..., description="ID of the restaurant this item belongs to")
@@ -96,37 +158,11 @@ class MenuItemData(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
-class MenuItemResponse(BaseModel):
-    """Response wrapper for a single menu item operation."""
-
-    success: bool = Field(True, description="Whether the operation was successful")
-    message: str = Field(..., description="Human-readable message about the operation result")
-    data: MenuItemData = Field(..., description="The menu item data")
-
-
 class MenuItemsPage(BaseModel):
     """Paginated response for menu items."""
 
-    success: bool = Field(True, description="Whether the operation was successful")
-    message: str = Field(..., description="Human-readable message about the operation result")
-    items: List[MenuItemData] = Field(..., description="List of menu items for the current page")
+    items: List[MenuItemResponse] = Field(..., description="List of menu items for the current page")
     pagination: Dict[str, Any] = Field(..., description="Pagination metadata")
-
-
-class MenuItemDeleteResponse(BaseModel):
-    """Response model for menu item deletion."""
-
-    success: bool = Field(True, description="Whether the operation was successful")
-    message: str = Field(..., description="Human-readable message about the operation result")
-    menu_id: int = Field(..., description="ID of the deleted menu item")
-
-
-class BulkAvailabilityResponse(BaseModel):
-    """Response model for bulk availability update."""
-
-    success: bool = Field(True, description="Whether the operation was successful")
-    message: str = Field(..., description="Human-readable message about the operation result")
-    updated_count: int = Field(..., description="Number of menu items updated")
 
 
 class ToggleAvailabilityRequest(BaseModel):
@@ -157,8 +193,6 @@ class BulkAvailabilityRequest(BaseModel):
 class MenuCategoriesResponse(BaseModel):
     """Response model for menu categories."""
 
-    success: bool = Field(True, description="Whether the operation was successful")
-    message: str = Field(..., description="Human-readable message about the operation result")
     categories: Dict[str, List[str]] = Field(
         ..., description="Dictionary with categories as keys and arrays of sub-categories as values"
     )

@@ -11,11 +11,8 @@ from pydantic import ValidationError
 from app.middleware.auth_middleware import get_current_admin_user
 from app.models.menu_models import (
     BulkAvailabilityRequest,
-    BulkAvailabilityResponse,
     MenuCategoriesResponse,
     MenuItemCreate,
-    MenuItemData,
-    MenuItemDeleteResponse,
     MenuItemResponse,
     MenuItemsPage,
     MenuItemUpdate,
@@ -122,11 +119,7 @@ async def create_menu_item(
     """
     data = _validate_payload(MenuItemCreate, payload)
     result = menu_service.create_menu_item(restaurant_id, data.model_dump(exclude_none=False))
-    return MenuItemResponse(
-        success=True,
-        message="Menu item created successfully",
-        data=MenuItemData(**result),
-    )
+    return MenuItemResponse(**result)
 
 
 @router.get(
@@ -179,11 +172,8 @@ async def list_menu_items(  # pylint: disable=too-many-arguments,too-many-positi
         is_special=is_special,
         search=search,
     )
-    total_items = result["pagination"]["total"]
     return MenuItemsPage(
-        success=True,
-        message=f"Successfully retrieved {len(result['items'])} menu items (total: {total_items})",
-        items=[MenuItemData(**item) for item in result["items"]],
+        items=[MenuItemResponse(**item) for item in result["items"]],
         pagination=result["pagination"],
     )
 
@@ -212,11 +202,7 @@ async def get_menu_item(
     - 404: Menu item not found
     """
     result = menu_service.get_menu_item(menu_id)
-    return MenuItemResponse(
-        success=True,
-        message="Menu item retrieved successfully",
-        data=MenuItemData(**result),
-    )
+    return MenuItemResponse(**result)
 
 
 @router.put(
@@ -272,11 +258,7 @@ async def update_menu_item(
     """
     data = _validate_payload(MenuItemUpdate, payload)
     result = menu_service.update_menu_item(menu_id, data.model_dump(exclude_unset=True))
-    return MenuItemResponse(
-        success=True,
-        message="Menu item updated successfully",
-        data=MenuItemData(**result),
-    )
+    return MenuItemResponse(**result)
 
 
 @router.delete(
@@ -288,7 +270,7 @@ async def update_menu_item(
 async def delete_menu_item(
     menu_id: int,
     menu_service: MenuService = Depends(get_menu_service),
-) -> MenuItemDeleteResponse:
+) -> dict:
     """
     Delete a menu item from the database.
 
@@ -306,11 +288,7 @@ async def delete_menu_item(
     - 404: Menu item not found
     """
     menu_service.delete_menu_item(menu_id)
-    return MenuItemDeleteResponse(
-        success=True,
-        message="Menu item deleted successfully",
-        menu_id=menu_id,
-    )
+    return {"message": "Menu item deleted successfully", "menu_id": menu_id}
 
 
 @router.patch(
@@ -353,12 +331,7 @@ async def toggle_availability(
     """
     data = _validate_payload(ToggleAvailabilityRequest, payload)
     result = menu_service.toggle_availability(menu_id, data.is_available)
-    status_text = "available" if data.is_available else "unavailable"
-    return MenuItemResponse(
-        success=True,
-        message=f"Menu item marked as {status_text}",
-        data=MenuItemData(**result),
-    )
+    return MenuItemResponse(**result)
 
 
 @router.patch(
@@ -401,12 +374,7 @@ async def toggle_special(
     """
     data = _validate_payload(ToggleSpecialRequest, payload)
     result = menu_service.toggle_special(menu_id, data.is_special)
-    status_text = "marked as special" if data.is_special else "removed from specials"
-    return MenuItemResponse(
-        success=True,
-        message=f"Menu item {status_text}",
-        data=MenuItemData(**result),
-    )
+    return MenuItemResponse(**result)
 
 
 @router.patch(
@@ -432,7 +400,7 @@ async def bulk_update_availability(
     restaurant_id: int,
     payload: dict = Body(..., description="Bulk update data"),
     menu_service: MenuService = Depends(get_menu_service),
-) -> BulkAvailabilityResponse:
+) -> dict:
     """
     Bulk update availability for multiple menu items.
 
@@ -454,13 +422,7 @@ async def bulk_update_availability(
     """
     data = _validate_payload(BulkAvailabilityRequest, payload)
     result = menu_service.bulk_update_availability(restaurant_id, data.menu_item_ids, data.is_available)
-    updated_count = result.get("updated_count", 0)
-    status_text = "available" if data.is_available else "unavailable"
-    return BulkAvailabilityResponse(
-        success=True,
-        message=f"Successfully marked {updated_count} menu items as {status_text}",
-        updated_count=updated_count,
-    )
+    return result
 
 
 @router.get(
@@ -487,8 +449,6 @@ async def get_menu_categories(
     **Example Response**:
     ```json
     {
-      "success": true,
-      "message": "Categories retrieved successfully",
       "categories": {
         "Appetizers": ["Vegetarian", "Seafood"],
         "Entrees": ["Chicken", "Beef", "Vegetarian"],
@@ -502,9 +462,4 @@ async def get_menu_categories(
     - 404: Restaurant not found
     """
     categories = menu_service.get_menu_categories(restaurant_id)
-    category_count = len(categories)
-    return MenuCategoriesResponse(
-        success=True,
-        message=f"Successfully retrieved {category_count} categories",
-        categories=categories,
-    )
+    return MenuCategoriesResponse(categories=categories)

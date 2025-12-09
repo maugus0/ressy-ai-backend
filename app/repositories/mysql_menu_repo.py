@@ -66,6 +66,34 @@ class MySQLMenuRepository(MySQLBaseRepository):
         results = self._execute_query(query, (restaurant_id, f"%{item_name}%"))
         return results[0] if results else None
 
+    def item_name_exists(self, restaurant_id: int, item_name: str, exclude_menu_id: Optional[int] = None) -> bool:
+        """
+        Check if a menu item with the same name already exists in the restaurant.
+        Case-insensitive comparison.
+
+        Args:
+            restaurant_id: ID of the restaurant
+            item_name: Name of the menu item to check
+            exclude_menu_id: Optional menu item ID to exclude from the check (for updates)
+
+        Returns:
+            True if item name exists, False otherwise
+        """
+        query = """
+            SELECT COUNT(*) as count
+            FROM Menus
+            WHERE restaurant_id = %s
+              AND LOWER(TRIM(item_name)) = LOWER(TRIM(%s))
+        """
+        params = [restaurant_id, item_name]
+
+        if exclude_menu_id:
+            query += " AND id != %s"
+            params.append(exclude_menu_id)
+
+        results = self._execute_query(query, tuple(params))
+        return results[0]["count"] > 0 if results else False
+
     def create_menu(self, restaurant_id: int, data: Dict[str, Any]) -> int:
         """Create a new menu item."""
         query = """
@@ -290,6 +318,50 @@ class MySQLMenuRepository(MySQLBaseRepository):
     def validate_suggested_items(self, menu_item_ids: List[int]) -> bool:
         """
         Validate that all suggested item IDs exist in the Menus table.
+
+        Args:
+            menu_item_ids: List of menu item IDs to validate
+
+        Returns:
+            True if all IDs exist, False otherwise
+        """
+        if not menu_item_ids:
+            return True
+
+        placeholders = ", ".join(["%s"] * len(menu_item_ids))
+        query = f"SELECT COUNT(*) as count FROM Menus WHERE id IN ({placeholders})"
+        result = self._execute_query(query, tuple(menu_item_ids))
+
+        return result[0]["count"] == len(menu_item_ids) if result else False
+
+    def validate_suggested_items_belong_to_restaurant(self, menu_item_ids: List[int], restaurant_id: int) -> bool:
+        """
+        Validate that all suggested item IDs belong to the same restaurant.
+
+        Args:
+            menu_item_ids: List of menu item IDs to validate
+            restaurant_id: ID of the restaurant
+
+        Returns:
+            True if all items belong to the restaurant, False otherwise
+        """
+        if not menu_item_ids:
+            return True
+
+        placeholders = ", ".join(["%s"] * len(menu_item_ids))
+        query = f"""
+            SELECT COUNT(*) as count
+            FROM Menus
+            WHERE id IN ({placeholders}) AND restaurant_id = %s
+        """
+        params = list(menu_item_ids) + [restaurant_id]
+        result = self._execute_query(query, tuple(params))
+
+        return result[0]["count"] == len(menu_item_ids) if result else False
+
+    def items_exist(self, menu_item_ids: List[int]) -> bool:
+        """
+        Validate that all menu item IDs exist in the Menus table.
 
         Args:
             menu_item_ids: List of menu item IDs to validate
