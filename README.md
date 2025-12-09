@@ -34,52 +34,100 @@ ressy-ai-backend/
 ├── app/
 │   ├── agent_fc/              # Deepgram function calling framework
 │   │   ├── functions/         # Function implementations (orders, reservations, conversation)
+│   │   ├── config.py          # Agent FC configuration
+│   │   ├── function_definitions.py  # Function definitions
 │   │   ├── models.py          # Function call models
+│   │   ├── registry.py        # Function registry
+│   │   ├── responses.py       # Response models
 │   │   ├── router.py          # Function call router
+│   │   ├── transport.py       # Transport layer
 │   │   └── tests/             # Agent FC tests
 │   ├── api/                   # FastAPI route handlers
+│   │   ├── admin.py           # Administration endpoints
 │   │   ├── auth.py            # Authentication endpoints
 │   │   ├── calls.py           # Call management endpoints
-│   │   ├── restaurants.py    # Restaurant endpoints
+│   │   ├── dashboard_reservations.py  # Dashboard reservation management
+│   │   ├── faqs.py            # FAQ management endpoints
 │   │   ├── menus.py           # Menu endpoints
+│   │   ├── opentable.py       # OpenTable integration endpoints
+│   │   ├── order_history.py   # Order history endpoints
 │   │   ├── orders.py          # Order endpoints
-│   │   ├── websocket.py       # WebSocket handler
-│   │   └── ...                # Other API endpoints
-│   ├── config/                # Configuration files
-│   ├── core/                  # Core business logic (placeholder)
+│   │   ├── reservations.py    # In-house reservation endpoints
+│   │   ├── restaurants.py     # Restaurant endpoints
+│   │   ├── specials.py        # Specials/promotions endpoints
+│   │   ├── transcripts.py     # Transcript management endpoints
+│   │   ├── users.py           # User management endpoints
+│   │   └── websocket.py       # WebSocket handler
 │   ├── integrations/          # Third-party integrations
 │   │   ├── deepgram_client.py
+│   │   ├── opentable_client.py
 │   │   └── twilio_client.py
 │   ├── middleware/            # Request middleware
 │   │   └── auth_middleware.py
 │   ├── models/                # Data models
-│   │   ├── call_models.py
-│   │   ├── database.py
-│   │   └── user_models.py
+│   │   └── call_models.py     # Call and transcript models
 │   ├── repositories/          # Data access layer
-│   │   ├── mysql_*.py        # MySQL repositories
-│   │   └── base.py            # Base repository
+│   │   ├── mysql_auth_repo.py
+│   │   ├── mysql_base.py     # Base MySQL repository
+│   │   ├── mysql_call_repo.py
+│   │   ├── mysql_faq_repo.py
+│   │   ├── mysql_menu_repo.py
+│   │   ├── mysql_opentable_log_repo.py
+│   │   ├── mysql_order_repo.py
+│   │   ├── mysql_reservation_repo.py
+│   │   ├── mysql_restaurant_repo.py
+│   │   ├── mysql_transcript_repo.py
+│   │   └── mysql_user_repo.py
 │   ├── services/              # Business logic services
-│   │   ├── websocket_service.py
+│   │   ├── callmanager/       # Call management utilities
+│   │   │   ├── call_filler.py
+│   │   │   ├── call_latency.py
+│   │   │   └── call_state.py
+│   │   ├── admin_service.py
+│   │   ├── auth_service.py
+│   │   ├── call_service.py
 │   │   ├── deepgram_service.py
+│   │   ├── faq_service.py
+│   │   ├── menu_service.py
+│   │   ├── opentable_service.py
+│   │   ├── order_service.py
+│   │   ├── reservation_service.py
 │   │   ├── restaurant_service.py
-│   │   └── ...                # Other services
+│   │   ├── special_service.py
+│   │   ├── transcript_service.py
+│   │   ├── twilio_service.py
+│   │   ├── user_service.py
+│   │   └── websocket_service.py
 │   ├── utils/                 # Utility functions
-│   │   ├── jwt_util.py
-│   │   ├── helpers.py
-│   │   └── prompt_loader.py
+│   │   ├── jwt_util.py        # JWT token utilities
+│   │   ├── helpers.py         # Helper functions
+│   │   └── prompt_loader.py  # Prompt loading utilities
 │   ├── config.py             # Application settings
 │   └── main.py               # FastAPI application entry point
 ├── tests/                     # Test suite
-│   ├── test_main.py          # Main app tests
-│   ├── test_config.py        # Configuration tests
+│   ├── conftest.py           # Pytest configuration
+│   ├── fake_repos.py         # In-memory test repositories
 │   ├── test_api_structure.py # API structure tests
+│   ├── test_auth_flows.py    # Authentication flow tests
+│   ├── test_config.py        # Configuration tests
+│   ├── test_faq_api.py       # FAQ API tests
+│   ├── test_faq_service.py   # FAQ service tests
+│   ├── test_main.py          # Main app tests
 │   └── test_syntax.py        # Syntax validation tests
 ├── migrations/                # Database migration scripts
+│   ├── 001-016_create_*.sql  # Initial schema migrations
+│   ├── 017_create_auth_sessions.sql
+│   ├── 017_create_opentable_api_logs.sql
+│   ├── 018_add_reservation_type_flag.sql
+│   ├── 019_add_restaurant_opening_closing_times.sql
+│   └── README.md             # Migration documentation
 ├── scripts/                   # Utility scripts
-│   ├── run_migrations.py
-│   └── seed_pilot_restaurants.py
+│   ├── add_sample_admins.py  # Add sample admin users
+│   ├── add_sample_data.py   # Add sample restaurant data
+│   ├── run_migrations.py     # Run database migrations
+│   └── seed_pilot_restaurants.py  # Seed pilot restaurants
 ├── prompts/                   # AI prompt templates
+│   └── dg_context_prompt.json
 ├── .github/
 │   └── workflows/
 │       └── deploy.yml         # CI/CD pipeline
@@ -88,14 +136,20 @@ ressy-ai-backend/
 ├── Dockerfile                 # Docker configuration
 ├── pytest.ini                 # Pytest configuration
 ├── .flake8                    # Flake8 configuration
-└── pyproject.toml             # Tool configurations (Black, isort, mypy, etc.)
+├── pyproject.toml             # Tool configurations (Black, isort, mypy, etc.)
+├── pre-commit-check.sh        # Pre-commit validation script
+├── start.sh                   # Application startup script
+├── INHOUSE_RESERVATION_API_CURL_EXAMPLES.md  # In-house reservation API examples
+├── OPENTABLE_API_CURL_EXAMPLES.md            # OpenTable API examples
+└── MULTITENANT_WEBSOCKET.md   # WebSocket implementation documentation
 ```
 
 ## 🔧 Prerequisites
 
-- **Python 3.9+** (Python 3.11 recommended)
+- **Python 3.9+** (Python 3.11+ recommended, tested with Python 3.14)
 - **MySQL 8.0+** (or compatible database)
 - **pip** (Python package manager)
+- **OpenSSL** (for generating JWT RSA keys)
 - **(Optional) Docker** for containerized deployment
 
 ## 🚀 Setup
@@ -442,21 +496,87 @@ The pipeline configuration is located at `.github/workflows/deploy.yml`. It auto
 
 ### REST APIs (prefix: `/api/v1`)
 
-- **Authentication**:
-  - `/auth/admin/login`
-  - `/auth/client/login`
-  - `/auth/refresh`
-  - `/auth/logout`
-- **Users**: `/users/*` (CRUD operations)
-- **Restaurants**: `/restaurants/*` (CRUD operations)
-- **Menus**: `/menu/*` (Menu item management)
-- **Specials**: `/specials/*` (Special offers)
-- **Orders**: `/orders/*` (Order management)
-- **Order History**: `/order-history/*`
-- **Transcripts**: `/transcripts/*` (Call transcripts)
-- **FAQs**: `/faqs/*` (Frequently asked questions)
-- **Calls**: `/calls/*` (Call history and analytics)
-- **Admin**: `/admin/*` (Administrative operations)
+All endpoints are organized by tags in the Swagger documentation:
+
+- **Authentication** (`/auth/*`):
+  - `POST /auth/admin/login` - Admin user login
+  - `POST /auth/client/login` - Restaurant admin/client login
+  - `POST /auth/refresh` - Refresh access token
+  - `POST /auth/logout` - Logout and revoke session
+
+- **Administration** (`/admin/*`):
+  - `GET /admin/users` - Get all users (admin only)
+  - `GET /admin/restaurants/{id}/faqs` - FAQ management
+  - `POST /admin/restaurants/{id}/faqs` - Create FAQ
+  - `POST /admin/restaurants/{id}/faqs/bulk` - Bulk create FAQs
+  - `GET /admin/faqs/{id}` - Get FAQ by ID
+  - `PUT /admin/faqs/{id}` - Update FAQ
+  - `DELETE /admin/faqs/{id}` - Delete FAQ
+
+- **Users** (`/users/*`):
+  - `POST /users/` - Create user (admin only)
+  - `GET /users/{restaurant_id}` - List users
+  - `PUT /users/{user_id}` - Update user
+  - `DELETE /users/{user_id}` - Delete user
+
+- **Restaurants** (`/restaurants/*`):
+  - `POST /restaurants/` - Create restaurant (admin only)
+  - `GET /restaurants/` - List all restaurants (admin only)
+  - `GET /restaurants/{id}` - Get restaurant details
+  - `PUT /restaurants/{id}` - Update restaurant
+  - `DELETE /restaurants/{id}` - Delete restaurant
+
+- **Menus** (`/menu/*`):
+  - `POST /menu/{restaurant_id}` - Create menu (admin only)
+  - `GET /menu/{restaurant_id}` - List menus
+  - `GET /menu/{restaurant_id}/{menu_id}` - Get menu details
+  - `PUT /menu/{restaurant_id}/{menu_id}` - Update menu
+  - `DELETE /menu/{restaurant_id}/{menu_id}` - Delete menu
+
+- **Specials** (`/specials/*`):
+  - `POST /specials/{restaurant_id}` - Create special (admin only)
+  - `GET /specials/{restaurant_id}` - List specials
+  - `GET /specials/{restaurant_id}/{special_id}` - Get special details
+  - `PUT /specials/{restaurant_id}/{special_id}` - Update special
+  - `DELETE /specials/{restaurant_id}/{special_id}` - Delete special
+
+- **Orders** (`/orders/*`):
+  - `POST /orders/{restaurant_id}` - Create order
+  - `GET /orders/{restaurant_id}` - List orders
+  - `GET /orders/details/{order_id}` - Get order details
+  - `PUT /orders/{order_id}` - Update order
+  - `DELETE /orders/{order_id}` - Delete order (admin only)
+
+- **Order History** (`/order-history/*`):
+  - `GET /order-history/{order_id}/history` - Get order history
+
+- **Calls** (`/calls/*`):
+  - `GET /calls/history` - Get call history with optional filtering
+  - `GET /calls/{call_id}/transcripts` - Get call transcripts
+  - `GET /calls/analytics/summary` - Get call analytics (admin only)
+
+- **Transcripts** (`/transcripts/*`):
+  - `DELETE /transcripts/{transcript_id}` - Delete transcript (admin only)
+
+- **Reservations** (`/reservations/*`):
+  - `GET /reservations/availability/{restaurant_id}` - Get table availability
+  - `POST /reservations/booking/{restaurant_id}/slot_locks` - Lock booking slot
+  - `POST /reservations/booking/{restaurant_id}/reservations` - Create reservation
+  - `GET /reservations/{reservation_id}` - Get reservation details
+  - `PUT /reservations/{reservation_id}/cancel` - Cancel reservation
+
+- **Dashboard Reservations** (`/dashboard/*`):
+  - `PUT /dashboard/reservations/{id}/finalize` - Finalize reservation
+  - `GET /dashboard/restaurants/{id}/reservations` - Get restaurant reservations
+  - `GET /dashboard/reservations/{id}` - Get reservation details
+  - `PUT /dashboard/reservations/{id}/cancel` - Cancel reservation
+
+- **OpenTable** (`/opentable/*`):
+  - `GET /opentable/availability/{restaurant_id}/{rid}` - Get OpenTable availability
+  - `POST /opentable/booking/{restaurant_id}/{rid}/slot_locks` - Lock OpenTable slot
+  - `POST /opentable/booking/{restaurant_id}/{rid}/reservations` - Create OpenTable reservation
+  - `PUT /opentable/booking/{restaurant_id}/{rid}/reservations/{confirmation_id}` - Update reservation
+  - `PUT /opentable/booking/{restaurant_id}/{rid}/reservations/{confirmation_id}/cancel` - Cancel reservation
 
 ### API Documentation
 
@@ -487,6 +607,8 @@ When running locally, visit:
 - **Agent FC** (`app/agent_fc/`): Function calling framework for orders, reservations, and conversation
 - **Repositories** (`app/repositories/mysql_*.py`): Data access layer for MySQL
 - **Services** (`app/services/*.py`): Business logic layer
+- **Call Manager** (`app/services/callmanager/`): Call state management and latency tracking
+- **Integrations** (`app/integrations/`): Third-party API clients (Deepgram, OpenTable, Twilio)
 
 ## 🗄️ Database Migrations
 
@@ -505,9 +627,384 @@ See `migrations/README.md` for detailed migration information.
 
 ## 📚 Additional Resources
 
-- **Multitenant WebSocket**: See `MULTITENANT_WEBSOCKET.md` for detailed WebSocket implementation
 - **Migrations**: See `migrations/README.md` for database schema information
 - **CI/CD**: See `.github/workflows/deploy.yml` for pipeline configuration
+
+---
+
+## 🔌 Multitenant WebSocket Implementation
+
+### Overview
+
+The WebSocket handler supports multitenancy, where each incoming call is automatically routed to the correct restaurant based on the Twilio phone number. The system:
+
+1. **Identifies Restaurant**: Extracts Twilio phone number from the call and finds the corresponding restaurant
+2. **Loads Context**: Fetches available menu items and FAQs for that restaurant
+3. **Dynamic Prompts**: Builds AI prompts with restaurant-specific context
+4. **Data Extraction**: Extracts structured data (user details, orders, transcripts) from conversations
+5. **Data Storage**: Stores extracted data in MySQL tables
+
+### Architecture
+
+#### Components
+
+1. **WebSocket Service** (`app/services/websocket_service.py`)
+   - Handles multitenant call routing
+   - Manages conversation history
+   - Processes and stores extracted data
+
+2. **Deepgram Service** (`app/services/deepgram_service.py`)
+   - Builds dynamic prompts with restaurant context
+   - Includes menu items and FAQs in the prompt
+
+3. **MySQL Repositories** (`app/repositories/mysql_*.py`)
+   - Restaurant repository: Get restaurant by Twilio number
+   - Menu repository: Get available menu items
+   - FAQ repository: Get restaurant FAQs
+   - User repository: Create/update users
+   - Order repository: Create orders and order details
+   - Transcript repository: Store call transcripts
+
+### Call Flow
+
+```
+1. Call comes in via WebSocket
+   ↓
+2. Extract Twilio phone number from "start" event
+   ↓
+3. Query Restaurants table by twilio_phone_number
+   ↓
+4. Fetch available menu items (is_available = TRUE)
+   ↓
+5. Fetch FAQs for restaurant
+   ↓
+6. Build dynamic prompt with menu + FAQs
+   ↓
+7. Send prompt to Deepgram STS
+   ↓
+8. Process conversation (collect history)
+   ↓
+9. On call end: Extract structured data
+   ↓
+10. Store in MySQL:
+    - Users table (user details)
+    - Orders table (order info)
+    - Order_Details table (order items)
+    - Transcripts table (full conversation)
+```
+
+### Twilio Number Extraction
+
+The system extracts the Twilio phone number from the WebSocket "start" event. The number is typically found in:
+- `data["start"]["callSidTo"]` or
+- `data["start"]["to"]`
+
+If the number is not found, the system falls back to default configuration.
+
+### Error Handling
+
+- If restaurant not found: Falls back to default prompt
+- If menu/FAQs not found: Continues with empty context
+- If data extraction fails: Logs error but doesn't crash
+- MySQL connection errors: Logged and handled gracefully
+
+---
+
+## 📋 API Examples
+
+### In-House Reservation API Examples
+
+All in-house reservation endpoints are publicly accessible and do not require authentication.
+
+#### Base URL
+```
+http://localhost:5001/api/v1
+```
+
+#### 1. Get Table Availability
+
+```bash
+curl -X GET "http://localhost:5001/api/v1/reservations/availability/1?start_date_time=2024-12-20T18:00:00&forward_minutes=1440&backward_minutes=0&party_size=2" \
+  -H "Content-Type: application/json"
+```
+
+**Parameters:**
+- `restaurant_id` (path): Restaurant ID
+- `start_date_time` (query, required): Start date and time in ISO format
+- `forward_minutes` (query, optional): Forward booking window in minutes
+- `backward_minutes` (query, optional): Backward booking window in minutes
+- `party_size` (query, optional): Party size
+
+#### 2. Lock a Booking Slot
+
+```bash
+curl -X POST "http://localhost:5001/api/v1/reservations/booking/1/slot_locks" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "party_size": 2,
+    "date_time": "2024-12-20T18:00:00",
+    "reservation_attribute": "default"
+  }'
+```
+
+**Response:**
+```json
+{
+  "reservation_token": "550e8400-e29b-41d4-a716-446655440000",
+  "date_time": "2024-12-20T18:00:00",
+  "party_size": 2,
+  "expires_at": "2024-12-20T18:15:00",
+  "slot_id": 123
+}
+```
+
+#### 3. Create Reservation
+
+```bash
+curl -X POST "http://localhost:5001/api/v1/reservations/booking/1/reservations" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "reservation_token": "550e8400-e29b-41d4-a716-446655440000",
+    "name": "John Doe",
+    "phone_number": "+1234567890",
+    "email_address": "john.doe@example.com",
+    "special_request": "Window seat preferred"
+  }'
+```
+
+**Note:** Only `name` and `phone_number` are required. `email_address` and `special_request` are optional.
+
+#### 4. Get Reservation by ID
+
+```bash
+curl -X GET "http://localhost:5001/api/v1/reservations/456" \
+  -H "Content-Type: application/json"
+```
+
+#### 5. Cancel Reservation
+
+```bash
+curl -X PUT "http://localhost:5001/api/v1/reservations/456/cancel" \
+  -H "Content-Type: application/json"
+```
+
+#### Dashboard APIs
+
+##### Finalize Reservation (Dashboard Only)
+
+```bash
+curl -X PUT "http://localhost:5001/api/v1/dashboard/reservations/456/finalize" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "confirmation_number": "INH-1-A1B2C3D4"
+  }'
+```
+
+##### Get Reservations by Restaurant (Dashboard)
+
+```bash
+curl -X GET "http://localhost:5001/api/v1/dashboard/restaurants/1/reservations?status=pending&start_date=2024-12-20T00:00:00&end_date=2024-12-21T23:59:59&limit=100&offset=0" \
+  -H "Content-Type: application/json"
+```
+
+**Parameters:**
+- `status` (query, optional): Filter by status (`pending`, `confirmed`, `cancelled`, `completed`)
+- `start_date` (query, optional): Filter by start date (ISO format)
+- `end_date` (query, optional): Filter by end date (ISO format)
+- `limit` (query, optional): Limit results (default: 100, max: 1000)
+- `offset` (query, optional): Offset for pagination (default: 0)
+
+#### Complete Reservation Flow Example
+
+```bash
+# Step 1: Check Availability
+curl -X GET "http://localhost:5001/api/v1/reservations/availability/1?start_date_time=2024-12-20T18:00:00&forward_minutes=1440&party_size=2"
+
+# Step 2: Lock a Slot
+curl -X POST "http://localhost:5001/api/v1/reservations/booking/1/slot_locks" \
+  -H "Content-Type: application/json" \
+  -d '{"party_size": 2, "date_time": "2024-12-20T18:00:00", "reservation_attribute": "default"}'
+
+# Step 3: Create Reservation (use reservation_token from Step 2)
+curl -X POST "http://localhost:5001/api/v1/reservations/booking/1/reservations" \
+  -H "Content-Type: application/json" \
+  -d '{"reservation_token": "TOKEN_FROM_STEP_2", "name": "John Doe", "phone_number": "+1234567890"}'
+
+# Step 4: Finalize Reservation (dashboard only)
+curl -X PUT "http://localhost:5001/api/v1/dashboard/reservations/RESERVATION_ID/finalize" \
+  -H "Content-Type: application/json" \
+  -d '{}'
+```
+
+**Notes:**
+- Reservation status flow: `pending` → `confirmed` → `completed` or `cancelled`
+- Slots expire after 15 minutes if not used to create a reservation
+- Only pending reservations can be finalized
+
+---
+
+### OpenTable API Examples
+
+All OpenTable endpoints require JWT authentication. Include the token in the `Authorization` header.
+
+#### Base URL
+```
+http://localhost:5001/api/v1/opentable
+```
+
+#### Authentication
+
+```bash
+# Get JWT token first
+curl --location 'http://localhost:5001/api/v1/auth/admin/login' \
+--header 'Content-Type: application/json' \
+--data '{"email": "admin@ressy.ai", "password": "your_password"}'
+```
+
+Then use the token in subsequent requests:
+```
+Authorization: Bearer {your_jwt_token}
+```
+
+#### 1. Get Table Availability
+
+```bash
+curl --location -g 'http://localhost:5001/api/v1/opentable/availability/1/1074796?start_date_time=2025-03-05T12:00&forward_minutes=60&backward_minutes=30&party_size=2&require_attributes=default&include_credit_card_results=true&include_experiences=false' \
+--header 'Authorization: Bearer {token}'
+```
+
+**Query Parameters:**
+- `start_date_time` (required): Start date and time in format `yyyy-mm-ddThh:ss`
+- `forward_minutes` (optional): Forward booking window in minutes
+- `backward_minutes` (optional): Backward booking window in minutes
+- `party_size` (optional): Party size (must be > 0)
+- `require_attributes` (optional): Table types (comma-separated)
+- `include_credit_card_results` (optional): Include credit card results
+- `include_experiences` (optional): Include experiences
+
+#### 2. Lock a Booking Slot
+
+```bash
+curl --location 'http://localhost:5001/api/v1/opentable/booking/1/1074796/slot_locks' \
+--header 'Content-Type: application/json' \
+--header 'Authorization: Bearer {token}' \
+--data '{
+    "party_size": 2,
+    "date_time": "2025-10-13T16:00",
+    "reservation_attribute": "default"
+}'
+```
+
+**Request Body:**
+- `party_size` (required): Party size (must be > 0)
+- `date_time` (required): Date and time in format `yyyy-mm-ddThh:ss`
+- `reservation_attribute` (optional, default: "default"): Reservation attribute
+- `experience` (optional): Experience details object
+- `dining_area_id` (optional): Dining area ID
+- `environment` (optional): Environment (e.g., "Indoor", "Outdoor")
+
+**Response:**
+```json
+{
+  "expires_at": "2025-01-06T21:24:50",
+  "reservation_token": "eyJhbGciOiJIUzUxMiJ9..."
+}
+```
+
+#### 3. Create a Reservation
+
+```bash
+curl --location 'http://localhost:5001/api/v1/opentable/booking/1/1074796/reservations' \
+--header 'Content-Type: application/json' \
+--header 'Authorization: Bearer {token}' \
+--data '{
+    "reservation_token": "TOKEN_FROM_SLOT_LOCK",
+    "first_name": "Jane",
+    "last_name": "Doe",
+    "email_address": "jane.doe@example.com",
+    "phone": {
+        "number": "4155555555",
+        "country_code": "US",
+        "phone_type": "mobile"
+    }
+}'
+```
+
+**Request Body:**
+- `reservation_token` (required): Token from slot lock
+- `first_name` (required): First name
+- `last_name` (required): Last name
+- `email_address` (required): Email address
+- `phone` (required): Phone object with `number`, `country_code`, `phone_type`
+- `reservation_attribute` (optional): Reservation attribute
+- `special_request` (optional): Special request text
+- `credit_card` (optional): Credit card object with `token` and `last4`
+- `dining_area_id` (optional): Dining area ID
+- `environment` (optional): Environment
+- `experience` (optional): Experience details object
+
+#### 4. Update a Reservation
+
+```bash
+curl --location --request PUT 'http://localhost:5001/api/v1/opentable/booking/1/1074796/reservations/1751' \
+--header 'Content-Type: application/json' \
+--header 'Authorization: Bearer {token}' \
+--data '{
+    "date_time": "2025-11-13T16:00",
+    "special_request": "Window Table"
+}'
+```
+
+**Path Parameters:**
+- `restaurant_id`: Internal restaurant ID
+- `rid`: OpenTable restaurant ID
+- `confirmation_id`: Confirmation number from the reservation
+
+**Request Body (All fields optional):**
+- `party_size` (optional): New party size
+- `date_time` (optional): New date and time
+- `reservation_attribute` (optional): Reservation attribute
+- `reservation_token` (optional): Required if changing date/time
+- `special_request` (optional): Special request text
+- `experience` (optional): Experience details object
+
+#### 5. Cancel a Reservation
+
+```bash
+curl --location --request PUT 'http://localhost:5001/api/v1/opentable/booking/1/1074796/reservations/1751/cancel' \
+--header 'Content-Type: application/json' \
+--header 'Authorization: Bearer {token}'
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Reservation cancelled successfully"
+}
+```
+
+#### OpenTable Configuration
+
+Ensure the restaurant has OpenTable configuration in the `open_table_details` JSON field:
+
+```json
+{
+  "base_url": "https://platform.otqa.com/sync",
+  "bearer_token": "your_bearer_token"
+}
+```
+
+#### OpenTable Reservation Flow
+
+1. Get availability → Lock slot → Create reservation
+2. To update: Update reservation (may need new slot lock if changing time)
+3. To cancel: Cancel reservation
+
+**Notes:**
+- Date/Time format: `yyyy-mm-ddThh:ss` (e.g., `2025-03-05T12:00`)
+- URL encoding: Ensure proper URL encoding for query parameters
+- All endpoints require JWT authentication
 
 ## 🤝 Contributing
 
@@ -525,7 +1022,7 @@ This guide will help you get the RessyAI Backend up and running quickly.
 
 Before starting, ensure you have:
 
-- ✅ **Python 3.9+** installed (check with `python3 --version`)
+- ✅ **Python 3.9+** installed (check with `python3 --version`, Python 3.11+ recommended)
 - ✅ **MySQL 8.0+** installed and running
 - ✅ **pip** installed (comes with Python)
 - ✅ **Git** (if cloning the repository)
@@ -604,14 +1101,31 @@ MYSQL_USER=root
 MYSQL_PASSWORD=your_mysql_password
 MYSQL_PORT=3306
 
-# JWT Configuration (REQUIRED for authentication)
-JWT_SECRET_KEY=your-super-secret-jwt-key-change-in-production
+# JWT Configuration (REQUIRED for authentication - RS256 with RSA keys)
+# Generate keys: openssl genrsa -out jwt_private.pem 2048 && openssl rsa -in jwt_private.pem -pubout -out jwt_public.pem
+JWT_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----"
+JWT_PUBLIC_KEY="-----BEGIN PUBLIC KEY-----\n...\n-----END PUBLIC KEY-----"
+JWT_ACCESS_TOKEN_EXP_SECONDS=3600
+JWT_REFRESH_TOKEN_EXP_SECONDS=2592000
+JWT_ISSUER=ressy.ai/auth
+JWT_ADMIN_AUDIENCE=ressy-admin-api
+JWT_CLIENT_AUDIENCE=ressy-client-api
+JWT_AUTH_AUDIENCE=ressy-auth
+
+# Deepgram Agent Configuration (Optional - defaults provided)
+DEEPGRAM_AUDIO_INPUT_ENCODING=mulaw
+DEEPGRAM_AUDIO_INPUT_SAMPLE_RATE=8000
+DEEPGRAM_AGENT_LANGUAGE=en
+DEEPGRAM_LISTEN_MODEL=nova-3
+DEEPGRAM_THINK_MODEL=gpt-4o-mini
+DEEPGRAM_SPEAK_MODEL=aura-2-amalthea-en
+RESTAURANT_TIMEZONE=America/Vancouver
 
 # Application Settings
 USE_MOCK_DATA=false
 ALLOW_DB_FAILURE=false
 
-# AWS Configuration (if using DynamoDB features)
+# AWS Configuration (if using AWS features)
 AWS_REGION=ca-central-1
 AWS_ACCESS_KEY_ID=your_access_key
 AWS_SECRET_ACCESS_KEY=your_secret_key
@@ -663,6 +1177,10 @@ mysql -u root -p ressy < migrations/013_create_reservations.sql
 mysql -u root -p ressy < migrations/014_create_ressy_administrator.sql
 mysql -u root -p ressy < migrations/015_create_restaurant_administrators.sql
 mysql -u root -p ressy < migrations/016_create_calls.sql
+mysql -u root -p ressy < migrations/017_create_auth_sessions.sql
+mysql -u root -p ressy < migrations/017_create_opentable_api_logs.sql
+mysql -u root -p ressy < migrations/018_add_reservation_type_flag.sql
+mysql -u root -p ressy < migrations/019_add_restaurant_opening_closing_times.sql
 ```
 
 ### Step 6: Verify Database Connection
@@ -757,11 +1275,16 @@ docker run -p 5001:5001 --env-file .env ressy-ai-backend
 - Find and kill the process: `lsof -ti:5001 | xargs kill -9`
 - Or use a different port: `uvicorn app.main:app --host 0.0.0.0 --port 5002 --reload`
 
-### Issue: "DEEPGRAM_API_KEY not set"
+### Issue: "DEEPGRAM_API_KEY not set" or "JWT private key not set"
 
 **Solution**:
 - Add `DEEPGRAM_API_KEY=your_key` to your `.env` file
-- For testing without Deepgram, you can set `USE_MOCK_DATA=true` in `.env`
+- Generate and add JWT RSA keys:
+  ```bash
+  openssl genrsa -out jwt_private.pem 2048
+  openssl rsa -in jwt_private.pem -pubout -out jwt_public.pem
+  # Then add to .env with escaped newlines (\n)
+  ```
 
 ### Issue: Database connection fails during startup
 
@@ -790,6 +1313,38 @@ Once running, you should be able to:
 - Review error messages in the terminal output
 - Verify all environment variables are set correctly
 - Ensure MySQL is running and accessible
+
+## 📖 Error Responses
+
+All API endpoints may return the following error responses:
+
+### 400 Bad Request
+```json
+{
+  "detail": "Error message describing what went wrong"
+}
+```
+
+### 401 Unauthorized
+```json
+{
+  "detail": "Not authenticated"
+}
+```
+
+### 404 Not Found
+```json
+{
+  "detail": "Resource not found"
+}
+```
+
+### 500 Internal Server Error
+```json
+{
+  "detail": "Error message describing the server error"
+}
+```
 
 ## 👥 Attribution
 
