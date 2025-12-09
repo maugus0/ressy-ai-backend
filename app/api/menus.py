@@ -38,9 +38,7 @@ def _validate_payload(model, payload: dict):
             if ctx_serialized:
                 err_copy["ctx"] = ctx_serialized
             serialized_errors.append(err_copy)
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail=serialized_errors
-        ) from exc
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=serialized_errors) from exc
 
 
 def get_menu_service() -> MenuService:
@@ -469,8 +467,7 @@ async def bulk_update_availability(
     "/restaurants/{restaurant_id}/menu/categories",
     summary="Get Menu Categories",
     description=(
-        "Retrieve all distinct categories and sub-categories for a restaurant's menu. "
-        "Requires admin authentication."
+        "Retrieve all distinct categories and sub-categories for a restaurant's menu. " "Requires admin authentication."
     ),
 )
 async def get_menu_categories(
