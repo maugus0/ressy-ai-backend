@@ -103,6 +103,15 @@ class MySQLMenuRepository(MySQLBaseRepository):
         suggested_items = data.get("suggested_items")
         suggested_items_json = json.dumps(suggested_items) if suggested_items else json.dumps([])
 
+        # Normalize None values to defaults for boolean fields
+        # This is a defensive check in case None values slip through
+        is_available = data.get("is_available")
+        if is_available is None:
+            is_available = True
+        is_special = data.get("is_special")
+        if is_special is None:
+            is_special = False
+
         return self._execute_insert(
             query,
             (
@@ -114,8 +123,8 @@ class MySQLMenuRepository(MySQLBaseRepository):
                 data.get("price", 0.0),
                 data.get("avg_prep_time"),
                 suggested_items_json,
-                data.get("is_available", True),
-                data.get("is_special", False),
+                is_available,
+                is_special,
             ),
         )
 

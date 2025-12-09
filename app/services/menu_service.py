@@ -130,6 +130,13 @@ class MenuService:
             # Update data with deduplicated list
             data["suggested_items"] = suggested_items
 
+        # Normalize None values to defaults for boolean fields
+        # This prevents NULL from being stored when client explicitly sends null
+        if data.get("is_available") is None:
+            data["is_available"] = True
+        if data.get("is_special") is None:
+            data["is_special"] = False
+
         # Create the menu item
         menu_id = self.menu_repo.create_menu(restaurant_id, data)
         if not menu_id:

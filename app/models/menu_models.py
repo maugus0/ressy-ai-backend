@@ -73,6 +73,22 @@ class MenuItemCreate(BaseModel):
             raise ValueError("item_name cannot be empty")
         return str(v).strip()
 
+    @field_validator("is_available", mode="before")
+    @classmethod
+    def validate_is_available(cls, v):
+        """Convert None to default True value when explicitly set to null."""
+        if v is None:
+            return True
+        return v
+
+    @field_validator("is_special", mode="before")
+    @classmethod
+    def validate_is_special(cls, v):
+        """Convert None to default False value when explicitly set to null."""
+        if v is None:
+            return False
+        return v
+
 
 class MenuItemUpdate(BaseModel):
     """Request model for updating a menu item (all fields optional)."""
