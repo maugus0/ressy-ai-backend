@@ -75,7 +75,7 @@ def get_faq_service() -> FAQService:
     return FAQService()
 
 
-router = APIRouter(prefix="/api/v1/admin", tags=["faqs"], dependencies=[Depends(get_current_admin_user)])
+router = APIRouter(prefix="/api/v1/admin", tags=["FAQs"], dependencies=[Depends(get_current_admin_user)])
 FAQ_CREATE_SCHEMA = FAQCreateRequest.model_json_schema()
 FAQ_UPDATE_SCHEMA = FAQUpdateRequest.model_json_schema()
 FAQ_BULK_SCHEMA = FAQBulkCreateRequest.model_json_schema()
