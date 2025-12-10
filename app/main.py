@@ -20,7 +20,6 @@ from app.api import (
     orders,
     reservations,
     restaurants,
-    specials,
     transcripts,
     users,
 )
@@ -43,7 +42,6 @@ app.include_router(admin.router, prefix="/api/v1/admin", tags=["admin"])
 app.include_router(users.router, prefix="/api/v1/users", tags=["users"])
 app.include_router(menus.router, prefix="/api/v1/menu", tags=["menu"])
 app.include_router(restaurants.router, prefix="/api/v1/restaurants", tags=["restaurants"])
-app.include_router(specials.router, prefix="/api/v1/specials", tags=["specials"])
 app.include_router(orders.router, prefix="/api/v1/orders", tags=["orders"])
 app.include_router(order_history.router, prefix="/api/v1/order-history", tags=["order-history"])
 app.include_router(transcripts.router, prefix="/api/v1/transcripts", tags=["transcripts"])
