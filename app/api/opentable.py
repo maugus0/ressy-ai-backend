@@ -49,56 +49,31 @@ class UpdateReservationRequest(BaseModel):
 
 
 # ---------- GET AVAILABILITY ----------
-@router.get(
-    "/availability/{restaurant_id}/{rid}",
-    summary="Get OpenTable Availability",
-    description="Retrieve available time slots for reservations through the OpenTable API integration. Returns available booking times from OpenTable's system. Requires both internal restaurant ID and OpenTable restaurant ID (rid).",
-    response_description="List of available time slots from OpenTable with booking information, table types, and pricing options.",
-)
+@router.get("/availability/{restaurant_id}/{rid}", summary="Get table availability for a restaurant")
 async def get_availability(
     restaurant_id: int,
     rid: int,
-    start_date_time: str = Query(
-        ..., description="Start date and time in format yyyy-mm-ddThh:ss (e.g., 2024-01-15T18:00:00)"
-    ),
-    forward_minutes: Optional[int] = Query(None, description="Forward booking window in minutes from start_date_time"),
-    backward_minutes: Optional[int] = Query(
-        None, description="Backward booking window in minutes from start_date_time"
-    ),
-    party_size: Optional[int] = Query(None, gt=0, description="Filter availability by party size"),
-    require_attributes: Optional[str] = Query(
-        None, description="Comma-separated list of required table attributes (e.g., 'outdoor,window')"
-    ),
-    include_credit_card_results: Optional[bool] = Query(
-        None, description="Include availability that requires credit card on file"
-    ),
-    include_experiences: Optional[bool] = Query(None, description="Include special dining experiences in results"),
+    start_date_time: str = Query(..., description="Start date and time in format yyyy-mm-ddThh:ss"),
+    forward_minutes: Optional[int] = Query(None, description="Forward booking window in minutes"),
+    backward_minutes: Optional[int] = Query(None, description="Backward booking window in minutes"),
+    party_size: Optional[int] = Query(None, gt=0, description="Party size"),
+    require_attributes: Optional[str] = Query(None, description="Table types (comma-separated)"),
+    include_credit_card_results: Optional[bool] = Query(None, description="Include credit card results"),
+    include_experiences: Optional[bool] = Query(None, description="Include experiences"),
     current_user: dict = Depends(get_current_active_user),
 ):
     """
     Get table availability for a restaurant from OpenTable API.
 
-    **Authentication**: Required (authenticated user)
-
-    **Path Parameters**:
-    - restaurant_id: Internal restaurant ID in our system
-    - rid: OpenTable restaurant ID (OpenTable's identifier for the restaurant)
-
-    **Query Parameters**:
-    - start_date_time: Starting date and time for availability check (required, format: yyyy-mm-ddThh:ss)
-    - forward_minutes: How many minutes forward to check availability
-    - backward_minutes: How many minutes backward to check availability
-    - party_size: Filter by specific party size
-    - require_attributes: Filter by table attributes (comma-separated, e.g., "outdoor,window")
-    - include_credit_card_results: Include slots requiring credit card on file
-    - include_experiences: Include special dining experiences
-
-    **Response**: List of available time slots from OpenTable including:
-    - Available dates and times
-    - Table capacity and attributes
-    - Pricing information
-    - Experience options (if requested)
-    - Credit card requirements (if applicable)
+    - **restaurant_id**: Internal restaurant ID
+    - **rid**: OpenTable restaurant ID
+    - **start_date_time**: Start date and time
+    - **forward_minutes**: Forward booking window
+    - **backward_minutes**: Backward booking window
+    - **party_size**: Party size
+    - **require_attributes**: Table types
+    - **include_credit_card_results**: Include credit card results
+    - **include_experiences**: Include experiences
     """
     try:
         result = opentable_service.get_availability(
@@ -120,37 +95,16 @@ async def get_availability(
 
 
 # ---------- LOCK SLOT ----------
-@router.post(
-    "/booking/{restaurant_id}/{rid}/slot_locks",
-    summary="Lock OpenTable Booking Slot",
-    description="Temporarily lock a booking slot through OpenTable to prevent double-booking while the customer completes their reservation. Returns a reservation token that must be used within OpenTable's time window to create the reservation.",
-    response_description="Reservation token from OpenTable and locked slot information. The token must be used to create the reservation.",
-)
+@router.post("/booking/{restaurant_id}/{rid}/slot_locks", summary="Lock a booking slot")
 async def lock_slot(
     restaurant_id: int, rid: int, request: LockSlotRequest, current_user: dict = Depends(get_current_active_user)
 ):
     """
-    Lock a booking slot for a reservation through OpenTable.
+    Lock a booking slot for a reservation.
 
-    **Authentication**: Required (authenticated user)
-
-    **Path Parameters**:
-    - restaurant_id: Internal restaurant ID in our system
-    - rid: OpenTable restaurant ID
-
-    **Request Body**:
-    - party_size: Number of guests (required, must be > 0)
-    - date_time: Desired reservation date and time in format yyyy-mm-ddThh:ss (required)
-    - reservation_attribute: Table type or special requirement (default: "default")
-    - experience: Optional experience details dictionary
-    - dining_area_id: Optional specific dining area ID
-    - environment: Optional environment preference (e.g., "Indoor", "Outdoor")
-
-    **Response**:
-    - reservation_token: OpenTable reservation token (expires after OpenTable's time limit)
-    - Locked slot information including date, time, party size, and table details
-
-    **Note**: The slot lock expires after OpenTable's configured time period. You must create the reservation using the token before it expires.
+    - **restaurant_id**: Internal restaurant ID
+    - **rid**: OpenTable restaurant ID
+    - **request**: Slot lock request body
     """
     try:
         result = opentable_service.lock_slot(
@@ -171,12 +125,7 @@ async def lock_slot(
 
 
 # ---------- CREATE RESERVATION ----------
-@router.post(
-    "/booking/{restaurant_id}/{rid}/reservations",
-    summary="Create OpenTable Reservation",
-    description="Create a new reservation through the OpenTable API integration using a valid reservation token from slot lock. The reservation is created directly in OpenTable's system and synced to our database.",
-    response_description="Created reservation object with OpenTable confirmation number, reservation ID, and all booking details.",
-)
+@router.post("/booking/{restaurant_id}/{rid}/reservations", summary="Create a reservation")
 async def create_reservation(
     restaurant_id: int,
     rid: int,
@@ -184,35 +133,11 @@ async def create_reservation(
     current_user: dict = Depends(get_current_active_user),
 ):
     """
-    Create a new reservation through OpenTable.
+    Create a reservation.
 
-    **Authentication**: Required (authenticated user)
-
-    **Path Parameters**:
-    - restaurant_id: Internal restaurant ID in our system
-    - rid: OpenTable restaurant ID
-
-    **Request Body**:
-    - reservation_token: Token obtained from OpenTable slot lock endpoint (required)
-    - first_name: Customer's first name (required)
-    - last_name: Customer's last name (required)
-    - email_address: Customer's email address (required)
-    - phone: Phone number object with number, country_code, and phone_type (required)
-    - reservation_attribute: Table type or special requirement (default: "default")
-    - special_request: Special requests or notes (optional)
-    - credit_card: Credit card information with token and last4 (optional, for restaurants requiring it)
-    - restaurant_email_marketing_opt_in: Marketing opt-in preference (optional)
-    - dining_area_id: Specific dining area ID (optional)
-    - environment: Environment preference (optional)
-    - experience: Experience details (optional)
-
-    **Response**:
-    - confirmation_number: OpenTable confirmation number
-    - reservation_id: Internal reservation ID
-    - All reservation details including date, time, party size, customer information
-    - Status and booking confirmation
-
-    **Note**: The reservation is created directly in OpenTable's system and automatically synced to our database.
+    - **restaurant_id**: Internal restaurant ID
+    - **rid**: OpenTable restaurant ID
+    - **request**: Reservation creation request body
     """
     try:
         result = opentable_service.create_reservation(
@@ -239,12 +164,7 @@ async def create_reservation(
 
 
 # ---------- UPDATE RESERVATION ----------
-@router.put(
-    "/booking/{restaurant_id}/{rid}/reservations/{confirmation_id}",
-    summary="Update OpenTable Reservation",
-    description="Update an existing reservation in OpenTable's system. Can modify party size, date/time, special requests, or experience details. Changes are synced to both OpenTable and our database.",
-    response_description="Updated reservation object with modified fields and updated timestamps.",
-)
+@router.put("/booking/{restaurant_id}/{rid}/reservations/{confirmation_id}", summary="Update a reservation")
 async def update_reservation(
     restaurant_id: int,
     rid: int,
@@ -253,30 +173,12 @@ async def update_reservation(
     current_user: dict = Depends(get_current_active_user),
 ):
     """
-    Update an existing reservation in OpenTable.
+    Update an existing reservation.
 
-    **Authentication**: Required (authenticated user)
-
-    **Path Parameters**:
-    - restaurant_id: Internal restaurant ID in our system
-    - rid: OpenTable restaurant ID
-    - confirmation_id: OpenTable confirmation number of the reservation to update
-
-    **Request Body** (all fields optional, only include fields to update):
-    - party_size: New party size
-    - date_time: New date and time in format yyyy-mm-ddThh:ss
-    - reservation_attribute: Updated table type or requirement
-    - reservation_token: New reservation token if changing time slot
-    - special_request: Updated special requests
-    - experience: Updated experience details
-
-    **Response**: Updated reservation object with:
-    - All modified fields
-    - Updated timestamps
-    - Confirmation number (unchanged)
-    - Current status
-
-    **Note**: Updates are made in OpenTable's system first, then synced to our database. Some changes may require a new slot lock if the time slot is changing.
+    - **restaurant_id**: Internal restaurant ID
+    - **rid**: OpenTable restaurant ID
+    - **confirmation_id**: Confirmation number
+    - **request**: Reservation update request body
     """
     try:
         result = opentable_service.update_reservation(
@@ -298,32 +200,16 @@ async def update_reservation(
 
 
 # ---------- CANCEL RESERVATION ----------
-@router.put(
-    "/booking/{restaurant_id}/{rid}/reservations/{confirmation_id}/cancel",
-    summary="Cancel OpenTable Reservation",
-    description="Cancel an existing reservation in OpenTable's system. The cancellation is processed through OpenTable and synced to our database. Once cancelled, the reservation cannot be reactivated.",
-    response_description="Cancelled reservation object with status updated to 'cancelled' and cancellation timestamp.",
-)
+@router.put("/booking/{restaurant_id}/{rid}/reservations/{confirmation_id}/cancel", summary="Cancel a reservation")
 async def cancel_reservation(
     restaurant_id: int, rid: int, confirmation_id: int, current_user: dict = Depends(get_current_active_user)
 ):
     """
-    Cancel a reservation in OpenTable.
+    Cancel a reservation.
 
-    **Authentication**: Required (authenticated user)
-
-    **Path Parameters**:
-    - restaurant_id: Internal restaurant ID in our system
-    - rid: OpenTable restaurant ID
-    - confirmation_id: OpenTable confirmation number of the reservation to cancel
-
-    **Response**: Updated reservation object with:
-    - Status changed to "cancelled"
-    - Cancellation timestamp
-    - All other reservation details preserved
-    - Cancellation confirmation from OpenTable
-
-    **Note**: Once cancelled, a reservation cannot be reactivated. The cancellation is processed in OpenTable's system and automatically synced to our database. A new reservation must be created if needed.
+    - **restaurant_id**: Internal restaurant ID
+    - **rid**: OpenTable restaurant ID
+    - **confirmation_id**: Confirmation number
     """
     try:
         result = opentable_service.cancel_reservation(

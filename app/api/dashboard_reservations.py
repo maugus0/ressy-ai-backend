@@ -19,31 +19,13 @@ class FinalizeReservationRequest(BaseModel):
 
 
 # ---------- FINALIZE RESERVATION (Dashboard Only) ----------
-@router.put(
-    "/reservations/{reservation_id}/finalize",
-    summary="Finalize Reservation",
-    description="Finalize a pending reservation by changing its status from 'pending' to 'confirmed'. This is a dashboard-only operation typically performed by restaurant staff. Optionally allows setting a custom confirmation number.",
-    response_description="Updated reservation object with status 'confirmed' and confirmation number assigned.",
-)
+@router.put("/reservations/{reservation_id}/finalize", summary="Finalize a reservation (Dashboard only)")
 async def finalize_reservation(reservation_id: int, request: FinalizeReservationRequest):
     """
-    Finalize a reservation (Dashboard only).
+    Finalize a reservation by changing status from 'pending' to 'confirmed'.
 
-    **Authentication**: Public (no authentication required for dashboard operations)
-
-    **Path Parameters**:
-    - reservation_id: Unique identifier of the reservation to finalize
-
-    **Request Body**:
-    - confirmation_number: Optional custom confirmation number (if not provided, system generates one)
-
-    **Response**: Updated reservation object with:
-    - Status changed from "pending" to "confirmed"
-    - Confirmation number assigned (custom or auto-generated)
-    - Finalized timestamp
-    - All other reservation details
-
-    **Note**: Only reservations in "pending" status can be finalized. This operation is typically performed by restaurant staff through the dashboard.
+    - **reservation_id**: Reservation ID
+    - **request**: Finalization request body (optional confirmation_number)
     """
     try:
         result = reservation_service.finalize_reservation(
@@ -57,45 +39,24 @@ async def finalize_reservation(reservation_id: int, request: FinalizeReservation
 
 
 # ---------- GET RESERVATIONS BY RESTAURANT (Dashboard) ----------
-@router.get(
-    "/restaurants/{restaurant_id}/reservations",
-    summary="Get Restaurant Reservations",
-    description="Retrieve all reservations for a specific restaurant with optional filtering and pagination. Dashboard endpoint for restaurant staff to view and manage reservations. Supports filtering by status, date range, and pagination.",
-    response_description="Paginated list of reservations matching the filters, including total count for pagination.",
-)
+@router.get("/restaurants/{restaurant_id}/reservations", summary="Get reservations for a restaurant (Dashboard)")
 async def get_restaurant_reservations(
     restaurant_id: int,
-    status: Optional[str] = Query(
-        None, description="Filter by status: 'pending', 'confirmed', 'cancelled', or 'completed'"
-    ),
-    start_date: Optional[str] = Query(
-        None, description="Filter reservations from this date onwards (ISO format, e.g., 2024-01-15)"
-    ),
-    end_date: Optional[str] = Query(
-        None, description="Filter reservations up to this date (ISO format, e.g., 2024-01-20)"
-    ),
-    limit: int = Query(100, ge=1, le=1000, description="Maximum number of reservations to return (1-1000)"),
-    offset: int = Query(0, ge=0, description="Number of reservations to skip for pagination"),
+    status: Optional[str] = Query(None, description="Filter by status (pending, confirmed, cancelled, completed)"),
+    start_date: Optional[str] = Query(None, description="Filter by start date (ISO format)"),
+    end_date: Optional[str] = Query(None, description="Filter by end date (ISO format)"),
+    limit: int = Query(100, ge=1, le=1000, description="Limit results"),
+    offset: int = Query(0, ge=0, description="Offset for pagination"),
 ):
     """
-    Get reservations for a restaurant (Dashboard).
+    Get reservations for a restaurant.
 
-    **Authentication**: Public (no authentication required for dashboard operations)
-
-    **Path Parameters**:
-    - restaurant_id: Unique identifier of the restaurant
-
-    **Query Parameters**:
-    - status: Optional filter by reservation status
-    - start_date: Optional filter for reservations on or after this date
-    - end_date: Optional filter for reservations on or before this date
-    - limit: Maximum number of results (default: 100, max: 1000)
-    - offset: Number of results to skip for pagination (default: 0)
-
-    **Response**: Paginated list of reservations including:
-    - List of reservation objects matching the filters
-    - Total count of matching reservations (for pagination)
-    - Each reservation includes all details (customer info, booking time, status, etc.)
+    - **restaurant_id**: Restaurant ID
+    - **status**: Filter by status
+    - **start_date**: Filter by start date
+    - **end_date**: Filter by end date
+    - **limit**: Limit results
+    - **offset**: Offset for pagination
     """
     try:
         result = reservation_service.get_reservations_by_restaurant(
@@ -114,29 +75,12 @@ async def get_restaurant_reservations(
 
 
 # ---------- GET RESERVATION BY ID (Dashboard) ----------
-@router.get(
-    "/reservations/{reservation_id}",
-    summary="Get Reservation Details (Dashboard)",
-    description="Retrieve detailed information for a specific reservation by ID. Dashboard endpoint for viewing complete reservation information including customer details, booking information, and status history.",
-    response_description="Complete reservation object with all details including customer info, booking time, status, confirmation number, and timestamps.",
-)
+@router.get("/reservations/{reservation_id}", summary="Get a reservation by ID (Dashboard)")
 async def get_reservation_dashboard(reservation_id: int):
     """
-    Get a reservation by ID (Dashboard).
+    Get a reservation by ID.
 
-    **Authentication**: Public (no authentication required for dashboard operations)
-
-    **Path Parameters**:
-    - reservation_id: Unique identifier of the reservation
-
-    **Response**: Complete reservation object including:
-    - Reservation ID and confirmation number
-    - Customer information (name, phone, email)
-    - Booking details (date, time, party size, table type)
-    - Status and status history
-    - Special requests
-    - Created, updated, and finalized timestamps
-    - All associated metadata
+    - **reservation_id**: Reservation ID
     """
     try:
         result = reservation_service.get_reservation(reservation_id=reservation_id)
@@ -148,27 +92,12 @@ async def get_reservation_dashboard(reservation_id: int):
 
 
 # ---------- CANCEL RESERVATION (Dashboard) ----------
-@router.put(
-    "/reservations/{reservation_id}/cancel",
-    summary="Cancel Reservation (Dashboard)",
-    description="Cancel a reservation from the dashboard. Changes the reservation status to 'cancelled'. This is a dashboard endpoint for restaurant staff to manage cancellations.",
-    response_description="Updated reservation object with status changed to 'cancelled' and cancellation timestamp.",
-)
+@router.put("/reservations/{reservation_id}/cancel", summary="Cancel a reservation (Dashboard)")
 async def cancel_reservation_dashboard(reservation_id: int):
     """
-    Cancel a reservation (Dashboard).
+    Cancel a reservation.
 
-    **Authentication**: Public (no authentication required for dashboard operations)
-
-    **Path Parameters**:
-    - reservation_id: Unique identifier of the reservation to cancel
-
-    **Response**: Updated reservation object with:
-    - Status changed to "cancelled"
-    - Cancellation timestamp
-    - All other reservation details preserved
-
-    **Note**: Once cancelled, a reservation cannot be reactivated. Restaurant staff should use this endpoint to handle customer cancellations or manage overbookings.
+    - **reservation_id**: Reservation ID
     """
     try:
         result = reservation_service.cancel_reservation(reservation_id=reservation_id)

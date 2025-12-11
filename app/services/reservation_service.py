@@ -14,7 +14,7 @@ from app.repositories.mysql_user_repo import MySQLUserRepository
 class ReservationService:
     """Service for in-house reservation operations."""
 
-    RESERVATION_TYPE = "inhouse"
+    RESERVATION_TYPE = "in-house"
     SLOT_DURATION_MINUTES = 90  # Default slot duration
     SLOT_EXPIRY_MINUTES = 15  # Time before slot expires
     SLOT_INTERVAL_MINUTES = 15  # Interval between slots
@@ -56,6 +56,19 @@ class ReservationService:
 
         # Parse opening and closing times
         try:
+            # Handle timedelta objects from MySQL TIME columns
+            if isinstance(opening_time_str, timedelta):
+                total_seconds = int(opening_time_str.total_seconds())
+                hours = total_seconds // 3600
+                minutes = (total_seconds % 3600) // 60
+                seconds = total_seconds % 60
+                opening_time_str = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+            if isinstance(closing_time_str, timedelta):
+                total_seconds = int(closing_time_str.total_seconds())
+                hours = total_seconds // 3600
+                minutes = (total_seconds % 3600) // 60
+                seconds = total_seconds % 60
+                closing_time_str = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
             opening_time = datetime.strptime(str(opening_time_str), "%H:%M:%S").time()
             closing_time = datetime.strptime(str(closing_time_str), "%H:%M:%S").time()
         except (ValueError, TypeError):
@@ -64,8 +77,10 @@ class ReservationService:
             closing_time = datetime.strptime("22:00:00", "%H:%M:%S").time()
 
         # Use restaurant's forward/backward minutes if not provided
-        forward = forward_minutes or restaurant.get("forward_minutes", 1440)  # Default 24 hours
-        backward = backward_minutes or restaurant.get("backward_minutes", 0)
+        forward = (
+            forward_minutes if forward_minutes is not None else restaurant.get("forward_minutes", 1440)
+        )  # Default 24 hours
+        backward = backward_minutes if backward_minutes is not None else restaurant.get("backward_minutes", 0)
 
         # Parse start date time
         try:
@@ -99,7 +114,7 @@ class ReservationService:
 
         # Generate all possible slots based on opening/closing times
         slots = []
-        current_date = start_dt.date()
+        current_date = search_start_dt.date()
         end_date = end_dt.date()
 
         # Generate slots for each day in the range
@@ -108,26 +123,25 @@ class ReservationService:
             day_start = datetime.combine(current_date, opening_time)
             day_end = datetime.combine(current_date, closing_time)
 
-            # Adjust start time if it's the first day and start_dt is later
-            if current_date == start_dt.date():
-                # Start from the provided start_date_time rounded up to next 15-minute interval, or opening time, whichever is later
-                normalized_start = start_dt.replace(second=0, microsecond=0)
-                # Round up to next 15-minute interval
+            # Determine the effective start time for this day
+            if current_date == search_start_dt.date():
+                # First day: start from search_start_dt (rounded up) or opening time, whichever is later
+                normalized_start = search_start_dt.replace(second=0, microsecond=0)
                 minutes = normalized_start.minute
                 remainder = minutes % self.SLOT_INTERVAL_MINUTES
                 if remainder == 0:
-                    # Already on a 15-minute interval
                     rounded_start = normalized_start
                 else:
-                    # Round up to next 15-minute interval
                     minutes_to_add = self.SLOT_INTERVAL_MINUTES - remainder
                     rounded_start = normalized_start + timedelta(minutes=minutes_to_add)
                 slot_start = max(rounded_start, day_start)
             else:
+                # Other days: start from opening time
                 slot_start = day_start
 
-            # Adjust end time if it's the last day and end_dt is earlier
+            # Determine the effective end time for this day
             if current_date == end_dt.date():
+                # Last day: end at end_dt or closing time, whichever is earlier
                 slot_end = min(end_dt.replace(second=0, microsecond=0), day_end)
             else:
                 slot_end = day_end
@@ -182,6 +196,19 @@ class ReservationService:
 
         # Parse opening and closing times
         try:
+            # Handle timedelta objects from MySQL TIME columns
+            if isinstance(opening_time_str, timedelta):
+                total_seconds = int(opening_time_str.total_seconds())
+                hours = total_seconds // 3600
+                minutes = (total_seconds % 3600) // 60
+                seconds = total_seconds % 60
+                opening_time_str = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+            if isinstance(closing_time_str, timedelta):
+                total_seconds = int(closing_time_str.total_seconds())
+                hours = total_seconds // 3600
+                minutes = (total_seconds % 3600) // 60
+                seconds = total_seconds % 60
+                closing_time_str = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
             opening_time = datetime.strptime(str(opening_time_str), "%H:%M:%S").time()
             closing_time = datetime.strptime(str(closing_time_str), "%H:%M:%S").time()
         except (ValueError, TypeError):
@@ -229,6 +256,7 @@ class ReservationService:
             reservation_token=reservation_token,
             reservation_type=self.RESERVATION_TYPE,
             status="reserved",
+            party_size=party_size,
         )
 
         return {
@@ -270,6 +298,10 @@ class ReservationService:
         if not slot:
             raise ValueError("Invalid or expired reservation token")
 
+        # Validate that the slot belongs to the specified restaurant
+        if slot["restaurant_id"] != restaurant_id:
+            raise ValueError("Reservation token does not belong to the specified restaurant")
+
         if slot["status"] != "reserved":
             raise ValueError("Slot is not reserved or has expired")
 
@@ -289,12 +321,16 @@ class ReservationService:
         confirmation_number = f"INH-{restaurant_id}-{uuid.uuid4().hex[:8].upper()}"
 
         # Create reservation with pending status
+        # Get party_size from slot if available
+        party_size = slot.get("party_size")
         reservation_id = self.reservation_repo.create_reservation(
             slot_booking_id=slot["id"],
             user_id=user_id,
             confirmation_number=confirmation_number,
             reservation_type=self.RESERVATION_TYPE,
             status="pending",
+            special_request=special_request,
+            party_size=party_size,
         )
 
         return {
@@ -414,15 +450,7 @@ class ReservationService:
             offset=offset,
         )
 
-        total_count = self.reservation_repo.get_reservations_count_by_restaurant(
-            restaurant_id=restaurant_id,
-            reservation_type=self.RESERVATION_TYPE,
-            status=status,
-            start_date=start_dt,
-            end_date=end_dt,
-        )
-
-        return {"restaurant_id": restaurant_id, "reservations": reservations, "total": total_count}
+        return {"restaurant_id": restaurant_id, "reservations": reservations, "total": len(reservations)}
 
     def cancel_reservation(self, reservation_id: int) -> Dict[str, Any]:
         """
