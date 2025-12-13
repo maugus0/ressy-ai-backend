@@ -10,21 +10,113 @@ class InMemoryRestaurantRepository:
 
     def __init__(self, faq_repo: "InMemoryFAQRepository | None" = None):
         self._restaurants: Dict[int, Dict[str, Any]] = {}
+        self._counter = 0
         self._faq_repo = faq_repo
+        self._stats: Dict[int, Dict[str, Any]] = {}
 
     def add(self, restaurant_id: int, name: str = "Test Restaurant") -> Dict[str, Any]:
-        restaurant = {"id": restaurant_id, "name": name}
+        restaurant = {
+            "id": restaurant_id,
+            "name": name,
+            "address": None,
+            "phone_number": None,
+            "twilio_phone_number": None,
+            "twilio_details": None,
+            "deepgram_details": None,
+            "open_table_details": None,
+            "forward_minutes": 0,
+            "backward_minutes": 0,
+            "is_credit_card_required_for_reservation": False,
+            "opening_time": "09:00:00",
+            "closing_time": "22:00:00",
+            "created_at": None,
+            "updated_at": None,
+        }
         self._restaurants[restaurant_id] = restaurant
+        self._counter = max(self._counter, restaurant_id)
         return restaurant
+
+    def create(self, data: Dict[str, Any]) -> int:
+        self._counter += 1
+        restaurant_id = self._counter
+        restaurant = {
+            "id": restaurant_id,
+            "name": data.get("name"),
+            "address": data.get("address"),
+            "phone_number": data.get("phone_number"),
+            "twilio_phone_number": data.get("twilio_phone_number"),
+            "twilio_details": data.get("twilio_details"),
+            "deepgram_details": data.get("deepgram_details"),
+            "open_table_details": data.get("open_table_details"),
+            "forward_minutes": data.get("forward_minutes", 0),
+            "backward_minutes": data.get("backward_minutes", 0),
+            "is_credit_card_required_for_reservation": data.get("is_credit_card_required_for_reservation", False),
+            "opening_time": data.get("opening_time", "09:00:00"),
+            "closing_time": data.get("closing_time", "22:00:00"),
+            "created_at": datetime.now(timezone.utc),
+            "updated_at": datetime.now(timezone.utc),
+        }
+        self._restaurants[restaurant_id] = restaurant
+        return restaurant_id
 
     def get_by_id(self, restaurant_id: int) -> Dict[str, Any]:
         return copy.deepcopy(self._restaurants.get(restaurant_id, {}))
+
+    def get_by_name(self, name: str) -> Optional[Dict[str, Any]]:
+        for restaurant in self._restaurants.values():
+            if restaurant.get("name") == name:
+                return copy.deepcopy(restaurant)
+        return None
+
+    def get_by_phone(self, phone_number: str) -> Dict[str, Any]:
+        for restaurant in self._restaurants.values():
+            if restaurant.get("phone_number") == phone_number:
+                return copy.deepcopy(restaurant)
+        return {}
+
+    def get_by_twilio_number(self, twilio_phone_number: str) -> Optional[Dict[str, Any]]:
+        for restaurant in self._restaurants.values():
+            if restaurant.get("twilio_phone_number") == twilio_phone_number:
+                return copy.deepcopy(restaurant)
+        return None
+
+    def get_all(
+        self,
+        page: int = 1,
+        limit: int = 20,
+        search: Optional[str] = None,
+        is_credit_card_required: Optional[bool] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        restaurants = list(self._restaurants.values())
+        if search:
+            restaurants = [r for r in restaurants if search.lower() in r["name"].lower()]
+        if is_credit_card_required is not None:
+            restaurants = [
+                r for r in restaurants if r.get("is_credit_card_required_for_reservation") == is_credit_card_required
+            ]
+        restaurants.sort(key=lambda r: r["id"], reverse=True)
+        total = len(restaurants)
+        start = (page - 1) * limit
+        end = start + limit
+        return [copy.deepcopy(r) for r in restaurants[start:end]], total
+
+    def update(self, restaurant_id: int, data: Dict[str, Any]) -> bool:
+        restaurant = self._restaurants.get(restaurant_id)
+        if not restaurant:
+            return False
+        restaurant.update(data)
+        restaurant["updated_at"] = datetime.now(timezone.utc)
+        self._restaurants[restaurant_id] = restaurant
+        return True
 
     def delete(self, restaurant_id: int) -> int:
         removed = self._restaurants.pop(restaurant_id, None)
         if removed and self._faq_repo:
             self._faq_repo.delete_by_restaurant(restaurant_id)
         return 1 if removed else 0
+
+    def get_statistics(self, restaurant_id: int) -> Dict[str, Any]:
+        return copy.deepcopy(self._stats.get(restaurant_id, {}))
 
 
 class InMemoryFAQRepository:

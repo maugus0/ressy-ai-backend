@@ -11,6 +11,32 @@ from app.repositories.mysql_base import MySQLBaseRepository
 class MySQLRestaurantRepository(MySQLBaseRepository):
     """Repository for restaurant data access in MySQL."""
 
+    def get_by_name(self, name: str) -> Optional[Dict]:
+        """Get restaurant by name."""
+        query = """
+            SELECT
+                id,
+                name,
+                address,
+                phone_number,
+                twilio_phone_number,
+                twilio_details,
+                deepgram_details,
+                open_table_details,
+                forward_minutes,
+                backward_minutes,
+                is_credit_card_required_for_reservation,
+                opening_time,
+                closing_time,
+                created_at,
+                updated_at
+            FROM Restaurants
+            WHERE name = %s
+            LIMIT 1
+        """
+        results = self._execute_query(query, (name,))
+        return results[0] if results else None
+
     def get_by_twilio_number(self, twilio_phone_number: str) -> Optional[Dict]:
         """
         Get restaurant by Twilio phone number.
@@ -154,8 +180,9 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
                 name, address, phone_number, twilio_phone_number,
                 twilio_details, deepgram_details, open_table_details,
                 forward_minutes, backward_minutes, is_credit_card_required_for_reservation,
+                opening_time, closing_time,
                 created_at, updated_at
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
         """
         restaurant_id = self._execute_insert(
             query,
@@ -170,6 +197,8 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
                 data.get("forward_minutes", 0),
                 data.get("backward_minutes", 0),
                 data.get("is_credit_card_required_for_reservation", False),
+                data.get("opening_time"),
+                data.get("closing_time"),
             ),
         )
         return restaurant_id
@@ -220,6 +249,8 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
                 forward_minutes,
                 backward_minutes,
                 is_credit_card_required_for_reservation,
+                opening_time,
+                closing_time,
                 created_at,
                 updated_at
             FROM Restaurants
@@ -292,6 +323,12 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
         if "is_credit_card_required_for_reservation" in data:
             update_fields.append("is_credit_card_required_for_reservation = %s")
             params.append(data["is_credit_card_required_for_reservation"])
+        if "opening_time" in data:
+            update_fields.append("opening_time = %s")
+            params.append(data["opening_time"])
+        if "closing_time" in data:
+            update_fields.append("closing_time = %s")
+            params.append(data["closing_time"])
 
         if not update_fields:
             return False
