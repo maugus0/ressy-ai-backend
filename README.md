@@ -63,9 +63,12 @@ ressy-ai-backend/
 │   │   ├── opentable_client.py
 │   │   └── twilio_client.py
 │   ├── middleware/            # Request middleware
-│   │   └── auth_middleware.py
+│   │   └── auth_middleware.py # Authentication and authorization middleware
 │   ├── models/                # Data models
-│   │   └── call_models.py     # Call and transcript models
+│   │   ├── call_models.py     # Call and transcript models
+│   │   ├── common_models.py   # Common response models (pagination, etc.)
+│   │   ├── menu_models.py     # Menu item models
+│   │   └── user_models.py     # User models
 │   ├── repositories/          # Data access layer
 │   │   ├── mysql_auth_repo.py
 │   │   ├── mysql_base.py     # Base MySQL repository
@@ -145,10 +148,7 @@ ressy-ai-backend/
 ├── .flake8                    # Flake8 configuration
 ├── pyproject.toml             # Tool configurations (Black, isort, mypy, etc.)
 ├── pre-commit-check.sh        # Pre-commit validation script
-├── start.sh                   # Application startup script
-├── INHOUSE_RESERVATION_API_CURL_EXAMPLES.md  # In-house reservation API examples
-├── OPENTABLE_API_CURL_EXAMPLES.md            # OpenTable API examples
-└── MULTITENANT_WEBSOCKET.md   # WebSocket implementation documentation
+└── start.sh                   # Application startup script
 ```
 
 ## 🔧 Prerequisites
@@ -270,14 +270,74 @@ uvicorn app.main:app --host 0.0.0.0 --port 5001 --reload
 
 The API will be available at `http://localhost:5001`
 
-### Docker
+### Docker Compose (Recommended)
+
+The easiest way to run the entire stack (backend + database) with automatic migrations and seeding:
+
+```bash
+# Start everything (build, create database, run migrations, seed data, start app)
+docker-compose up --build -d
+
+# View logs
+docker-compose logs -f
+
+# Stop everything
+docker-compose down
+
+# Stop and remove all data (fresh start)
+docker-compose down -v
+```
+
+**What happens on startup:**
+1. MySQL container starts and waits for health check
+2. Backend container waits for MySQL to be ready
+3. Database migrations run automatically (all SQL files in `migrations/`)
+4. Sample data is seeded (admin users, restaurant, menu items, FAQs)
+5. Application starts on port 5001
+
+**Default credentials after seeding:**
+- **Admin**: `admin@ressy.ai` / `AdminPass!23`
+- **Restaurant Manager**: `manager@restaurant.com` / `ManagerPass!23`
+
+**Environment Variables:**
+
+Copy `.env.example` to `.env` and configure:
+
+```bash
+cp .env.example .env
+# Edit .env with your values
+```
+
+Key variables:
+- `DB_PASSWORD` - MySQL root password (default: `rootpassword`)
+- `SEED_DATABASE` - Set to `false` to skip seeding (default: `true`)
+- `JWT_PRIVATE_KEY` / `JWT_PUBLIC_KEY` - RSA keys for authentication
+- `DEEPGRAM_API_KEY` - Required for voice features
+
+**Disabling database seeding:**
+
+```bash
+# Set in .env or pass directly
+SEED_DATABASE=false docker-compose up --build -d
+```
+
+### Docker (Backend Only)
+
+If you have an external MySQL database:
 
 ```bash
 # Build the Docker image
 docker build -t ressy-ai-backend .
 
-# Run the container
-docker run -p 5001:5001 --env-file .env ressy-ai-backend
+# Run the container with environment variables
+docker run -p 5001:5001 \
+  -e DB_HOST=your-mysql-host \
+  -e DB_PORT=3306 \
+  -e DB_NAME=ressy \
+  -e DB_USERNAME=your-user \
+  -e DB_PASSWORD=your-password \
+  -e SEED_DATABASE=true \
+  ressy-ai-backend
 ```
 
 ### Health Check
@@ -511,27 +571,28 @@ All endpoints are organized by tags in the Swagger documentation:
   - `POST /auth/refresh` - Refresh access token
   - `POST /auth/logout` - Logout and revoke session
 
-- **Users** (`/users/*`):
-  - `POST /users/` - Create user (admin only)
-  - `GET /users/{restaurant_id}` - List users
-  - `PUT /users/{user_id}` - Update user
-  - `DELETE /users/{user_id}` - Delete user
+- **Users** (`/api/v1/users/*`):
+  - `POST /api/v1/users/` - Create user (admin only)
+  - `GET /api/v1/users/{restaurant_id}` - List users
+  - `PUT /api/v1/users/{user_id}` - Update user
+  - `DELETE /api/v1/users/{user_id}` - Delete user
 
-- **Restaurants** (`/restaurants/*`):
-  - `POST /restaurants/` - Create restaurant (admin only; validates phone and integration settings)
-  - `GET /restaurants/` - List restaurants with pagination, search, and credit-card filter
-  - `GET /restaurants/{id}` - Get restaurant details (includes integration JSON fields)
-  - `PUT /restaurants/{id}` - Update restaurant (partial updates supported)
-  - `DELETE /restaurants/{id}` - Delete restaurant
-  - `GET /restaurants/{id}/stats` - Aggregated stats (menus, FAQs, admins, calls, minute usage)
+- **Restaurants** (`/api/v1/restaurants/*`) - Admin only:
+  - `POST /api/v1/restaurants/` - Create restaurant (validates phone and integration settings)
+  - `GET /api/v1/restaurants/` - List restaurants with pagination, search, and credit-card filter
+  - `GET /api/v1/restaurants/{id}` - Get restaurant details (includes integration JSON fields)
+  - `PUT /api/v1/restaurants/{id}` - Update restaurant (partial updates supported)
+  - `DELETE /api/v1/restaurants/{id}` - Delete restaurant
+  - `GET /api/v1/restaurants/{id}/stats` - Aggregated stats (menus, FAQs, admins, calls, minute usage)
 
-- **FAQs** (`/admin/faqs*`, `/admin/restaurants/{restaurant_id}/faqs*`) - Admin only:
-  - `GET /admin/restaurants/{id}/faqs` - List FAQs for a restaurant
-  - `POST /admin/restaurants/{id}/faqs` - Create FAQ
-  - `POST /admin/restaurants/{id}/faqs/bulk` - Bulk create FAQs
-  - `GET /admin/faqs/{id}` - Get FAQ by ID
-  - `PUT /admin/faqs/{id}` - Update FAQ
-  - `DELETE /admin/faqs/{id}` - Delete FAQ
+- **FAQs** (`/api/v1/admin/*`) - Admin only:
+  - `GET /api/v1/admin/restaurants/{restaurant_id}/faqs` - List FAQs for a restaurant
+  - `POST /api/v1/admin/restaurants/{restaurant_id}/faqs` - Create FAQ
+  - `POST /api/v1/admin/restaurants/{restaurant_id}/faqs/bulk` - Bulk create FAQs
+  - `GET /api/v1/admin/faqs/search` - Search FAQs across all restaurants
+  - `GET /api/v1/admin/faqs/{faq_id}` - Get FAQ by ID
+  - `PUT /api/v1/admin/faqs/{faq_id}` - Update FAQ
+  - `DELETE /api/v1/admin/faqs/{faq_id}` - Delete FAQ
 
 - **Menus** (`/api/v1/admin/*`) - Admin only:
   - `POST /api/v1/admin/restaurants/{restaurant_id}/menu` - Create menu item
@@ -544,57 +605,63 @@ All endpoints are organized by tags in the Swagger documentation:
   - `PATCH /api/v1/admin/restaurants/{restaurant_id}/menu/bulk-availability` - Bulk update availability
   - `GET /api/v1/admin/restaurants/{restaurant_id}/menu/categories` - Get menu categories
 
-- **Orders** (`/orders/*`):
-  - `POST /orders/{restaurant_id}` - Create order
-  - `GET /orders/{restaurant_id}` - List orders
-  - `GET /orders/details/{order_id}` - Get order details
-  - `PUT /orders/{order_id}` - Update order
-  - `DELETE /orders/{order_id}` - Delete order (admin only)
+- **Orders** (`/api/v1/orders/*`):
+  - `POST /api/v1/orders/{restaurant_id}` - Create order
+  - `GET /api/v1/orders/{restaurant_id}` - List orders
+  - `GET /api/v1/orders/details/{order_id}` - Get order details
+  - `PUT /api/v1/orders/{order_id}` - Update order
+  - `DELETE /api/v1/orders/{order_id}` - Delete order (admin only)
 
-- **Order History** (`/order-history/*`):
-  - `GET /order-history/{order_id}/history` - Get order history
+- **Order History** (`/api/v1/order-history/*`):
+  - `GET /api/v1/order-history/{order_id}/history` - Get order history
 
-- **Calls** (`/calls/*`):
-  - `GET /calls/history` - Get call history with optional filtering
-  - `GET /calls/{call_id}/transcripts` - Get call transcripts
-  - `GET /calls/analytics/summary` - Get call analytics (admin only)
+- **Calls** (`/api/v1/calls/*`):
+  - `GET /api/v1/calls/history` - Get call history with optional filtering
+  - `GET /api/v1/calls/{call_id}/transcripts` - Get call transcripts
+  - `GET /api/v1/calls/analytics/summary` - Get call analytics (admin only)
 
-- **Transcripts** (`/transcripts/*`):
-  - `DELETE /transcripts/{transcript_id}` - Delete transcript (admin only)
+- **Transcripts** (`/api/v1/transcripts/*`):
+  - `DELETE /api/v1/transcripts/{transcript_id}` - Delete transcript (admin only)
 
-- **Reservations** (`/reservations/*`):
-  - `GET /reservations/availability/{restaurant_id}` - Get table availability
-  - `POST /reservations/booking/{restaurant_id}/slot_locks` - Lock booking slot
-  - `POST /reservations/booking/{restaurant_id}/reservations` - Create reservation
-  - `GET /reservations/{reservation_id}` - Get reservation details
-  - `PUT /reservations/{reservation_id}/cancel` - Cancel reservation
+- **Reservations** (`/api/v1/reservations/*`):
+  - `GET /api/v1/reservations/availability/{restaurant_id}` - Get table availability
+  - `POST /api/v1/reservations/booking/{restaurant_id}/slot_locks` - Lock booking slot
+  - `POST /api/v1/reservations/booking/{restaurant_id}/reservations` - Create reservation
+  - `GET /api/v1/reservations/{reservation_id}` - Get reservation details
+  - `PUT /api/v1/reservations/{reservation_id}/cancel` - Cancel reservation
 
-- **Dashboard Reservations** (`/dashboard/*`):
-  - `PUT /dashboard/reservations/{id}/finalize` - Finalize reservation
-  - `GET /dashboard/restaurants/{id}/reservations` - Get restaurant reservations
-  - `GET /dashboard/reservations/{id}` - Get reservation details
-  - `PUT /dashboard/reservations/{id}/cancel` - Cancel reservation
+- **Dashboard Reservations** (`/api/v1/dashboard/*`):
+  - `PUT /api/v1/dashboard/reservations/{reservation_id}/finalize` - Finalize reservation
+  - `GET /api/v1/dashboard/restaurants/{restaurant_id}/reservations` - Get restaurant reservations
+  - `GET /api/v1/dashboard/reservations/{reservation_id}` - Get reservation details
+  - `PUT /api/v1/dashboard/reservations/{reservation_id}/cancel` - Cancel reservation
 
-- **OpenTable** (`/opentable/*`):
-  - `GET /opentable/availability/{restaurant_id}/{rid}` - Get OpenTable availability
-  - `POST /opentable/booking/{restaurant_id}/{rid}/slot_locks` - Lock OpenTable slot
-  - `POST /opentable/booking/{restaurant_id}/{rid}/reservations` - Create OpenTable reservation
-  - `PUT /opentable/booking/{restaurant_id}/{rid}/reservations/{confirmation_id}` - Update reservation
-  - `PUT /opentable/booking/{restaurant_id}/{rid}/reservations/{confirmation_id}/cancel` - Cancel reservation
+- **OpenTable** (`/api/v1/opentable/*`):
+  - `GET /api/v1/opentable/availability/{restaurant_id}/{rid}` - Get OpenTable availability
+  - `POST /api/v1/opentable/booking/{restaurant_id}/{rid}/slot_locks` - Lock OpenTable slot
+  - `POST /api/v1/opentable/booking/{restaurant_id}/{rid}/reservations` - Create OpenTable reservation
+  - `PUT /api/v1/opentable/booking/{restaurant_id}/{rid}/reservations/{confirmation_id}` - Update reservation
+  - `PUT /api/v1/opentable/booking/{restaurant_id}/{rid}/reservations/{confirmation_id}/cancel` - Cancel reservation
 
-- **Ressy Admin Users (Admin CRM platform users)**:
-  - `/admin/admin-users` (POST create, GET list with pagination/role filters)
-  - `/admin/admin-users/bulk` (POST bulk create in a transaction)
-  - `/admin/admin-users/{uuid}` (GET, PUT, DELETE single admin user)
-  - `/admin/admin-users/{uuid}/role` (PATCH role assignment)
-  - `/admin/admin-users/{uuid}/reset-password` (POST reset + revoke sessions, rate limited)
+- **Ressy Admin Users** (`/api/v1/admin/*`) - Admin only:
+  - `POST /api/v1/admin/admin-users` - Create admin user
+  - `GET /api/v1/admin/admin-users` - List admin users (with pagination/role filters)
+  - `POST /api/v1/admin/admin-users/bulk` - Bulk create admin users (in a transaction)
+  - `GET /api/v1/admin/admin-users/{uuid}` - Get admin user by UUID
+  - `PUT /api/v1/admin/admin-users/{uuid}` - Update admin user
+  - `DELETE /api/v1/admin/admin-users/{uuid}` - Delete admin user
+  - `PATCH /api/v1/admin/admin-users/{uuid}/role` - Update role assignment
+  - `POST /api/v1/admin/admin-users/{uuid}/reset-password` - Reset password (rate limited, revokes sessions)
 
-- **Client Users (Restaurant staff/admin managed by Admin CRM)**:
-  - `/admin/restaurants/{restaurant_id}/client-users` (POST create, GET list for that restaurant)
-  - `/admin/restaurants/{restaurant_id}/client-users/bulk` (POST bulk create in a transaction)
-  - `/admin/restaurants/{restaurant_id}/client-users/{uuid}` (GET, PUT, DELETE single client user)
-  - `/admin/restaurants/{restaurant_id}/client-users/{uuid}/role` (PATCH role assignment)
-  - `/admin/restaurants/{restaurant_id}/client-users/{uuid}/reset-password` (POST reset + revoke sessions, rate limited)
+- **Client Users** (`/api/v1/admin/*`) - Admin only:
+  - `POST /api/v1/admin/restaurants/{restaurant_id}/client-users` - Create client user
+  - `GET /api/v1/admin/restaurants/{restaurant_id}/client-users` - List client users for a restaurant
+  - `POST /api/v1/admin/restaurants/{restaurant_id}/client-users/bulk` - Bulk create client users (in a transaction)
+  - `GET /api/v1/admin/restaurants/{restaurant_id}/client-users/{uuid}` - Get client user by UUID
+  - `PUT /api/v1/admin/restaurants/{restaurant_id}/client-users/{uuid}` - Update client user
+  - `DELETE /api/v1/admin/restaurants/{restaurant_id}/client-users/{uuid}` - Delete client user
+  - `PATCH /api/v1/admin/restaurants/{restaurant_id}/client-users/{uuid}/role` - Update role assignment
+  - `POST /api/v1/admin/restaurants/{restaurant_id}/client-users/{uuid}/reset-password` - Reset password (rate limited, revokes sessions)
 
 ### API Documentation
 
@@ -606,6 +673,188 @@ When running locally, visit:
 
 - Admin and client-user passwords must be at least 8 characters and include uppercase, lowercase, and numeric characters.
 - Password reset endpoints are rate limited (default 5 attempts per 60-second sliding window per user) and revoke existing refresh sessions.
+
+## 📋 Admin API - cURL Examples
+
+This section contains cURL examples for all Admin API endpoints.
+
+**Base URL**: `http://localhost:5001/api/v1/admin`
+
+**Note**: Replace `{token}` with your actual JWT authentication token obtained from the login endpoint.
+
+### Authentication
+
+#### Admin Login
+
+Login endpoint for Ressy Administrators. Returns JWT token for authenticated admin users.
+
+**Endpoint:** `POST /api/v1/auth/admin/login`
+
+**cURL:**
+```bash
+curl --location 'http://localhost:5001/api/v1/auth/admin/login' \
+--header 'Content-Type: application/json' \
+--data '{
+    "email": "admin@example.com",
+    "password": "your_password"
+}'
+```
+
+**Request Body:**
+- `email` (required): Admin email address
+- `password` (required): Admin password
+
+**Response Example:**
+```json
+{
+  "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI1NTBlODQwMC1lMjliLTQxZDQtYTcxNi00NDY2NTU0NDAwMDAiLCJlbWFpbCI6ImFkbWluQGV4YW1wbGUuY29tIiwicm9sZSI6ImFkbWluIiwidHlwZSI6ImFkbWluIn0...",
+  "token_type": "bearer"
+}
+```
+
+### Restaurant Management
+
+#### Create Restaurant
+
+Create a new restaurant with all necessary details.
+
+**Endpoint:** `POST /api/v1/restaurants`
+
+**cURL:**
+```bash
+curl --location 'http://localhost:5001/api/v1/restaurants' \
+--header 'Content-Type: application/json' \
+--header 'Authorization: Bearer {token}' \
+--data '{
+    "name": "The Gourmet Restaurant",
+    "address": "123 Main Street, City, State 12345",
+    "phone_number": "+1-555-123-4567",
+    "twilio_phone_number": "+1-555-987-6543",
+    "twilio_details": {
+        "account_sid": "ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "auth_token": "your_auth_token",
+        "api_key": "your_api_key"
+    },
+    "deepgram_details": {
+        "api_key": "your_deepgram_api_key",
+        "model": "nova-2",
+        "language": "en-US"
+    },
+    "open_table_details": {
+        "restaurant_id": "1074796",
+        "bearer_token": "your_opentable_token"
+    },
+    "forward_minutes": 1440,
+    "backward_minutes": 0,
+    "is_credit_card_required_for_reservation": false
+}'
+```
+
+**Request Body:**
+- `name` (required, string, max 255 chars): Restaurant name
+- `address` (optional, text): Restaurant address
+- `phone_number` (optional, string, max 20 chars): Phone number
+- `twilio_phone_number` (optional, string, max 20 chars): Twilio phone number
+- `twilio_details` (optional, JSON object): Twilio configuration
+- `deepgram_details` (optional, JSON object): Deepgram configuration
+- `open_table_details` (optional, JSON object): OpenTable integration details
+- `forward_minutes` (optional, integer, default 0): Forward booking window in minutes
+- `backward_minutes` (optional, integer, default 0): Backward booking window in minutes
+- `is_credit_card_required_for_reservation` (optional, boolean, default false): Require credit card for reservation
+
+#### Get All Restaurants
+
+Get all restaurants with pagination, search, and filtering.
+
+**Endpoint:** `GET /api/v1/restaurants`
+
+**cURL (With Pagination and Search):**
+```bash
+curl --location 'http://localhost:5001/api/v1/restaurants?page=1&limit=20&search=Gourmet&is_credit_card_required=false' \
+--header 'Authorization: Bearer {token}'
+```
+
+**Query Parameters:**
+- `page` (optional, default 1, min 1): Page number
+- `limit` (optional, default 20, min 1, max 100): Items per page
+- `search` (optional): Search by restaurant name (partial match)
+- `is_credit_card_required` (optional, boolean): Filter by credit card requirement
+
+#### Get Restaurant by ID
+
+Get complete restaurant details by ID.
+
+**Endpoint:** `GET /api/v1/restaurants/{id}`
+
+**cURL:**
+```bash
+curl --location 'http://localhost:5001/api/v1/restaurants/1' \
+--header 'Authorization: Bearer {token}'
+```
+
+#### Update Restaurant
+
+Update restaurant details. Accepts partial updates - only provided fields will be updated.
+
+**Endpoint:** `PUT /api/v1/restaurants/{id}`
+
+**cURL:**
+```bash
+curl --location --request PUT 'http://localhost:5001/api/v1/restaurants/1' \
+--header 'Content-Type: application/json' \
+--header 'Authorization: Bearer {token}' \
+--data '{
+    "name": "The Updated Gourmet Restaurant",
+    "forward_minutes": 2880,
+    "is_credit_card_required_for_reservation": true
+}'
+```
+
+#### Delete Restaurant
+
+Delete a restaurant by ID. Cascade deletion will handle associated data automatically.
+
+**Endpoint:** `DELETE /api/v1/restaurants/{id}`
+
+**cURL:**
+```bash
+curl --location --request DELETE 'http://localhost:5001/api/v1/restaurants/1' \
+--header 'Authorization: Bearer {token}'
+```
+
+#### Get Restaurant Statistics
+
+Get comprehensive statistics for a restaurant.
+
+**Endpoint:** `GET /api/v1/restaurants/{id}/stats`
+
+**cURL:**
+```bash
+curl --location 'http://localhost:5001/api/v1/restaurants/1/stats' \
+--header 'Authorization: Bearer {token}'
+```
+
+**Response Example:**
+```json
+{
+  "total_menu_items": 45,
+  "available_menu_items": 42,
+  "special_items_count": 5,
+  "total_faqs": 12,
+  "total_administrators": 3,
+  "total_calls": 156,
+  "total_minute_usage": 2340.5
+}
+```
+
+### Admin API Notes
+
+1. **Token Expiration**: JWT tokens expire after 24 hours by default. You'll need to login again to get a new token.
+2. **Pagination**: The `limit` parameter has a maximum value of 100. If you need more results, use pagination.
+3. **Search**: The search parameter performs a partial match on restaurant names (case-insensitive).
+4. **Partial Updates**: The update endpoint accepts partial updates. Only include the fields you want to change.
+5. **JSON Fields**: Integration details (`twilio_details`, `deepgram_details`, `open_table_details`) are stored as JSON objects. Ensure proper JSON formatting when sending these fields.
+6. **Cascade Deletion**: When deleting a restaurant, associated data (menus, FAQs, orders, etc.) will be automatically deleted due to foreign key constraints.
 
 ## 🏗️ Architecture
 
@@ -646,11 +895,92 @@ mysql -u root -p ressy < migrations/001_create_permissions.sql
 # Continue for all migration files...
 ```
 
-See `migrations/README.md` for detailed migration information.
+### Migration Order
+
+Migrations should be run in numerical order (001, 002, 003, etc.) as they have dependencies on previous tables.
+
+### Migration Files
+
+1. **001_create_permissions.sql** - Creates the Permissions table (no dependencies)
+2. **002_create_crm_roles.sql** - Creates the Crm_roles table (depends on Permissions)
+3. **003_create_users.sql** - Creates the Users table (no dependencies)
+4. **004_create_restaurants.sql** - Creates the Restaurants table (no dependencies)
+5. **005_create_menus.sql** - Creates the Menus table (depends on Restaurants)
+6. **006_create_orders.sql** - Creates the Orders table (depends on Users)
+7. **007_create_order_details.sql** - Creates the Order_Details table (depends on Orders and Menus)
+8. **008_create_faqs.sql** - Creates the FAQs table (depends on Restaurants)
+9. **009_create_notifications.sql** - Creates the Notifications table (depends on Orders)
+10. **010_create_transcripts.sql** - Creates the Transcripts table (depends on Users and Orders)
+11. **011_create_table_availability_requests.sql** - Creates the Table_Availability_Requests table (depends on Restaurants)
+12. **012_create_slot_bookings.sql** - Creates the Slot_Bookings table (depends on Restaurants)
+13. **013_create_reservations.sql** - Creates the Reservations table (depends on Table_Availability_Requests, Slot_Bookings, and Users)
+14. **014_create_ressy_administrator.sql** - Creates the Ressy_Administrator table (depends on Crm_roles)
+15. **015_create_restaurant_administrators.sql** - Creates the Restaurant_Administrators table (depends on Restaurants and Crm_roles)
+16. **016_create_calls.sql** - Creates the Calls table (stores call session information)
+17. **017_create_auth_sessions.sql** - Adds last_login/last_active columns to administrators and creates Auth_Sessions for JWT refresh flows
+18. **017_create_opentable_api_logs.sql** - Creates OpenTable API logs table
+19. **018_add_reservation_type_flag.sql** - Adds reservation type flag
+20. **019_add_restaurant_opening_closing_times.sql** - Adds restaurant opening/closing times
+21. **020_add_party_size_and_special_request.sql** - Adds party size and special request fields
+
+### Database Schema Overview
+
+#### Core Tables
+
+- **Users**: Customer information
+- **Restaurants**: Restaurant details and integrations
+- **Menus**: Menu items for restaurants
+- **Orders**: Order information
+- **Order_Details**: Individual items in orders
+
+#### Reservation System
+
+- **Table_Availability_Requests**: Table availability requests
+- **Slot_Bookings**: Available booking slots
+- **Reservations**: Confirmed reservations
+
+#### Administrative
+
+- **Permissions**: Route permissions
+- **Crm_roles**: Role definitions
+- **Ressy_Administrator**: Platform administrators
+- **Restaurant_Administrators**: Restaurant-specific administrators
+
+#### Supporting Tables
+
+- **FAQs**: Frequently asked questions
+- **Notifications**: Order notifications
+- **Transcripts**: Call transcripts and logs
+- **Calls**: Call session information
+- **Auth_Sessions**: JWT refresh token sessions
+
+### Indexes
+
+All tables include appropriate indexes for:
+
+- Primary keys (automatic)
+- Foreign keys
+- Frequently queried columns
+- Composite indexes for common query patterns
+- Full-text search indexes where applicable (FAQs)
+
+### Foreign Key Constraints
+
+Foreign keys are set up with appropriate ON DELETE and ON UPDATE actions:
+
+- **CASCADE**: When parent is deleted/updated, child records are deleted/updated
+- **RESTRICT**: Prevents deletion/update if child records exist
+- **SET NULL**: Sets foreign key to NULL when parent is deleted (where applicable)
+
+### Notes
+
+- All tables use `utf8mb4` character set and `utf8mb4_unicode_ci` collation for full Unicode support
+- Timestamps use `TIMESTAMP` type with automatic `created_at` and `updated_at` handling
+- JSON columns are used for flexible data storage (order_details, customization, etc.)
+- UUIDs are used for administrator tables (VARCHAR(36))
 
 ## 📚 Additional Resources
 
-- **Migrations**: See `migrations/README.md` for database schema information
 - **CI/CD**: See `.github/workflows/deploy.yml` for pipeline configuration
 
 ---
@@ -733,19 +1063,24 @@ If the number is not found, the system falls back to default configuration.
 
 ---
 
-## 📋 API Examples
-
-### In-House Reservation API Examples
+## 📋 In-House Reservation API Examples
 
 All in-house reservation endpoints are publicly accessible and do not require authentication.
 
-#### Base URL
+### Base URL
 ```
 http://localhost:5001/api/v1
 ```
 
+### Public/User APIs
+
 #### 1. Get Table Availability
 
+Get available time slots for a restaurant.
+
+**Endpoint:** `GET /reservations/availability/{restaurant_id}`
+
+**cURL:**
 ```bash
 curl -X GET "http://localhost:5001/api/v1/reservations/availability/1?start_date_time=2024-12-20T18:00:00&forward_minutes=1440&backward_minutes=0&party_size=2" \
   -H "Content-Type: application/json"
@@ -753,13 +1088,37 @@ curl -X GET "http://localhost:5001/api/v1/reservations/availability/1?start_date
 
 **Parameters:**
 - `restaurant_id` (path): Restaurant ID
-- `start_date_time` (query, required): Start date and time in ISO format
-- `forward_minutes` (query, optional): Forward booking window in minutes
-- `backward_minutes` (query, optional): Backward booking window in minutes
+- `start_date_time` (query, required): Start date and time in ISO format (e.g., `2024-12-20T18:00:00`)
+- `forward_minutes` (query, optional): Forward booking window in minutes (default: restaurant's forward_minutes)
+- `backward_minutes` (query, optional): Backward booking window in minutes (default: restaurant's backward_minutes)
 - `party_size` (query, optional): Party size
+
+**Response:**
+```json
+{
+  "restaurant_id": 1,
+  "start_date_time": "2024-12-20T18:00:00",
+  "forward_minutes": 1440,
+  "backward_minutes": 0,
+  "party_size": 2,
+  "slots": [
+    {
+      "date_time": "2024-12-20T18:00:00",
+      "available": true,
+      "reservation_token": "abc123..."
+    }
+  ],
+  "total_available": 1
+}
+```
 
 #### 2. Lock a Booking Slot
 
+Lock a specific time slot for a reservation.
+
+**Endpoint:** `POST /reservations/booking/{restaurant_id}/slot_locks`
+
+**cURL:**
 ```bash
 curl -X POST "http://localhost:5001/api/v1/reservations/booking/1/slot_locks" \
   -H "Content-Type: application/json" \
@@ -768,6 +1127,15 @@ curl -X POST "http://localhost:5001/api/v1/reservations/booking/1/slot_locks" \
     "date_time": "2024-12-20T18:00:00",
     "reservation_attribute": "default"
   }'
+```
+
+**Request Body:**
+```json
+{
+  "party_size": 2,
+  "date_time": "2024-12-20T18:00:00",
+  "reservation_attribute": "default"
+}
 ```
 
 **Response:**
@@ -783,6 +1151,11 @@ curl -X POST "http://localhost:5001/api/v1/reservations/booking/1/slot_locks" \
 
 #### 3. Create Reservation
 
+Create a reservation with pending status.
+
+**Endpoint:** `POST /reservations/booking/{restaurant_id}/reservations`
+
+**cURL:**
 ```bash
 curl -X POST "http://localhost:5001/api/v1/reservations/booking/1/reservations" \
   -H "Content-Type: application/json" \
@@ -795,26 +1168,95 @@ curl -X POST "http://localhost:5001/api/v1/reservations/booking/1/reservations" 
   }'
 ```
 
+**Request Body:**
+```json
+{
+  "reservation_token": "550e8400-e29b-41d4-a716-446655440000",
+  "name": "John Doe",
+  "phone_number": "+1234567890",
+  "email_address": "john.doe@example.com",
+  "special_request": "Window seat preferred"
+}
+```
+
 **Note:** Only `name` and `phone_number` are required. `email_address` and `special_request` are optional.
+
+**Response:**
+```json
+{
+  "reservation_id": 456,
+  "confirmation_number": "INH-1-A1B2C3D4",
+  "status": "pending",
+  "date_time": "2024-12-20T18:00:00",
+  "message": "Reservation created successfully. Awaiting confirmation from restaurant."
+}
+```
 
 #### 4. Get Reservation by ID
 
+Get details of a specific reservation.
+
+**Endpoint:** `GET /reservations/{reservation_id}`
+
+**cURL:**
 ```bash
 curl -X GET "http://localhost:5001/api/v1/reservations/456" \
   -H "Content-Type: application/json"
 ```
 
+**Response:**
+```json
+{
+  "id": 456,
+  "reservation_type": "inhouse",
+  "table_availability_request_id": null,
+  "slot_booking_id": 123,
+  "user_id": 789,
+  "confirmation_number": "INH-1-A1B2C3D4",
+  "last_cancel_time": null,
+  "manage_reservation_url": null,
+  "status": "pending",
+  "created_at": "2024-12-20T17:00:00",
+  "updated_at": "2024-12-20T17:00:00",
+  "date_time": "2024-12-20T18:00:00",
+  "name": "John Doe",
+  "email": "john.doe@example.com",
+  "phone_number": "+1234567890"
+}
+```
+
 #### 5. Cancel Reservation
 
+Cancel a reservation.
+
+**Endpoint:** `PUT /reservations/{reservation_id}/cancel`
+
+**cURL:**
 ```bash
 curl -X PUT "http://localhost:5001/api/v1/reservations/456/cancel" \
   -H "Content-Type: application/json"
 ```
 
-#### Dashboard APIs
+**Response:**
+```json
+{
+  "reservation_id": 456,
+  "status": "cancelled",
+  "message": "Reservation cancelled successfully"
+}
+```
 
-##### Finalize Reservation (Dashboard Only)
+### Dashboard APIs
 
+All dashboard APIs are publicly accessible.
+
+#### 6. Finalize Reservation (Dashboard Only)
+
+Finalize a pending reservation by changing status to confirmed.
+
+**Endpoint:** `PUT /dashboard/reservations/{reservation_id}/finalize`
+
+**cURL:**
 ```bash
 curl -X PUT "http://localhost:5001/api/v1/dashboard/reservations/456/finalize" \
   -H "Content-Type: application/json" \
@@ -823,21 +1265,97 @@ curl -X PUT "http://localhost:5001/api/v1/dashboard/reservations/456/finalize" \
   }'
 ```
 
-##### Get Reservations by Restaurant (Dashboard)
+**Request Body (optional):**
+```json
+{
+  "confirmation_number": "INH-1-A1B2C3D4"
+}
+```
 
+**Response:**
+```json
+{
+  "reservation_id": 456,
+  "confirmation_number": "INH-1-A1B2C3D4",
+  "status": "confirmed",
+  "message": "Reservation confirmed successfully"
+}
+```
+
+#### 7. Get Reservations by Restaurant (Dashboard)
+
+Get all reservations for a restaurant with filtering options.
+
+**Endpoint:** `GET /dashboard/restaurants/{restaurant_id}/reservations`
+
+**cURL:**
 ```bash
 curl -X GET "http://localhost:5001/api/v1/dashboard/restaurants/1/reservations?status=pending&start_date=2024-12-20T00:00:00&end_date=2024-12-21T23:59:59&limit=100&offset=0" \
   -H "Content-Type: application/json"
 ```
 
 **Parameters:**
+- `restaurant_id` (path): Restaurant ID
 - `status` (query, optional): Filter by status (`pending`, `confirmed`, `cancelled`, `completed`)
 - `start_date` (query, optional): Filter by start date (ISO format)
 - `end_date` (query, optional): Filter by end date (ISO format)
 - `limit` (query, optional): Limit results (default: 100, max: 1000)
 - `offset` (query, optional): Offset for pagination (default: 0)
 
-#### Complete Reservation Flow Example
+**Response:**
+```json
+{
+  "restaurant_id": 1,
+  "reservations": [
+    {
+      "id": 456,
+      "reservation_type": "inhouse",
+      "table_availability_request_id": null,
+      "slot_booking_id": 123,
+      "user_id": 789,
+      "confirmation_number": "INH-1-A1B2C3D4",
+      "last_cancel_time": null,
+      "manage_reservation_url": null,
+      "status": "pending",
+      "created_at": "2024-12-20T17:00:00",
+      "updated_at": "2024-12-20T17:00:00",
+      "date_time": "2024-12-20T18:00:00",
+      "name": "John Doe",
+      "email": "john.doe@example.com",
+      "phone_number": "+1234567890"
+    }
+  ],
+  "total": 1
+}
+```
+
+#### 8. Get Reservation by ID (Dashboard)
+
+Get details of a specific reservation (dashboard version).
+
+**Endpoint:** `GET /dashboard/reservations/{reservation_id}`
+
+**cURL:**
+```bash
+curl -X GET "http://localhost:5001/api/v1/dashboard/reservations/456" \
+  -H "Content-Type: application/json"
+```
+
+#### 9. Cancel Reservation (Dashboard)
+
+Cancel a reservation (dashboard version).
+
+**Endpoint:** `PUT /dashboard/reservations/{reservation_id}/cancel`
+
+**cURL:**
+```bash
+curl -X PUT "http://localhost:5001/api/v1/dashboard/reservations/456/cancel" \
+  -H "Content-Type: application/json"
+```
+
+### Complete Reservation Flow Example
+
+Here's a complete example of the reservation flow:
 
 ```bash
 # Step 1: Check Availability
@@ -846,23 +1364,47 @@ curl -X GET "http://localhost:5001/api/v1/reservations/availability/1?start_date
 # Step 2: Lock a Slot
 curl -X POST "http://localhost:5001/api/v1/reservations/booking/1/slot_locks" \
   -H "Content-Type: application/json" \
-  -d '{"party_size": 2, "date_time": "2024-12-20T18:00:00", "reservation_attribute": "default"}'
+  -d '{
+    "party_size": 2,
+    "date_time": "2024-12-20T18:00:00",
+    "reservation_attribute": "default"
+  }'
 
-# Step 3: Create Reservation (use reservation_token from Step 2)
+# Step 3: Create Reservation
 curl -X POST "http://localhost:5001/api/v1/reservations/booking/1/reservations" \
   -H "Content-Type: application/json" \
-  -d '{"reservation_token": "TOKEN_FROM_STEP_2", "name": "John Doe", "phone_number": "+1234567890"}'
+  -d '{
+    "reservation_token": "RESERVATION_TOKEN_FROM_STEP_2",
+    "name": "John Doe",
+    "phone_number": "+1234567890",
+    "email_address": "john.doe@example.com",
+    "special_request": "Window seat preferred"
+  }'
 
-# Step 4: Finalize Reservation (dashboard only)
-curl -X PUT "http://localhost:5001/api/v1/dashboard/reservations/RESERVATION_ID/finalize" \
+# Step 4: Finalize Reservation
+curl -X PUT "http://localhost:5001/api/v1/dashboard/reservations/RESERVATION_ID_FROM_STEP_3/finalize" \
   -H "Content-Type: application/json" \
   -d '{}'
 ```
 
-**Notes:**
-- Reservation status flow: `pending` → `confirmed` → `completed` or `cancelled`
-- Slots expire after 15 minutes if not used to create a reservation
-- Only pending reservations can be finalized
+### In-House Reservation Notes
+
+1. **Reservation Types**: The system differentiates between `opentable` and `inhouse` reservations using the `reservation_type` flag.
+
+2. **Reservation Status Flow**:
+   - `pending` → Created but not yet confirmed
+   - `confirmed` → Finalized by restaurant (dashboard only)
+   - `cancelled` → Cancelled by user or restaurant
+   - `completed` → Reservation completed
+   - `no_show` → Customer did not show up
+
+3. **Slot Expiration**: Slots expire after 15 minutes if not used to create a reservation.
+
+4. **Finalization**: Only pending reservations can be finalized. Finalization can only be done through the dashboard API.
+
+5. **Authentication**: All endpoints are publicly accessible and do not require authentication.
+
+6. **Error Responses**: All endpoints may return standard HTTP error responses (400 Bad Request, 404 Not Found, 500 Internal Server Error).
 
 ---
 
@@ -891,22 +1433,67 @@ Authorization: Bearer {your_jwt_token}
 
 #### 1. Get Table Availability
 
+Get available table times for a restaurant.
+
+**Endpoint:** `GET /api/v1/opentable/availability/{restaurant_id}/{rid}`
+
+**cURL:**
 ```bash
 curl --location -g 'http://localhost:5001/api/v1/opentable/availability/1/1074796?start_date_time=2025-03-05T12:00&forward_minutes=60&backward_minutes=30&party_size=2&require_attributes=default&include_credit_card_results=true&include_experiences=false' \
 --header 'Authorization: Bearer {token}'
 ```
 
 **Query Parameters:**
-- `start_date_time` (required): Start date and time in format `yyyy-mm-ddThh:ss`
+- `start_date_time` (required): Start date and time in format `yyyy-mm-ddThh:ss` (e.g., `2025-03-05T12:00`)
 - `forward_minutes` (optional): Forward booking window in minutes
 - `backward_minutes` (optional): Backward booking window in minutes
 - `party_size` (optional): Party size (must be > 0)
-- `require_attributes` (optional): Table types (comma-separated)
-- `include_credit_card_results` (optional): Include credit card results
-- `include_experiences` (optional): Include experiences
+- `require_attributes` (optional): Table types (comma-separated, e.g., `default,window`)
+- `include_credit_card_results` (optional): Include credit card results (`true` or `false`)
+- `include_experiences` (optional): Include experiences (`true` or `false`)
+
+**Response Example:**
+```json
+{
+  "rid": 1074796,
+  "party_size": 2,
+  "times": [
+    "2025-03-05T07:00",
+    "2025-03-05T07:15",
+    "2025-03-05T07:30"
+  ],
+  "times_available": [
+    {
+      "time": "2025-03-05T07:00",
+      "availability_types": [
+        {
+          "type": "Standard",
+          "cancellationPolicy": {},
+          "diningArea": [
+            {
+              "id": 1,
+              "attributes": ["default"],
+              "environment": "Indoor",
+              "booking_url": "https://www.opentable.com/book/validate?...",
+              "booking_restref_url": "https://www.opentable.com/restref/client?..."
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "no_availability_reasons": [],
+  "href": "https://platform.otqa.com/sync/listings/1074796"
+}
+```
 
 #### 2. Lock a Booking Slot
 
+Lock a booking slot before creating a reservation.
+
+**Endpoint:** `POST /api/v1/opentable/booking/{restaurant_id}/{rid}/slot_locks`
+
+**cURL (Minimal):**
 ```bash
 curl --location 'http://localhost:5001/api/v1/opentable/booking/1/1074796/slot_locks' \
 --header 'Content-Type: application/json' \
@@ -918,6 +1505,40 @@ curl --location 'http://localhost:5001/api/v1/opentable/booking/1/1074796/slot_l
 }'
 ```
 
+**cURL (Full with Experience):**
+```bash
+curl --location 'http://localhost:5001/api/v1/opentable/booking/1/1074796/slot_locks' \
+--header 'Content-Type: application/json' \
+--header 'Authorization: Bearer {token}' \
+--data '{
+    "party_size": 2,
+    "date_time": "2025-10-13T16:00",
+    "reservation_attribute": "default",
+    "experience": {
+        "id": 512031,
+        "version": 1,
+        "party_size_per_price_type": [
+            {
+                "id": 121058,
+                "count": 1
+            },
+            {
+                "id": 121059,
+                "count": 1
+            }
+        ],
+        "add_ons": [
+            {
+                "item_id": "4cb68e46-39be-4110-b345-884bf57635bd",
+                "quantity": 2
+            }
+        ]
+    },
+    "dining_area_id": 2632,
+    "environment": "Indoor"
+}'
+```
+
 **Request Body:**
 - `party_size` (required): Party size (must be > 0)
 - `date_time` (required): Date and time in format `yyyy-mm-ddThh:ss`
@@ -926,22 +1547,27 @@ curl --location 'http://localhost:5001/api/v1/opentable/booking/1/1074796/slot_l
 - `dining_area_id` (optional): Dining area ID
 - `environment` (optional): Environment (e.g., "Indoor", "Outdoor")
 
-**Response:**
+**Response Example:**
 ```json
 {
   "expires_at": "2025-01-06T21:24:50",
-  "reservation_token": "eyJhbGciOiJIUzUxMiJ9..."
+  "reservation_token": "eyJhbGciOiJIUzUxMiJ9.eyJzdWIiOiI2MTc3MzgxNDJ8MnwyMDI1LTEwLTEzVDE2OjAwfDEwMzgwMDcifQ.6uVQiE9gzI8nRxIP0qUjP2o__5pwV7DwYeW_0-VPq8oJUvltg-HIj8iel3acYzWeKZuQqLHNiBQ3VlSVeONYGQ"
 }
 ```
 
 #### 3. Create a Reservation
 
+Create a reservation using a reservation token from slot lock.
+
+**Endpoint:** `POST /api/v1/opentable/booking/{restaurant_id}/{rid}/reservations`
+
+**cURL (Minimal):**
 ```bash
 curl --location 'http://localhost:5001/api/v1/opentable/booking/1/1074796/reservations' \
 --header 'Content-Type: application/json' \
 --header 'Authorization: Bearer {token}' \
 --data '{
-    "reservation_token": "TOKEN_FROM_SLOT_LOCK",
+    "reservation_token": "eyJhbGciOiJIUzUxMiJ9...",
     "first_name": "Jane",
     "last_name": "Doe",
     "email_address": "jane.doe@example.com",
@@ -953,21 +1579,87 @@ curl --location 'http://localhost:5001/api/v1/opentable/booking/1/1074796/reserv
 }'
 ```
 
+**cURL (Full with Credit Card and Experience):**
+```bash
+curl --location 'http://localhost:5001/api/v1/opentable/booking/1/1074796/reservations' \
+--header 'Content-Type: application/json' \
+--header 'Authorization: Bearer {token}' \
+--data '{
+    "reservation_token": "eyJhbGciOiJIUzUxMiJ9...",
+    "first_name": "Jane",
+    "last_name": "Doe",
+    "email_address": "JaneDoe@mailanator.com",
+    "phone": {
+        "number": "4155555555",
+        "country_code": "US",
+        "phone_type": "mobile"
+    },
+    "reservation_attribute": "default",
+    "special_request": "This is my special request",
+    "credit_card": {
+        "token": "tok_0SDBnhjrulGLaJAMRTatEB0N",
+        "last4": "4242"
+    },
+    "restaurant_email_marketing_opt_in": "true",
+    "dining_area_id": "2632",
+    "environment": "Indoor",
+    "experience": {
+        "id": 512031,
+        "version": 1,
+        "party_size_per_price_type": [
+            {
+                "id": 121058,
+                "count": 1
+            },
+            {
+                "id": 121059,
+                "count": 1
+            }
+        ],
+        "add_ons": [
+            {
+                "item_id": "4cb68e46-39be-4110-b345-884bf57635bd",
+                "quantity": 2
+            }
+        ]
+    }
+}'
+```
+
 **Request Body:**
 - `reservation_token` (required): Token from slot lock
-- `first_name` (required): First name
-- `last_name` (required): Last name
+- `first_name` (required): First name (min length: 1)
+- `last_name` (required): Last name (min length: 1)
 - `email_address` (required): Email address
 - `phone` (required): Phone object with `number`, `country_code`, `phone_type`
-- `reservation_attribute` (optional): Reservation attribute
+- `reservation_attribute` (optional, default: "default"): Reservation attribute
 - `special_request` (optional): Special request text
 - `credit_card` (optional): Credit card object with `token` and `last4`
+- `restaurant_email_marketing_opt_in` (optional): Marketing opt-in ("true" or "false")
 - `dining_area_id` (optional): Dining area ID
 - `environment` (optional): Environment
 - `experience` (optional): Experience details object
 
+**Response Example:**
+```json
+{
+  "message": "We have a 5 minute grace period. Please call us if you are running later than 5 minutes after your reservation time.<br /><br />We may contact you about this reservation, so please ensure your email and phone number are up to date.<br /><br />Your table will be reserved for 1 hour 30 minutes for parties of up to 2; 2 hours for parties of up to 4; 2 hours 30 minutes for parties of up to 6; and 3 hours for parties of 7+.",
+  "confirmation_number": 1751,
+  "offer_confirmation_number": 0,
+  "date_time": "2025-10-13T16:00",
+  "party_size": 2,
+  "notes": "This is my special request",
+  "manage_reservation_url": "https://www.opentable.com/book/view?rid=1038007&confnumber=1751&token=01EMM9tRYsZ5LWf59HhG_iCHIzHSs1Spu-9JvrwKx0nzI1"
+}
+```
+
 #### 4. Update a Reservation
 
+Update an existing reservation.
+
+**Endpoint:** `PUT /api/v1/opentable/booking/{restaurant_id}/{rid}/reservations/{confirmation_id}`
+
+**cURL (Minimal):**
 ```bash
 curl --location --request PUT 'http://localhost:5001/api/v1/opentable/booking/1/1074796/reservations/1751' \
 --header 'Content-Type: application/json' \
@@ -984,22 +1676,38 @@ curl --location --request PUT 'http://localhost:5001/api/v1/opentable/booking/1/
 - `confirmation_id`: Confirmation number from the reservation
 
 **Request Body (All fields optional):**
-- `party_size` (optional): New party size
-- `date_time` (optional): New date and time
+- `party_size` (optional): New party size (must be > 0)
+- `date_time` (optional): New date and time in format `yyyy-mm-ddThh:ss`
 - `reservation_attribute` (optional): Reservation attribute
-- `reservation_token` (optional): Required if changing date/time
+- `reservation_token` (optional): Reservation token (required if changing date/time)
 - `special_request` (optional): Special request text
 - `experience` (optional): Experience details object
 
+**Response Example:**
+```json
+{
+  "message": "We have a 5 minute grace period. Please call us if you are running later than 5 minutes after your reservation time.<br /><br />We may contact you about this reservation, so please ensure your email and phone number are up to date.<br /><br />Your table will be reserved for 1 hour 30 minutes for parties of up to 2; 2 hours for parties of up to 4; 2 hours 30 minutes for parties of up to 6; and 3 hours for parties of 7+.",
+  "confirmation_number": 1751,
+  "date_time": "2025-11-13T16:00",
+  "party_size": 2,
+  "notes": "Window Table"
+}
+```
+
 #### 5. Cancel a Reservation
 
+Cancel an existing reservation.
+
+**Endpoint:** `PUT /api/v1/opentable/booking/{restaurant_id}/{rid}/reservations/{confirmation_id}/cancel`
+
+**cURL:**
 ```bash
 curl --location --request PUT 'http://localhost:5001/api/v1/opentable/booking/1/1074796/reservations/1751/cancel' \
 --header 'Content-Type: application/json' \
 --header 'Authorization: Bearer {token}'
 ```
 
-**Response:**
+**Response Example:**
 ```json
 {
   "success": true,
@@ -1026,8 +1734,9 @@ Ensure the restaurant has OpenTable configuration in the `open_table_details` JS
 
 **Notes:**
 - Date/Time format: `yyyy-mm-ddThh:ss` (e.g., `2025-03-05T12:00`)
-- URL encoding: Ensure proper URL encoding for query parameters
+- URL encoding: Ensure proper URL encoding for query parameters (e.g., `%3A` for `:`)
 - All endpoints require JWT authentication
+- Restaurant configuration must include OpenTable details in the `open_table_details` JSON field
 
 ## 🤝 Contributing
 
