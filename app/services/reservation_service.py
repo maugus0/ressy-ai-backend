@@ -483,3 +483,271 @@ class ReservationService:
             "status": "cancelled",
             "message": "Reservation cancelled successfully",
         }
+
+    # ---------- Dashboard-specific methods ----------
+
+    def create_reservation_direct(
+        self,
+        restaurant_id: int,
+        date_time: str,
+        party_size: int,
+        name: str,
+        phone_number: str,
+        email_address: Optional[str] = None,
+        special_request: Optional[str] = None,
+        notes: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Create a reservation directly (for dashboard).
+        Creates slot booking and confirmed reservation in a single transaction.
+
+        Args:
+            restaurant_id: Restaurant ID
+            date_time: Date and time (ISO format)
+            party_size: Party size
+            name: Guest name
+            phone_number: Guest phone number
+            email_address: Guest email (optional)
+            special_request: Special request (optional)
+            notes: Notes (optional)
+
+        Returns:
+            Reservation response with confirmation details
+        """
+        # Get restaurant configuration
+        restaurant = self.restaurant_repo.get_by_id(restaurant_id)
+        if not restaurant:
+            raise ValueError(f"Restaurant with ID {restaurant_id} not found")
+
+        # Parse date time
+        try:
+            slot_dt = datetime.fromisoformat(date_time.replace("Z", "+00:00"))
+            # Remove timezone info for local time calculations
+            if slot_dt.tzinfo:
+                slot_dt = slot_dt.replace(tzinfo=None)
+            # Normalize to minute precision
+            slot_dt = slot_dt.replace(second=0, microsecond=0)
+        except ValueError:
+            raise ValueError(f"Invalid date_time format: {date_time}")
+
+        # Check for conflicting reservations
+        locked_slots = self.reservation_repo.get_locked_slots(
+            restaurant_id=restaurant_id,
+            start_date_time=slot_dt,
+            end_date_time=slot_dt + timedelta(minutes=1),
+            reservation_type=self.RESERVATION_TYPE,
+        )
+
+        if locked_slots:
+            raise ValueError("Slot is already booked for this time")
+
+        # Create or get user
+        user_data = {"name": name, "phone_number": phone_number}
+        if email_address:
+            user_data["email"] = email_address
+        user_id = self.user_repo.create_or_update_user(user_data)
+
+        # Generate confirmation number
+        confirmation_number = f"INH-{restaurant_id}-{uuid.uuid4().hex[:8].upper()}"
+
+        # Create reservation directly (slot + reservation in transaction)
+        result = self.reservation_repo.create_reservation_direct(
+            restaurant_id=restaurant_id,
+            date_time=slot_dt,
+            user_id=user_id,
+            confirmation_number=confirmation_number,
+            party_size=party_size,
+            reservation_type=self.RESERVATION_TYPE,
+            special_request=special_request,
+            notes=notes,
+        )
+
+        return {
+            "reservation_id": result["reservation_id"],
+            "slot_id": result["slot_id"],
+            "confirmation_number": confirmation_number,
+            "status": "confirmed",
+            "date_time": slot_dt.isoformat(),
+            "party_size": party_size,
+            "name": name,
+            "phone_number": phone_number,
+            "email_address": email_address,
+            "special_request": special_request,
+            "notes": notes,
+            "message": "Reservation created and confirmed successfully",
+        }
+
+    def update_reservation_notes(self, reservation_id: int, notes: Optional[str]) -> Dict[str, Any]:
+        """
+        Update reservation notes.
+
+        Args:
+            reservation_id: Reservation ID
+            notes: Notes text (can be None to clear notes)
+
+        Returns:
+            Updated reservation response
+        """
+        reservation = self.reservation_repo.get_reservation_by_id(
+            reservation_id=reservation_id, reservation_type=self.RESERVATION_TYPE
+        )
+
+        if not reservation:
+            raise ValueError(f"Reservation with ID {reservation_id} not found")
+
+        if not self.reservation_repo.update_reservation_notes(reservation_id, notes):
+            raise ValueError("Failed to update reservation notes")
+
+        return {
+            "reservation_id": reservation_id,
+            "notes": notes,
+            "message": "Notes updated successfully",
+        }
+
+    def update_reservation(
+        self,
+        reservation_id: int,
+        date_time: Optional[str] = None,
+        party_size: Optional[int] = None,
+        special_request: Optional[str] = None,
+        notes: Optional[str] = None,
+        confirmation_number: Optional[str] = None,
+        status: Optional[str] = None,
+        last_cancel_time: Optional[str] = None,
+        manage_reservation_url: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Update reservation and slot booking details.
+
+        Args:
+            reservation_id: Reservation ID
+            date_time: New reservation date/time in ISO format (updates slot_bookings)
+            party_size: Number of guests (optional)
+            special_request: Guest's special requests (optional)
+            notes: Internal staff notes (optional)
+            confirmation_number: Confirmation number override (optional)
+            status: Reservation status (optional)
+            last_cancel_time: Cancellation deadline in ISO format (optional)
+            manage_reservation_url: Reservation management URL (optional)
+
+        Returns:
+            Updated reservation with all details
+
+        Raises:
+            ValueError: If reservation not found, invalid status, or time slot conflict
+        """
+        reservation = self.reservation_repo.get_reservation_by_id(
+            reservation_id=reservation_id, reservation_type=self.RESERVATION_TYPE
+        )
+
+        if not reservation:
+            raise ValueError(f"Reservation with ID {reservation_id} not found")
+
+        # Validate status if provided
+        valid_statuses = ["pending", "confirmed", "cancelled", "completed", "no_show"]
+        if status is not None and status not in valid_statuses:
+            raise ValueError(f"Invalid status '{status}'. Must be one of: {', '.join(valid_statuses)}")
+
+        # Parse and update date_time (slot timing) if provided
+        if date_time is not None:
+            try:
+                new_date_time = datetime.fromisoformat(date_time.replace("Z", "+00:00"))
+                if new_date_time.tzinfo:
+                    new_date_time = new_date_time.replace(tzinfo=None)
+                # Normalize to minute precision
+                new_date_time = new_date_time.replace(second=0, microsecond=0)
+            except ValueError:
+                raise ValueError(f"Invalid date_time format: {date_time}. Use ISO format.")
+
+            # Get the slot_booking_id from the reservation
+            slot_booking_id = reservation.get("slot_booking_id")
+            if not slot_booking_id:
+                raise ValueError("Reservation has no associated slot booking")
+
+            # Update the slot booking date_time
+            if not self.reservation_repo.update_slot_booking_datetime(slot_booking_id, new_date_time):
+                raise ValueError("Failed to update slot timing")
+
+        # Parse last_cancel_time if provided
+        last_cancel_time_dt = None
+        if last_cancel_time is not None:
+            try:
+                last_cancel_time_dt = datetime.fromisoformat(last_cancel_time.replace("Z", "+00:00"))
+                if last_cancel_time_dt.tzinfo:
+                    last_cancel_time_dt = last_cancel_time_dt.replace(tzinfo=None)
+            except ValueError:
+                raise ValueError(f"Invalid last_cancel_time format: {last_cancel_time}. Use ISO format.")
+
+        # Update reservation fields (if any provided)
+        has_reservation_updates = any(
+            [
+                party_size is not None,
+                special_request is not None,
+                notes is not None,
+                confirmation_number is not None,
+                status is not None,
+                last_cancel_time_dt is not None,
+                manage_reservation_url is not None,
+            ]
+        )
+
+        if has_reservation_updates:
+            if not self.reservation_repo.update_reservation(
+                reservation_id=reservation_id,
+                party_size=party_size,
+                special_request=special_request,
+                notes=notes,
+                confirmation_number=confirmation_number,
+                status=status,
+                last_cancel_time=last_cancel_time_dt,
+                manage_reservation_url=manage_reservation_url,
+            ):
+                raise ValueError("Failed to update reservation fields")
+
+        # Get updated reservation
+        updated_reservation = self.reservation_repo.get_reservation_by_id(
+            reservation_id=reservation_id, reservation_type=self.RESERVATION_TYPE
+        )
+
+        return updated_reservation
+
+    def get_reservation_with_restaurant_check(self, reservation_id: int) -> Dict[str, Any]:
+        """
+        Get reservation by ID with restaurant_id included for authorization checks.
+        The restaurant_id is obtained from the slot_bookings table via INNER JOIN.
+
+        Args:
+            reservation_id: Reservation ID
+
+        Returns:
+            Reservation details including restaurant_id (guaranteed to be an int)
+
+        Raises:
+            ValueError: If reservation not found or has no associated slot_booking
+        """
+        reservation = self.reservation_repo.get_reservation_by_id(
+            reservation_id=reservation_id, reservation_type=self.RESERVATION_TYPE
+        )
+
+        if not reservation:
+            raise ValueError(f"Reservation with ID {reservation_id} not found")
+
+        # Ensure restaurant_id is properly typed as int for authorization checks
+        restaurant_id = reservation.get("restaurant_id")
+        if restaurant_id is not None:
+            reservation["restaurant_id"] = int(restaurant_id)
+
+        return reservation
+
+    def get_reservation_restaurant_id(self, reservation_id: int) -> Optional[int]:
+        """
+        Get just the restaurant_id for a reservation (for authorization checks).
+        More efficient than fetching the full reservation.
+
+        Args:
+            reservation_id: Reservation ID
+
+        Returns:
+            restaurant_id if found, None otherwise
+        """
+        return self.reservation_repo.get_reservation_restaurant_id(reservation_id)
