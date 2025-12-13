@@ -42,9 +42,28 @@ services:
       # Application Settings
       USE_MOCK_DATA: ${USE_MOCK_DATA:-false}
       ALLOW_DB_FAILURE: ${ALLOW_DB_FAILURE:-false}
+      # ============================================================================
+      # ⚠️  SECURITY WARNING: Database Seeding
+      # ============================================================================
+      # WARNING: SEED_DATABASE defaults to 'true' which creates sample admin accounts
+      # with DEFAULT CREDENTIALS (see SAMPLE_ADMIN_* variables below).
+      # These credentials are publicly documented and should NEVER be used in production.
+      # 
+      # For production deployments:
+      #   1. Set SEED_DATABASE=false in your .env file
+      #   2. OR ensure SAMPLE_ADMIN_* credentials are changed to strong, unique values
+      #   3. Change default passwords immediately after first deployment
+      # ============================================================================
       SEED_DATABASE: ${SEED_DATABASE:-true}
       
-      # JWT Configuration (RS256)
+      # ============================================================================
+      # ⚠️  SECURITY WARNING: JWT Configuration (RS256)
+      # ============================================================================
+      # CRITICAL: JWT_PRIVATE_KEY and JWT_PUBLIC_KEY are critical security credentials.
+      # You MUST set these environment variables in your .env file for production.
+      # The application will fail to authenticate users if these are missing or empty.
+      # NEVER commit these keys to version control or expose them in logs.
+      # ============================================================================
       JWT_PRIVATE_KEY: ${JWT_PRIVATE_KEY:-}
       JWT_PUBLIC_KEY: ${JWT_PUBLIC_KEY:-}
       JWT_ACCESS_TOKEN_EXP_SECONDS: ${JWT_ACCESS_TOKEN_EXP_SECONDS:-3600}

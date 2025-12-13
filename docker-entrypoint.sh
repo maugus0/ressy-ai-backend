@@ -1,6 +1,15 @@
 #!/bin/bash
 set -e
 
+# ============================================================================
+# ⚠️  SECURITY WARNINGS FOR PRODUCTION DEPLOYMENTS
+# ============================================================================
+# 1. JWT Keys: Ensure JWT_PRIVATE_KEY and JWT_PUBLIC_KEY are set in .env
+# 2. Database Seeding: Set SEED_DATABASE=false in production to avoid default accounts
+# 3. Database Password: Change default 'rootpassword' in production
+# 4. Sample Admin Credentials: Change SAMPLE_ADMIN_* values if seeding is enabled
+# ============================================================================
+
 echo "=========================================="
 echo "RessyAI Backend - Docker Entrypoint"
 echo "=========================================="
@@ -18,6 +27,7 @@ echo "  Host: ${DB_HOST}"
 echo "  Port: ${DB_PORT}"
 echo "  Database: ${DB_NAME}"
 echo "  User: ${DB_USERNAME}"
+# ⚠️  SECURITY NOTE: Password is intentionally NOT logged to prevent exposure in logs
 
 # Export variables for Python scripts
 export DB_HOST DB_PORT DB_NAME DB_USERNAME DB_PASSWORD
@@ -42,6 +52,8 @@ try:
     conn.close()
     exit(0)
 except Exception as e:
+    # ⚠️  SECURITY NOTE: Error message may contain connection details
+    # In production, consider using a more generic error message
     print(f'MySQL not ready: {e}')
     exit(1)
 " 2>/dev/null; then
@@ -67,10 +79,20 @@ echo "=========================================="
 python3 scripts/run_migrations.py
 
 # Check if seeding is enabled
+# ============================================================================
+# ⚠️  SECURITY WARNING: Database Seeding
+# ============================================================================
+# WARNING: SEED_DATABASE defaults to 'true' which will create sample admin accounts
+# with DEFAULT CREDENTIALS. These credentials are publicly documented and should
+# NEVER be used in production environments.
+#
+# For production: Set SEED_DATABASE=false in your .env file or environment variables.
+# ============================================================================
 if [ "${SEED_DATABASE:-true}" = "true" ]; then
     echo ""
     echo "=========================================="
-    echo "Seeding database with sample data..."
+    echo "⚠️  WARNING: Seeding database with sample data..."
+    echo "⚠️  This creates accounts with DEFAULT CREDENTIALS - NOT FOR PRODUCTION!"
     echo "=========================================="
     
     # Add sample admins (creates roles, permissions, and admin users)
