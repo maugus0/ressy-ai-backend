@@ -149,6 +149,27 @@ class MySQLFAQRepository(MySQLBaseRepository):
         results = self._execute_query(query, (faq_id,))
         return results[0] if results else {}
 
+    def get_by_id_scoped(self, faq_id: int, restaurant_id: int) -> Dict[str, Any]:
+        """
+        Get FAQ by ID limited to a specific restaurant.
+        """
+        query = """
+            SELECT
+                f.id,
+                f.restaurant_id,
+                r.name AS restaurant_name,
+                f.question,
+                f.answer,
+                f.created_at,
+                f.updated_at
+            FROM FAQs f
+            LEFT JOIN Restaurants r ON r.id = f.restaurant_id
+            WHERE f.id = %s AND f.restaurant_id = %s
+            LIMIT 1
+        """
+        results = self._execute_query(query, (faq_id, restaurant_id))
+        return results[0] if results else {}
+
     def create(self, restaurant_id: int, data: Dict[str, Any]) -> Dict[str, Any]:
         query = """
             INSERT INTO FAQs (restaurant_id, question, answer, created_at, updated_at)
@@ -223,8 +244,34 @@ class MySQLFAQRepository(MySQLBaseRepository):
             return {}
         return self.get_by_id(faq_id)
 
+    def update_scoped(self, faq_id: int, restaurant_id: int, data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Update FAQ ensuring it belongs to the restaurant.
+        """
+        fields = []
+        params = []
+        for key in ["question", "answer"]:
+            if key in data:
+                fields.append(f"{key} = %s")
+                params.append(data[key])
+        if not fields:
+            return {}
+        fields.append("updated_at = NOW()")
+        params.extend([faq_id, restaurant_id])
+        query = f"UPDATE FAQs SET {', '.join(fields)} WHERE id = %s AND restaurant_id = %s"
+        affected = self._execute_update(query, tuple(params))
+        if affected == 0:
+            return {}
+        return self.get_by_id_scoped(faq_id, restaurant_id)
+
     def delete(self, faq_id: int) -> int:
         return self._execute_update("DELETE FROM FAQs WHERE id = %s", (faq_id,))
+
+    def delete_scoped(self, faq_id: int, restaurant_id: int) -> int:
+        """
+        Delete FAQ ensuring it belongs to the restaurant.
+        """
+        return self._execute_update("DELETE FROM FAQs WHERE id = %s AND restaurant_id = %s", (faq_id, restaurant_id))
 
     def delete_by_restaurant(self, restaurant_id: int) -> int:
         return self._execute_update("DELETE FROM FAQs WHERE restaurant_id = %s", (restaurant_id,))

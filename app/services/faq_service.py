@@ -112,6 +112,14 @@ class FAQService:
         self._enrich_with_restaurant_name(faq)
         return faq
 
+    def get_faq_for_restaurant(self, restaurant_id: int, faq_id: int) -> Dict[str, Any]:
+        """Get FAQ by ID scoped to a restaurant."""
+        faq = self.faq_repo.get_by_id_scoped(faq_id, restaurant_id)
+        if not faq:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="FAQ not found")
+        self._enrich_with_restaurant_name(faq, {restaurant_id: faq.get("restaurant_name")})
+        return faq
+
     def update_faq(self, faq_id: int, data: Dict[str, Any]) -> Dict[str, Any]:
         """Update an existing FAQ."""
         if not data:
@@ -138,9 +146,44 @@ class FAQService:
         self._enrich_with_restaurant_name(updated)
         return updated
 
+    def update_faq_for_restaurant(self, restaurant_id: int, faq_id: int, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Update FAQ scoped to a restaurant."""
+        if not data:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail="At least one field (question or answer) is required"
+            )
+        current = self.faq_repo.get_by_id_scoped(faq_id, restaurant_id)
+        if not current:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="FAQ not found")
+
+        update_fields: Dict[str, str] = {}
+        if "question" in data:
+            question = self._validate_question_answer(data.get("question"), "question")
+            self._ensure_unique_question(restaurant_id, question, exclude_id=faq_id)
+            update_fields["question"] = question
+        if "answer" in data:
+            update_fields["answer"] = self._validate_question_answer(data.get("answer"), "answer")
+        if not update_fields:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail="At least one field (question or answer) is required"
+            )
+
+        updated = self.faq_repo.update_scoped(faq_id, restaurant_id, update_fields)
+        if not updated:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="FAQ not found")
+        self._enrich_with_restaurant_name(updated, {restaurant_id: current.get("restaurant_name")})
+        return updated
+
     def delete_faq(self, faq_id: int) -> Dict[str, str]:
         """Delete an FAQ."""
         deleted = self.faq_repo.delete(faq_id)
+        if not deleted:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="FAQ not found")
+        return {"message": "FAQ deleted"}
+
+    def delete_faq_for_restaurant(self, restaurant_id: int, faq_id: int) -> Dict[str, str]:
+        """Delete an FAQ scoped to a restaurant."""
+        deleted = self.faq_repo.delete_scoped(faq_id, restaurant_id)
         if not deleted:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="FAQ not found")
         return {"message": "FAQ deleted"}

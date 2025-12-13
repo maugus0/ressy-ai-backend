@@ -605,6 +605,12 @@ All endpoints are organized by tags in the Swagger documentation:
   - `PATCH /api/v1/admin/restaurants/{restaurant_id}/menu/bulk-availability` - Bulk update availability
   - `GET /api/v1/admin/restaurants/{restaurant_id}/menu/categories` - Get menu categories
 
+- **Client CRM (scoped, `/api/v1/client/*`)** – restaurant_id is taken from the authenticated restaurant token (`claims["restaurant_id"]`), and user UUID is `claims["sub"]`:
+  - FAQs: `GET/POST /client/faqs`, `GET/PUT/DELETE /client/faqs/{faq_id}`, `POST /client/faqs/bulk`
+  - Menus: `GET/POST /client/menu`, `GET/PUT/DELETE /client/menu/{menu_id}`, `PATCH /client/menu/{menu_id}/availability`, `PATCH /client/menu/{menu_id}/special`, `PATCH /client/menu/bulk-availability`, `GET /client/menu/categories`
+  - Restaurant self: `GET /client/restaurant`, `PUT /client/restaurant`
+  - Client users (manager role only except self reset): `GET/POST /client/users`, `GET/PUT/DELETE /client/users/{uuid}`, `POST /client/users/{uuid}/reset-password`, `PUT /client/users/{uuid}/role`, `POST /client/users/bulk`, `POST /client/me/reset-password` (self-service)
+
 - **Orders** (`/api/v1/orders/*`):
   - `POST /api/v1/orders/{restaurant_id}` - Create order
   - `GET /api/v1/orders/{restaurant_id}` - List orders

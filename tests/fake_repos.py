@@ -172,6 +172,12 @@ class InMemoryFAQRepository:
     def get_by_id(self, faq_id: int) -> Dict[str, Any]:
         return self._clone(self._faqs.get(faq_id, {}))
 
+    def get_by_id_scoped(self, faq_id: int, restaurant_id: int) -> Dict[str, Any]:
+        faq = self._faqs.get(faq_id)
+        if not faq or faq.get("restaurant_id") != restaurant_id:
+            return {}
+        return self._clone(faq)
+
     def create(self, restaurant_id: int, data: Dict[str, Any]) -> Dict[str, Any]:
         self._counter += 1
         now = self._now()
@@ -217,6 +223,12 @@ class InMemoryFAQRepository:
         faq["updated_at"] = self._now()
         return self._clone(faq)
 
+    def update_scoped(self, faq_id: int, restaurant_id: int, data: Dict[str, Any]) -> Dict[str, Any]:
+        faq = self._faqs.get(faq_id)
+        if not faq or faq.get("restaurant_id") != restaurant_id:
+            return {}
+        return self.update(faq_id, data)
+
     def delete(self, faq_id: int) -> int:
         faq = self._faqs.pop(faq_id, None)
         if not faq:
@@ -227,11 +239,167 @@ class InMemoryFAQRepository:
         ]
         return 1
 
+    def delete_scoped(self, faq_id: int, restaurant_id: int) -> int:
+        faq = self._faqs.get(faq_id)
+        if not faq or faq.get("restaurant_id") != restaurant_id:
+            return 0
+        return self.delete(faq_id)
+
     def delete_by_restaurant(self, restaurant_id: int) -> int:
         faqs = self._by_restaurant.pop(restaurant_id, [])
         for faq in faqs:
             self._faqs.pop(faq["id"], None)
         return len(faqs)
+
+
+class InMemoryMenuRepository:
+    """In-memory menu repository used for client/admin menu tests."""
+
+    def __init__(self, restaurant_repo: InMemoryRestaurantRepository | None = None):
+        self._menus: Dict[int, Dict[str, Any]] = {}
+        self._counter = 0
+        self.restaurant_repo = restaurant_repo
+
+    def _now(self):
+        return datetime.now(timezone.utc)
+
+    def _clone(self, item: Dict[str, Any]) -> Dict[str, Any]:
+        return copy.deepcopy(item)
+
+    def create_menu(self, restaurant_id: int, data: Dict[str, Any]) -> int:
+        self._counter += 1
+        menu_id = self._counter
+        record = {
+            "id": menu_id,
+            "restaurant_id": restaurant_id,
+            "category": data.get("category"),
+            "sub_category": data.get("sub_category"),
+            "item_name": data.get("item_name"),
+            "item_desc": data.get("item_desc"),
+            "price": data.get("price", 0.0),
+            "avg_prep_time": data.get("avg_prep_time"),
+            "suggested_items": list(data.get("suggested_items") or []),
+            "is_available": True if data.get("is_available") is None else data.get("is_available"),
+            "is_special": False if data.get("is_special") is None else data.get("is_special"),
+            "created_at": self._now(),
+            "updated_at": self._now(),
+        }
+        # Enrich with restaurant name for convenience
+        if self.restaurant_repo:
+            restaurant = self.restaurant_repo.get_by_id(restaurant_id)
+            record["restaurant_name"] = restaurant.get("name") if restaurant else None
+        self._menus[menu_id] = record
+        return menu_id
+
+    def get_by_id(self, menu_id: int) -> Optional[Dict[str, Any]]:
+        return self._clone(self._menus.get(menu_id, {}))
+
+    def get_menu_by_id(self, restaurant_id: int, menu_id: int) -> Dict[str, Any]:
+        item = self._menus.get(menu_id)
+        if not item or item.get("restaurant_id") != restaurant_id:
+            return {}
+        return self._clone(item)
+
+    def item_name_exists(self, restaurant_id: int, item_name: str, exclude_menu_id: Optional[int] = None) -> bool:
+        for menu in self._menus.values():
+            if menu.get("restaurant_id") != restaurant_id:
+                continue
+            if exclude_menu_id and menu.get("id") == exclude_menu_id:
+                continue
+            if (menu.get("item_name") or "").strip().lower() == (item_name or "").strip().lower():
+                return True
+        return False
+
+    def validate_suggested_items(self, menu_item_ids: List[int]) -> bool:
+        return all(item_id in self._menus for item_id in menu_item_ids)
+
+    def validate_suggested_items_belong_to_restaurant(self, menu_item_ids: List[int], restaurant_id: int) -> bool:
+        return all(self._menus.get(item_id, {}).get("restaurant_id") == restaurant_id for item_id in menu_item_ids)
+
+    def get_paginated_by_restaurant(
+        self,
+        restaurant_id: int,
+        page: int = 1,
+        limit: int = 50,
+        category: Optional[str] = None,
+        sub_category: Optional[str] = None,
+        is_available: Optional[bool] = None,
+        is_special: Optional[bool] = None,
+        search: Optional[str] = None,
+    ) -> Tuple[List[Dict], int]:
+        items = [self._clone(m) for m in self._menus.values() if m.get("restaurant_id") == restaurant_id]
+        if category is not None:
+            items = [i for i in items if i.get("category") == category]
+        if sub_category is not None:
+            items = [i for i in items if i.get("sub_category") == sub_category]
+        if is_available is not None:
+            items = [i for i in items if i.get("is_available") is is_available]
+        if is_special is not None:
+            items = [i for i in items if i.get("is_special") is is_special]
+        if search:
+            query = search.lower()
+            items = [i for i in items if query in (i.get("item_name") or "").lower()]
+        items.sort(key=lambda i: i["id"])
+        total = len(items)
+        start = (page - 1) * limit
+        end = start + limit
+        return items[start:end], total
+
+    def update_by_id(self, menu_id: int, data: Dict[str, Any]) -> int:
+        item = self._menus.get(menu_id)
+        if not item:
+            return 0
+        for key, value in data.items():
+            item[key] = value
+        item["updated_at"] = self._now()
+        self._menus[menu_id] = item
+        return 1
+
+    def update_menu(self, restaurant_id: int, menu_id: int, data: Dict[str, Any]) -> int:
+        item = self._menus.get(menu_id)
+        if not item or item.get("restaurant_id") != restaurant_id:
+            return 0
+        return self.update_by_id(menu_id, data)
+
+    def delete_by_id(self, menu_id: int) -> int:
+        removed = self._menus.pop(menu_id, None)
+        return 1 if removed else 0
+
+    def delete_menu(self, restaurant_id: int, menu_id: int) -> int:
+        item = self._menus.get(menu_id)
+        if not item or item.get("restaurant_id") != restaurant_id:
+            return 0
+        return self.delete_by_id(menu_id)
+
+    def items_exist(self, menu_item_ids: List[int]) -> bool:
+        return all(item_id in self._menus for item_id in menu_item_ids)
+
+    def verify_items_belong_to_restaurant(self, menu_item_ids: List[int], restaurant_id: int) -> bool:
+        return all(self._menus.get(item_id, {}).get("restaurant_id") == restaurant_id for item_id in menu_item_ids)
+
+    def bulk_update_availability(self, restaurant_id: int, menu_item_ids: List[int], is_available: bool) -> int:
+        updated = 0
+        for item_id in menu_item_ids:
+            item = self._menus.get(item_id)
+            if item and item.get("restaurant_id") == restaurant_id:
+                item["is_available"] = is_available
+                item["updated_at"] = self._now()
+                updated += 1
+        return updated
+
+    def get_menu_categories(self, restaurant_id: int) -> Dict[str, List[str]]:
+        categories: Dict[str, List[str]] = {}
+        for item in self._menus.values():
+            if item.get("restaurant_id") != restaurant_id:
+                continue
+            category = item.get("category")
+            sub = item.get("sub_category")
+            if not category:
+                continue
+            categories.setdefault(category, [])
+            if sub and sub not in categories[category]:
+                categories[category].append(sub)
+        return categories
 
 
 class InMemoryRestaurantAdminRepository:

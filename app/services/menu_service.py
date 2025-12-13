@@ -237,6 +237,18 @@ class MenuService:
         self._enrich_with_restaurant_name(item)
         return item
 
+    def _get_scoped_menu_item_or_404(self, restaurant_id: int, menu_id: int) -> Dict[str, Any]:
+        """Fetch a menu item ensuring it belongs to the restaurant."""
+        item = self.menu_repo.get_menu_by_id(restaurant_id, menu_id)
+        if not item:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Menu item not found")
+        self._enrich_with_restaurant_name(item, {restaurant_id: None})
+        return item
+
+    def get_menu_item_for_restaurant(self, restaurant_id: int, menu_id: int) -> Dict[str, Any]:
+        """Get a menu item scoped to a restaurant."""
+        return self._get_scoped_menu_item_or_404(restaurant_id, menu_id)
+
     def update_menu_item(self, menu_id: int, data: Dict[str, Any]) -> Dict[str, Any]:
         """
         Update a menu item.
@@ -321,6 +333,15 @@ class MenuService:
         self._enrich_with_restaurant_name(updated_item)
         return updated_item
 
+    def update_menu_item_for_restaurant(self, restaurant_id: int, menu_id: int, data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Update a menu item scoped to a restaurant.
+
+        Ensures the item belongs to the restaurant before delegating to the common update logic.
+        """
+        self._get_scoped_menu_item_or_404(restaurant_id, menu_id)
+        return self.update_menu_item(menu_id, data)
+
     def delete_menu_item(self, menu_id: int) -> Dict[str, str]:
         """
         Delete a menu item.
@@ -348,6 +369,11 @@ class MenuService:
             )
 
         return {"message": "Menu item deleted successfully", "menu_id": menu_id}
+
+    def delete_menu_item_for_restaurant(self, restaurant_id: int, menu_id: int) -> Dict[str, str]:
+        """Delete a menu item scoped to a restaurant."""
+        self._get_scoped_menu_item_or_404(restaurant_id, menu_id)
+        return self.delete_menu_item(menu_id)
 
     def toggle_availability(self, menu_id: int, is_available: bool) -> Dict[str, Any]:
         """
@@ -382,6 +408,13 @@ class MenuService:
         self._enrich_with_restaurant_name(updated_item)
         return updated_item
 
+    def toggle_availability_for_restaurant(
+        self, restaurant_id: int, menu_id: int, is_available: bool
+    ) -> Dict[str, Any]:
+        """Toggle availability scoped to a restaurant."""
+        self._get_scoped_menu_item_or_404(restaurant_id, menu_id)
+        return self.toggle_availability(menu_id, is_available)
+
     def toggle_special(self, menu_id: int, is_special: bool) -> Dict[str, Any]:
         """
         Toggle menu item special status.
@@ -414,6 +447,11 @@ class MenuService:
 
         self._enrich_with_restaurant_name(updated_item)
         return updated_item
+
+    def toggle_special_for_restaurant(self, restaurant_id: int, menu_id: int, is_special: bool) -> Dict[str, Any]:
+        """Toggle special status scoped to a restaurant."""
+        self._get_scoped_menu_item_or_404(restaurant_id, menu_id)
+        return self.toggle_special(menu_id, is_special)
 
     def bulk_update_availability(
         self, restaurant_id: int, menu_item_ids: List[int], is_available: bool
