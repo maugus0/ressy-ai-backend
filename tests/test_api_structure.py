@@ -29,7 +29,23 @@ def test_main_imports():
 def test_api_routes_import():
     """Test that API routes can be imported."""
     try:
-        from app.api import admin_users, auth, calls, client_users, menus, restaurants, users
+        from app.api import (
+            admin_users,
+            auth,
+            calls,
+            client_users,
+            dashboard_reservations,
+            faqs,
+            menus,
+            opentable,
+            order_history,
+            orders,
+            reservations,
+            restaurants,
+            transcripts,
+            users,
+            websocket,
+        )
 
         assert auth is not None
         assert calls is not None
@@ -38,6 +54,14 @@ def test_api_routes_import():
         assert restaurants is not None
         assert admin_users is not None
         assert client_users is not None
+        assert faqs is not None
+        assert opentable is not None
+        assert order_history is not None
+        assert orders is not None
+        assert reservations is not None
+        assert transcripts is not None
+        assert dashboard_reservations is not None
+        assert websocket is not None
     except Exception as e:
         # If import fails due to DB connection, that's okay for structure tests
         pytest.skip(f"Could not import API routes due to: {e}")

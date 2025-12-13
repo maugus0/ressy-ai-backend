@@ -4,6 +4,7 @@ from fastapi import APIRouter, Body, Depends, Query, status
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.middleware.auth_middleware import get_current_admin_user
+from app.models.common_models import PaginationResponse
 from app.models.user_models import (
     BaseBulkCreateRequest,
     BasePasswordResetRequest,
@@ -37,14 +38,6 @@ class RessyBulkCreateRequest(BaseBulkCreateRequest):
 
 def get_ressy_admin_service() -> RessyAdministratorService:
     return RessyAdministratorService()
-
-
-class PaginationResponse(BaseModel):
-    page: int = Field(..., description="Current page number (1-based)")
-    limit: int = Field(..., description="Items per page")
-    total: int = Field(..., description="Total items available")
-    pages: int = Field(..., description="Total number of pages")
-    model_config = ConfigDict(extra="ignore")
 
 
 class AdminUserResponse(BaseModel):

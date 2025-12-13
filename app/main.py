@@ -107,7 +107,10 @@ app.include_router(auth.router, prefix="/api/v1/auth", tags=["Authentication"])
 app.include_router(calls.router, prefix="/api/v1/calls", tags=["Calls"])
 app.include_router(users.router, prefix="/api/v1/users", tags=["Users"])
 app.include_router(menus.router)
-app.include_router(restaurants.router)
+app.include_router(
+    restaurants.router
+    # Note: restaurants router declares its own prefix/tags to keep Admin CRM docs localized.
+)
 app.include_router(orders.router, prefix="/api/v1/orders", tags=["Orders"])
 app.include_router(order_history.router, prefix="/api/v1/order-history", tags=["Order History"])
 app.include_router(transcripts.router, prefix="/api/v1/transcripts", tags=["Transcripts"])

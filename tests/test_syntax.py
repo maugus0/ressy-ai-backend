@@ -21,11 +21,20 @@ def test_api_files_syntax():
     api_dir = os.path.join(os.path.dirname(__file__), "..", "app", "api")
     api_files = [
         "auth.py",
-        "calls.py",
-        "users.py",
-        "restaurants.py",
         "admin_users.py",
+        "calls.py",
         "client_users.py",
+        "dashboard_reservations.py",
+        "faqs.py",
+        "menus.py",
+        "opentable.py",
+        "order_history.py",
+        "orders.py",
+        "reservations.py",
+        "restaurants.py",
+        "transcripts.py",
+        "users.py",
+        "websocket.py",
     ]
 
     for api_file in api_files:

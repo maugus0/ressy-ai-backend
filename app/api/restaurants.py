@@ -5,6 +5,7 @@ from fastapi import APIRouter, Body, Depends, Query, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.middleware.auth_middleware import get_current_admin_user
+from app.models.common_models import PaginationResponse
 from app.services.restaurant_service import RestaurantService
 from app.utils.payload_validator import validate_payload
 
@@ -83,16 +84,6 @@ class UpdateRestaurantRequest(BaseModel):
         if isinstance(value, str):
             return _strip_or_none(value)
         return value
-
-
-class PaginationResponse(BaseModel):
-    """Pagination metadata for list endpoints."""
-
-    page: int
-    limit: int
-    total: int
-    pages: int
-    model_config = ConfigDict(extra="ignore")
 
 
 class RestaurantResponse(BaseModel):
@@ -201,7 +192,8 @@ async def create_restaurant(
     - Missing minute fields default to 0; credit card requirement defaults to `false`
     """
     data = validate_payload(CreateRestaurantRequest, payload)
-    return restaurant_service.create_restaurant(data.model_dump(exclude_none=True))
+    # Use exclude_unset to allow explicit nulls to flow through for clearing values
+    return restaurant_service.create_restaurant(data.model_dump(exclude_unset=True))
 
 
 @router.get(

@@ -91,8 +91,8 @@ class RestaurantService:
             "twilio_details": data.get("twilio_details"),
             "deepgram_details": data.get("deepgram_details"),
             "open_table_details": data.get("open_table_details"),
-            "forward_minutes": data.get("forward_minutes", 0) or 0,
-            "backward_minutes": data.get("backward_minutes", 0) or 0,
+            "forward_minutes": data.get("forward_minutes", 0),
+            "backward_minutes": data.get("backward_minutes", 0),
             "is_credit_card_required_for_reservation": data.get("is_credit_card_required_for_reservation", False),
         }
 

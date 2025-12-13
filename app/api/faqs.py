@@ -4,6 +4,7 @@ from fastapi import APIRouter, Body, Depends, Query, status
 from pydantic import BaseModel, ConfigDict, ValidationInfo, field_validator, model_validator
 
 from app.middleware.auth_middleware import get_current_admin_user
+from app.models.common_models import PaginationResponse
 from app.services.faq_service import FAQService
 from app.utils.payload_validator import validate_payload
 
@@ -77,14 +78,6 @@ class FAQResponse(BaseModel):
     answer: str
     created_at: datetime | None = None
     updated_at: datetime | None = None
-    model_config = ConfigDict(extra="ignore")
-
-
-class PaginationResponse(BaseModel):
-    page: int
-    limit: int
-    total: int
-    pages: int
     model_config = ConfigDict(extra="ignore")
 
 
