@@ -13,41 +13,6 @@ from app.repositories.mysql_base import MySQLBaseRepository
 class MySQLReservationRepository(MySQLBaseRepository):
     """Repository for in-house reservation data access in MySQL."""
 
-    def _execute_transaction(self, operations: List[tuple]) -> List[Any]:
-        """
-        Execute multiple operations in a single transaction.
-
-        Args:
-            operations: List of (query, params) tuples
-
-        Returns:
-            List of results (lastrowid for INSERT, rowcount for UPDATE/DELETE)
-        """
-        self._ensure_connected()
-        cursor = None
-        results = []
-        try:
-            cursor = self.connection.cursor()
-            for query, params in operations:
-                cursor.execute(query, params)
-                # Determine result type based on query
-                if query.strip().upper().startswith("INSERT"):
-                    results.append(cursor.lastrowid)
-                else:
-                    results.append(cursor.rowcount)
-            self.connection.commit()
-            return results
-        except Error as e:
-            self.connection.rollback()
-            print(f"Error executing transaction: {e}")
-            raise
-        finally:
-            if cursor:
-                try:
-                    cursor.close()
-                except Exception:
-                    pass
-
     # Table Availability Requests
     def create_availability_request(
         self, restaurant_id: int, start_date_time: datetime, party_size: int, reservation_type: str = "in-house"
@@ -334,13 +299,6 @@ class MySQLReservationRepository(MySQLBaseRepository):
         import uuid
 
         reservation_token = str(uuid.uuid4())
-
-        # Create reservation query
-        reservation_query = """
-            INSERT INTO Reservations
-            (reservation_type, slot_booking_id, user_id, confirmation_number, status, special_request, party_size, notes)
-            VALUES (%s, LAST_INSERT_ID(), %s, %s, %s, %s, %s, %s)
-        """
 
         self._ensure_connected()
         cursor = None
@@ -638,36 +596,35 @@ class MySQLReservationRepository(MySQLBaseRepository):
         Returns:
             True if at least one row was updated, False otherwise
         """
+        # Whitelist of allowed field names to prevent SQL injection
+        allowed_fields = {
+            "party_size",
+            "special_request",
+            "notes",
+            "confirmation_number",
+            "status",
+            "last_cancel_time",
+            "manage_reservation_url",
+        }
+
+        # Build update fields from provided parameters
+        update_mapping = {
+            "party_size": party_size,
+            "special_request": special_request,
+            "notes": notes,
+            "confirmation_number": confirmation_number,
+            "status": status,
+            "last_cancel_time": last_cancel_time,
+            "manage_reservation_url": manage_reservation_url,
+        }
+
         fields = []
         params = []
 
-        if party_size is not None:
-            fields.append("party_size = %s")
-            params.append(party_size)
-
-        if special_request is not None:
-            fields.append("special_request = %s")
-            params.append(special_request)
-
-        if notes is not None:
-            fields.append("notes = %s")
-            params.append(notes)
-
-        if confirmation_number is not None:
-            fields.append("confirmation_number = %s")
-            params.append(confirmation_number)
-
-        if status is not None:
-            fields.append("status = %s")
-            params.append(status)
-
-        if last_cancel_time is not None:
-            fields.append("last_cancel_time = %s")
-            params.append(last_cancel_time)
-
-        if manage_reservation_url is not None:
-            fields.append("manage_reservation_url = %s")
-            params.append(manage_reservation_url)
+        for field_name, value in update_mapping.items():
+            if value is not None and field_name in allowed_fields:
+                fields.append(f"{field_name} = %s")
+                params.append(value)
 
         if not fields:
             return False
@@ -675,6 +632,7 @@ class MySQLReservationRepository(MySQLBaseRepository):
         fields.append("updated_at = NOW()")
         params.append(reservation_id)
 
-        query = f"UPDATE Reservations SET {', '.join(fields)} WHERE id = %s"
+        # Safe query construction - field names are from whitelist only
+        query = "UPDATE Reservations SET " + ", ".join(fields) + " WHERE id = %s"
         affected = self._execute_update(query, tuple(params))
         return affected > 0

@@ -31,7 +31,7 @@ app = FastAPI(
     title="RessyAI Backend",
     version="1.0.0",
     description="""
-FastAPI backend for a multitenant, function-calling voice agent. 
+FastAPI backend for a multitenant, function-calling voice agent.
 Manages restaurants, menus, orders, reservations, calls, and user authentication.
 
 ## Authentication

@@ -12,7 +12,6 @@ from pydantic import BaseModel, Field
 from app.middleware.auth_middleware import require_role
 from app.services.reservation_service import ReservationService
 
-# Security scheme for Swagger UI - must match the scheme name in main.py custom_openapi()
 security = HTTPBearer(
     scheme_name="BearerAuth",  # Match the security scheme name defined in main.py
     description="Enter your JWT access token obtained from login endpoints",
@@ -35,9 +34,7 @@ class CreateReservationDirectRequest(BaseModel):
         description="Reservation date and time in ISO format",
         json_schema_extra={"example": "2025-12-20T19:00:00"},
     )
-    party_size: int = Field(
-        ..., gt=0, le=20, description="Number of guests", json_schema_extra={"example": 4}
-    )
+    party_size: int = Field(..., gt=0, le=20, description="Number of guests", json_schema_extra={"example": 4})
     name: str = Field(
         ..., min_length=1, max_length=200, description="Guest name", json_schema_extra={"example": "John Smith"}
     )
@@ -45,13 +42,22 @@ class CreateReservationDirectRequest(BaseModel):
         ..., min_length=1, max_length=20, description="Guest phone number", json_schema_extra={"example": "+1234567890"}
     )
     email_address: Optional[str] = Field(
-        None, max_length=255, description="Guest email address (optional)", json_schema_extra={"example": "john@example.com"}
+        None,
+        max_length=255,
+        description="Guest email address (optional)",
+        json_schema_extra={"example": "john@example.com"},
     )
     special_request: Optional[str] = Field(
-        None, max_length=500, description="Special requests from the guest", json_schema_extra={"example": "Window seat preferred"}
+        None,
+        max_length=500,
+        description="Special requests from the guest",
+        json_schema_extra={"example": "Window seat preferred"},
     )
     notes: Optional[str] = Field(
-        None, max_length=1000, description="Internal notes for staff", json_schema_extra={"example": "VIP customer, birthday celebration"}
+        None,
+        max_length=1000,
+        description="Internal notes for staff",
+        json_schema_extra={"example": "VIP customer, birthday celebration"},
     )
 
 
@@ -81,13 +87,22 @@ class UpdateReservationRequest(BaseModel):
         None, gt=0, le=20, description="Number of guests", json_schema_extra={"example": 6}
     )
     special_request: Optional[str] = Field(
-        None, max_length=500, description="Special requests from the guest", json_schema_extra={"example": "Allergic to nuts"}
+        None,
+        max_length=500,
+        description="Special requests from the guest",
+        json_schema_extra={"example": "Allergic to nuts"},
     )
     notes: Optional[str] = Field(
-        None, max_length=1000, description="Internal notes for staff", json_schema_extra={"example": "VIP customer, birthday celebration"}
+        None,
+        max_length=1000,
+        description="Internal notes for staff",
+        json_schema_extra={"example": "VIP customer, birthday celebration"},
     )
     confirmation_number: Optional[str] = Field(
-        None, max_length=100, description="Confirmation number (override)", json_schema_extra={"example": "INH-1-CUSTOM123"}
+        None,
+        max_length=100,
+        description="Confirmation number (override)",
+        json_schema_extra={"example": "INH-1-CUSTOM123"},
     )
     status: Optional[str] = Field(
         None,
@@ -100,7 +115,10 @@ class UpdateReservationRequest(BaseModel):
         json_schema_extra={"example": "2025-12-20T17:00:00"},
     )
     manage_reservation_url: Optional[str] = Field(
-        None, max_length=500, description="URL for managing reservation", json_schema_extra={"example": "https://example.com/manage/abc123"}
+        None,
+        max_length=500,
+        description="URL for managing reservation",
+        json_schema_extra={"example": "https://example.com/manage/abc123"},
     )
 
 
@@ -130,32 +148,18 @@ def _check_restaurant_access(current_user: dict, restaurant_id: int):
     if user_type == "restaurant":
         user_restaurant_id = current_user.get("restaurant_id")
 
-        # Ensure both values are compared as integers to avoid type mismatch
-        try:
-            user_rest_id_int = int(user_restaurant_id) if user_restaurant_id is not None else None
-            target_rest_id_int = int(restaurant_id) if restaurant_id is not None else None
-        except (ValueError, TypeError):
-            raise HTTPException(
-                status_code=403,
-                detail="Invalid restaurant ID format",
-            )
-
-        if user_rest_id_int is None:
+        # Check if user has a restaurant assigned
+        if user_restaurant_id is None:
             raise HTTPException(
                 status_code=403,
                 detail="Your account is not associated with any restaurant",
             )
 
-        if target_rest_id_int is None:
-            raise HTTPException(
-                status_code=500,
-                detail="Target restaurant ID is invalid",
-            )
-
-        if user_rest_id_int != target_rest_id_int:
+        # Compare as integers to handle string/int type differences from JWT
+        if int(user_restaurant_id) != int(restaurant_id):
             raise HTTPException(
                 status_code=403,
-                detail=f"You can only access reservations for your own restaurant (ID: {user_rest_id_int})",
+                detail=f"You can only access reservations for your own restaurant (ID: {user_restaurant_id})",
             )
         return
 

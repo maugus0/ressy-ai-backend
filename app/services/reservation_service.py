@@ -679,15 +679,17 @@ class ReservationService:
                 raise ValueError(f"Invalid last_cancel_time format: {last_cancel_time}. Use ISO format.")
 
         # Update reservation fields (if any provided)
-        has_reservation_updates = any([
-            party_size is not None,
-            special_request is not None,
-            notes is not None,
-            confirmation_number is not None,
-            status is not None,
-            last_cancel_time_dt is not None,
-            manage_reservation_url is not None,
-        ])
+        has_reservation_updates = any(
+            [
+                party_size is not None,
+                special_request is not None,
+                notes is not None,
+                confirmation_number is not None,
+                status is not None,
+                last_cancel_time_dt is not None,
+                manage_reservation_url is not None,
+            ]
+        )
 
         if has_reservation_updates:
             if not self.reservation_repo.update_reservation(
