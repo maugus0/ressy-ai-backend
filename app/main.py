@@ -5,6 +5,7 @@ from xml.sax.saxutils import escape
 
 from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.openapi.utils import get_openapi
 from starlette.requests import Request
 from starlette.responses import Response
 
@@ -29,7 +30,33 @@ from app.api.websocket import twilio_websocket_handler
 app = FastAPI(
     title="RessyAI Backend",
     version="1.0.0",
-    description="FastAPI backend for a multitenant, function-calling voice agent. Manages restaurants, menus, orders, reservations, calls, and user authentication.",
+    description="""
+FastAPI backend for a multitenant, function-calling voice agent. 
+Manages restaurants, menus, orders, reservations, calls, and user authentication.
+
+## Authentication
+
+This API uses **Bearer Token** authentication (JWT). To authenticate:
+
+1. **Login** using one of the login endpoints:
+   - `/api/v1/auth/admin/login` - For Ressy platform admins
+   - `/api/v1/auth/client/login` - For restaurant managers/staff
+
+2. **Copy the `access_token`** from the login response
+
+3. **Click "Authorize" button** (top right) and enter: `Bearer <your_access_token>`
+
+4. All subsequent requests will include the authentication header
+
+### Token Refresh
+Access tokens expire. Use `/api/v1/auth/refresh` with your `refresh_token` to get new tokens.
+""",
+    swagger_ui_parameters={
+        "persistAuthorization": True,  # Keep auth token across page refreshes
+        "displayRequestDuration": True,  # Show request duration
+        "filter": True,  # Enable filtering by tag
+        "docExpansion": "none",  # Collapse all by default
+    },
     openapi_tags=[
         {
             "name": "Authentication",
@@ -77,7 +104,7 @@ app = FastAPI(
         },
         {
             "name": "Dashboard Reservations",
-            "description": "Dashboard-specific reservation management. Finalize, view, and manage reservations from the admin dashboard.",
+            "description": "Dashboard-specific reservation management with RBAC. Create, finalize, view, update notes, and manage reservations. Admins can access all restaurants; restaurant managers can only access their own restaurant's reservations.",
         },
         {
             "name": "Admin Users",
@@ -219,6 +246,40 @@ async def root():
 @app.get("/health")
 async def health_check():
     return {"status": "healthy", "timestamp": asyncio.get_event_loop().time()}
+
+
+def custom_openapi():
+    """Custom OpenAPI schema with Bearer token security scheme."""
+    if app.openapi_schema:
+        return app.openapi_schema
+
+    openapi_schema = get_openapi(
+        title=app.title,
+        version=app.version,
+        description=app.description,
+        routes=app.routes,
+        tags=app.openapi_tags,
+    )
+
+    # Ensure components exists
+    if "components" not in openapi_schema:
+        openapi_schema["components"] = {}
+
+    # Merge security schemes (keep existing ones from routers, add/update BearerAuth)
+    existing_schemes = openapi_schema["components"].get("securitySchemes", {})
+    existing_schemes["BearerAuth"] = {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "description": "Enter your JWT access token obtained from login endpoints. Just paste the token without 'Bearer ' prefix.",
+    }
+    openapi_schema["components"]["securitySchemes"] = existing_schemes
+
+    app.openapi_schema = openapi_schema
+    return app.openapi_schema
+
+
+app.openapi = custom_openapi
 
 
 if __name__ == "__main__":

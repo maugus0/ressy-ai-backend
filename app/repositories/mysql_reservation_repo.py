@@ -3,13 +3,50 @@ MySQL Reservation Repository for in-house reservation operations.
 """
 
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
+
+from mysql.connector import Error
 
 from app.repositories.mysql_base import MySQLBaseRepository
 
 
 class MySQLReservationRepository(MySQLBaseRepository):
     """Repository for in-house reservation data access in MySQL."""
+
+    def _execute_transaction(self, operations: List[tuple]) -> List[Any]:
+        """
+        Execute multiple operations in a single transaction.
+
+        Args:
+            operations: List of (query, params) tuples
+
+        Returns:
+            List of results (lastrowid for INSERT, rowcount for UPDATE/DELETE)
+        """
+        self._ensure_connected()
+        cursor = None
+        results = []
+        try:
+            cursor = self.connection.cursor()
+            for query, params in operations:
+                cursor.execute(query, params)
+                # Determine result type based on query
+                if query.strip().upper().startswith("INSERT"):
+                    results.append(cursor.lastrowid)
+                else:
+                    results.append(cursor.rowcount)
+            self.connection.commit()
+            return results
+        except Error as e:
+            self.connection.rollback()
+            print(f"Error executing transaction: {e}")
+            raise
+        finally:
+            if cursor:
+                try:
+                    cursor.close()
+                except Exception:
+                    pass
 
     # Table Availability Requests
     def create_availability_request(
@@ -200,6 +237,26 @@ class MySQLReservationRepository(MySQLBaseRepository):
         affected = self._execute_update(query, (status, slot_id))
         return affected > 0
 
+    def update_slot_booking_datetime(self, slot_id: int, date_time: datetime) -> bool:
+        """
+        Update slot booking date_time (reservation timing).
+
+        Args:
+            slot_id: Slot booking ID
+            date_time: New date and time for the reservation
+
+        Returns:
+            True if updated successfully, False otherwise
+        """
+        query = """
+            UPDATE Slot_Bookings
+            SET date_time = %s,
+                updated_at = NOW()
+            WHERE id = %s
+        """
+        affected = self._execute_update(query, (date_time, slot_id))
+        return affected > 0
+
     def expire_slots(self) -> int:
         """Expire slots that have passed their expiration time."""
         query = """
@@ -224,13 +281,14 @@ class MySQLReservationRepository(MySQLBaseRepository):
         manage_reservation_url: Optional[str] = None,
         special_request: Optional[str] = None,
         party_size: Optional[int] = None,
+        notes: Optional[str] = None,
     ) -> int:
         """Create a reservation."""
         query = """
             INSERT INTO Reservations
             (reservation_type, table_availability_request_id, slot_booking_id, user_id,
-             confirmation_number, status, last_cancel_time, manage_reservation_url, special_request, party_size)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+             confirmation_number, status, last_cancel_time, manage_reservation_url, special_request, party_size, notes)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """
         return self._execute_insert(
             query,
@@ -245,11 +303,123 @@ class MySQLReservationRepository(MySQLBaseRepository):
                 manage_reservation_url,
                 special_request,
                 party_size,
+                notes,
             ),
         )
 
+    def create_reservation_direct(
+        self,
+        restaurant_id: int,
+        date_time: datetime,
+        user_id: int,
+        confirmation_number: str,
+        party_size: int,
+        reservation_type: str = "in-house",
+        special_request: Optional[str] = None,
+        notes: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Create a reservation directly in a single transaction (for dashboard).
+        Creates slot booking and confirmed reservation atomically.
+
+        Returns:
+            Dict with reservation_id and slot_id
+        """
+        # Create slot booking query
+        slot_query = """
+            INSERT INTO Slot_Bookings
+            (restaurant_id, reservation_type, date_time, expires_at, status, reservation_token, party_size)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+        """
+        import uuid
+
+        reservation_token = str(uuid.uuid4())
+
+        # Create reservation query
+        reservation_query = """
+            INSERT INTO Reservations
+            (reservation_type, slot_booking_id, user_id, confirmation_number, status, special_request, party_size, notes)
+            VALUES (%s, LAST_INSERT_ID(), %s, %s, %s, %s, %s, %s)
+        """
+
+        self._ensure_connected()
+        cursor = None
+        try:
+            cursor = self.connection.cursor()
+
+            # Insert slot booking
+            cursor.execute(
+                slot_query,
+                (
+                    restaurant_id,
+                    reservation_type,
+                    date_time,
+                    date_time,  # expires_at same as date_time for direct bookings
+                    "reserved",
+                    reservation_token,
+                    party_size,
+                ),
+            )
+            slot_id = cursor.lastrowid
+
+            # Insert reservation with slot_id
+            cursor.execute(
+                """
+                INSERT INTO Reservations
+                (reservation_type, slot_booking_id, user_id, confirmation_number, status, special_request, party_size, notes)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    reservation_type,
+                    slot_id,
+                    user_id,
+                    confirmation_number,
+                    "confirmed",
+                    special_request,
+                    party_size,
+                    notes,
+                ),
+            )
+            reservation_id = cursor.lastrowid
+
+            self.connection.commit()
+            return {"reservation_id": reservation_id, "slot_id": slot_id}
+        except Error as e:
+            self.connection.rollback()
+            print(f"Error creating direct reservation: {e}")
+            raise
+        finally:
+            if cursor:
+                try:
+                    cursor.close()
+                except Exception:
+                    pass
+
+    def get_reservation_restaurant_id(self, reservation_id: int) -> Optional[int]:
+        """
+        Get the restaurant_id for a reservation by joining with slot_bookings.
+        This is used for authorization checks.
+
+        Args:
+            reservation_id: Reservation ID
+
+        Returns:
+            restaurant_id if found, None otherwise
+        """
+        query = """
+            SELECT sb.restaurant_id
+            FROM Reservations r
+            INNER JOIN Slot_Bookings sb ON r.slot_booking_id = sb.id
+            WHERE r.id = %s
+            LIMIT 1
+        """
+        results = self._execute_query(query, (reservation_id,))
+        if results and results[0].get("restaurant_id") is not None:
+            return int(results[0]["restaurant_id"])
+        return None
+
     def get_reservation_by_id(self, reservation_id: int, reservation_type: Optional[str] = None) -> Optional[Dict]:
-        """Get a reservation by ID."""
+        """Get a reservation by ID with full details including restaurant_id from slot_bookings."""
         query = """
             SELECT
                 r.id,
@@ -261,14 +431,18 @@ class MySQLReservationRepository(MySQLBaseRepository):
                 r.last_cancel_time,
                 r.manage_reservation_url,
                 r.status,
+                r.special_request,
+                r.party_size,
+                r.notes,
                 r.created_at,
                 r.updated_at,
                 sb.date_time,
+                sb.restaurant_id,
                 u.name,
                 u.email,
                 u.phone_number
             FROM Reservations r
-            LEFT JOIN Slot_Bookings sb ON r.slot_booking_id = sb.id
+            INNER JOIN Slot_Bookings sb ON r.slot_booking_id = sb.id
             LEFT JOIN Users u ON r.user_id = u.id
             WHERE r.id = %s
         """
@@ -298,9 +472,13 @@ class MySQLReservationRepository(MySQLBaseRepository):
                 r.last_cancel_time,
                 r.manage_reservation_url,
                 r.status,
+                r.special_request,
+                r.party_size,
+                r.notes,
                 r.created_at,
                 r.updated_at,
                 sb.date_time,
+                sb.restaurant_id,
                 u.name,
                 u.email,
                 u.phone_number
@@ -341,9 +519,13 @@ class MySQLReservationRepository(MySQLBaseRepository):
                 r.last_cancel_time,
                 r.manage_reservation_url,
                 r.status,
+                r.special_request,
+                r.party_size,
+                r.notes,
                 r.created_at,
                 r.updated_at,
                 sb.date_time,
+                sb.restaurant_id,
                 u.name,
                 u.email,
                 u.phone_number
@@ -416,4 +598,83 @@ class MySQLReservationRepository(MySQLBaseRepository):
             WHERE id = %s AND status IN ('pending', 'confirmed')
         """
         affected = self._execute_update(query, (reservation_id,))
+        return affected > 0
+
+    def update_reservation_notes(self, reservation_id: int, notes: Optional[str]) -> bool:
+        """Update reservation notes."""
+        query = """
+            UPDATE Reservations
+            SET notes = %s,
+                updated_at = NOW()
+            WHERE id = %s
+        """
+        affected = self._execute_update(query, (notes, reservation_id))
+        return affected > 0
+
+    def update_reservation(
+        self,
+        reservation_id: int,
+        party_size: Optional[int] = None,
+        special_request: Optional[str] = None,
+        notes: Optional[str] = None,
+        confirmation_number: Optional[str] = None,
+        status: Optional[str] = None,
+        last_cancel_time: Optional[datetime] = None,
+        manage_reservation_url: Optional[str] = None,
+    ) -> bool:
+        """
+        Update reservation fields from the reservations table.
+
+        Args:
+            reservation_id: Reservation ID
+            party_size: Number of guests
+            special_request: Guest's special requests
+            notes: Internal staff notes
+            confirmation_number: Confirmation number
+            status: Reservation status
+            last_cancel_time: Cancellation deadline
+            manage_reservation_url: Reservation management URL
+
+        Returns:
+            True if at least one row was updated, False otherwise
+        """
+        fields = []
+        params = []
+
+        if party_size is not None:
+            fields.append("party_size = %s")
+            params.append(party_size)
+
+        if special_request is not None:
+            fields.append("special_request = %s")
+            params.append(special_request)
+
+        if notes is not None:
+            fields.append("notes = %s")
+            params.append(notes)
+
+        if confirmation_number is not None:
+            fields.append("confirmation_number = %s")
+            params.append(confirmation_number)
+
+        if status is not None:
+            fields.append("status = %s")
+            params.append(status)
+
+        if last_cancel_time is not None:
+            fields.append("last_cancel_time = %s")
+            params.append(last_cancel_time)
+
+        if manage_reservation_url is not None:
+            fields.append("manage_reservation_url = %s")
+            params.append(manage_reservation_url)
+
+        if not fields:
+            return False
+
+        fields.append("updated_at = NOW()")
+        params.append(reservation_id)
+
+        query = f"UPDATE Reservations SET {', '.join(fields)} WHERE id = %s"
+        affected = self._execute_update(query, tuple(params))
         return affected > 0
