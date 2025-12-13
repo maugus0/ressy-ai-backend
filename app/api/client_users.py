@@ -1,6 +1,10 @@
+from datetime import datetime
+
 from fastapi import APIRouter, Body, Depends, Query, status
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.middleware.auth_middleware import get_current_admin_user
+from app.models.common_models import PaginationResponse
 from app.models.user_models import (
     BaseBulkCreateRequest,
     BasePasswordResetRequest,
@@ -34,6 +38,27 @@ class ClientBulkCreateRequest(BaseBulkCreateRequest):
 
 def get_restaurant_admin_service() -> RestaurantAdministratorService:
     return RestaurantAdministratorService()
+
+
+class ClientUserResponse(BaseModel):
+    uuid: str
+    restaurant_id: int
+    restaurant_name: str | None = None
+    email: str
+    role_id: int | None = None
+    role: str | None = None
+    permissions: list[str] = Field(default_factory=list)
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+    last_login: datetime | None = None
+    last_active: datetime | None = None
+    model_config = ConfigDict(extra="ignore")
+
+
+class ClientUserListResponse(BaseModel):
+    items: list[ClientUserResponse]
+    pagination: PaginationResponse
+    model_config = ConfigDict(extra="ignore")
 
 
 router = APIRouter(
@@ -88,6 +113,37 @@ async def create_client_user(
     "/restaurants/{restaurant_id}/client-users",
     summary="List client users for restaurant",
     description="Get paginated client users with role details and last login. Admin access only.",
+    response_model=ClientUserListResponse,
+    response_description="Paginated client users with role/permission info.",
+    openapi_extra={
+        "responses": {
+            200: {
+                "description": "Client users list",
+                "content": {
+                    "application/json": {
+                        "example": {
+                            "items": [
+                                {
+                                    "uuid": "a1b2c3d4-1111-2222-3333-444455556666",
+                                    "restaurant_id": 1,
+                                    "restaurant_name": "Ressy Test Kitchen",
+                                    "email": "manager@example.com",
+                                    "role_id": 2,
+                                    "role": "manager",
+                                    "permissions": ["/orders", "/menus"],
+                                    "last_login": "2024-02-01T10:00:00Z",
+                                    "last_active": "2024-02-01T10:02:00Z",
+                                    "created_at": "2024-01-15T08:00:00Z",
+                                    "updated_at": "2024-01-16T08:00:00Z",
+                                }
+                            ],
+                            "pagination": {"page": 1, "limit": 20, "total": 1, "pages": 1},
+                        }
+                    }
+                },
+            }
+        }
+    },
 )
 async def list_client_users_for_restaurant(
     restaurant_id: int,
@@ -115,6 +171,32 @@ async def list_client_users_for_restaurant(
     "/restaurants/{restaurant_id}/client-users/{uuid}",
     summary="Get client user by UUID",
     description="Fetch a client user including restaurant, role, permissions, and activity timestamps.",
+    response_model=ClientUserResponse,
+    response_description="Client user with restaurant and permissions data.",
+    openapi_extra={
+        "responses": {
+            200: {
+                "description": "Client user record",
+                "content": {
+                    "application/json": {
+                        "example": {
+                            "uuid": "a1b2c3d4-1111-2222-3333-444455556666",
+                            "restaurant_id": 1,
+                            "restaurant_name": "Ressy Test Kitchen",
+                            "email": "manager@example.com",
+                            "role_id": 2,
+                            "role": "manager",
+                            "permissions": ["/orders", "/menus"],
+                            "last_login": "2024-02-01T10:00:00Z",
+                            "last_active": "2024-02-01T10:02:00Z",
+                            "created_at": "2024-01-15T08:00:00Z",
+                            "updated_at": "2024-01-16T08:00:00Z",
+                        }
+                    }
+                },
+            }
+        }
+    },
 )
 async def get_client_user(
     restaurant_id: int,
@@ -206,6 +288,17 @@ async def delete_client_user(
     "/restaurants/{restaurant_id}/client-users/{uuid}/reset-password",
     summary="Reset client user password",
     description="Reset password, hash with bcrypt, revoke sessions, and apply rate limiting.",
+    openapi_extra={
+        "requestBody": {
+            "required": True,
+            "content": {
+                "application/json": {
+                    "schema": ClientPasswordResetRequest.model_json_schema(),
+                    "example": {"new_password": "NewStrongPass1"},
+                }
+            },
+        }
+    },
 )
 async def reset_client_user_password(
     restaurant_id: int,
@@ -237,6 +330,17 @@ async def reset_client_user_password(
     "/restaurants/{restaurant_id}/client-users/{uuid}/role",
     summary="Update client user role",
     description="Update the role_id for a client user and return the updated record.",
+    openapi_extra={
+        "requestBody": {
+            "required": True,
+            "content": {
+                "application/json": {
+                    "schema": ClientRoleUpdateRequest.model_json_schema(),
+                    "example": {"role_id": 3},
+                }
+            },
+        }
+    },
 )
 async def update_client_user_role(
     restaurant_id: int,
@@ -267,6 +371,22 @@ async def update_client_user_role(
     status_code=status.HTTP_201_CREATED,
     summary="Bulk create client users",
     description="Create multiple client users for a restaurant in one transaction.",
+    openapi_extra={
+        "requestBody": {
+            "required": True,
+            "content": {
+                "application/json": {
+                    "schema": ClientBulkCreateRequest.model_json_schema(),
+                    "example": {
+                        "users": [
+                            {"email": "manager@example.com", "password": "StrongPass1", "role_id": 2},
+                            {"email": "chef@example.com", "password": "ChefsPass2", "role_id": 3},
+                        ]
+                    },
+                }
+            },
+        }
+    },
 )
 async def bulk_create_client_users(
     restaurant_id: int,

@@ -1,6 +1,10 @@
+from datetime import datetime
+
 from fastapi import APIRouter, Body, Depends, Query, status
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.middleware.auth_middleware import get_current_admin_user
+from app.models.common_models import PaginationResponse
 from app.models.user_models import (
     BaseBulkCreateRequest,
     BasePasswordResetRequest,
@@ -34,6 +38,25 @@ class RessyBulkCreateRequest(BaseBulkCreateRequest):
 
 def get_ressy_admin_service() -> RessyAdministratorService:
     return RessyAdministratorService()
+
+
+class AdminUserResponse(BaseModel):
+    uuid: str
+    email: str
+    role_id: int | None = None
+    role: str | None = None
+    permissions: list[str] = Field(default_factory=list)
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+    last_login: datetime | None = None
+    last_active: datetime | None = None
+    model_config = ConfigDict(extra="ignore")
+
+
+class AdminUserListResponse(BaseModel):
+    items: list[AdminUserResponse]
+    pagination: PaginationResponse
+    model_config = ConfigDict(extra="ignore")
 
 
 router = APIRouter(
@@ -84,6 +107,35 @@ async def create_ressy_admin_user(
     "/admin-users",
     summary="List Ressy admin users",
     description="Get paginated Ressy admin users with role details and last login. Admin access only.",
+    response_model=AdminUserListResponse,
+    response_description="Paginated admin users with role/permission info.",
+    openapi_extra={
+        "responses": {
+            200: {
+                "description": "Admin users list",
+                "content": {
+                    "application/json": {
+                        "example": {
+                            "items": [
+                                {
+                                    "uuid": "e7a2f7c4-1234-4b20-9a89-0f1234567890",
+                                    "email": "ops@example.com",
+                                    "role_id": 1,
+                                    "role": "superadmin",
+                                    "permissions": ["/dash", "/users"],
+                                    "last_login": "2024-02-01T10:00:00Z",
+                                    "last_active": "2024-02-01T10:05:00Z",
+                                    "created_at": "2024-01-01T08:00:00Z",
+                                    "updated_at": "2024-01-05T09:00:00Z",
+                                }
+                            ],
+                            "pagination": {"page": 1, "limit": 20, "total": 1, "pages": 1},
+                        }
+                    }
+                },
+            }
+        }
+    },
 )
 async def list_ressy_admin_users(
     page: int = Query(1, description="Page number (1-based)"),
@@ -110,6 +162,30 @@ async def list_ressy_admin_users(
     "/admin-users/{uuid}",
     summary="Get Ressy admin user by UUID",
     description="Fetch a Ressy admin user including role, permissions, and activity timestamps.",
+    response_model=AdminUserResponse,
+    response_description="Admin user with role and permission details.",
+    openapi_extra={
+        "responses": {
+            200: {
+                "description": "Admin user record",
+                "content": {
+                    "application/json": {
+                        "example": {
+                            "uuid": "e7a2f7c4-1234-4b20-9a89-0f1234567890",
+                            "email": "ops@example.com",
+                            "role_id": 1,
+                            "role": "superadmin",
+                            "permissions": ["/dash", "/users"],
+                            "last_login": "2024-02-01T10:00:00Z",
+                            "last_active": "2024-02-01T10:05:00Z",
+                            "created_at": "2024-01-01T08:00:00Z",
+                            "updated_at": "2024-01-05T09:00:00Z",
+                        }
+                    }
+                },
+            }
+        }
+    },
 )
 async def get_ressy_admin_user(
     uuid: str,
@@ -195,6 +271,17 @@ async def delete_ressy_admin_user(
     "/admin-users/{uuid}/reset-password",
     summary="Reset Ressy admin password",
     description="Reset password, hash with bcrypt, revoke sessions, and apply rate limiting.",
+    openapi_extra={
+        "requestBody": {
+            "required": True,
+            "content": {
+                "application/json": {
+                    "schema": RessyPasswordResetRequest.model_json_schema(),
+                    "example": {"new_password": "NewStrongPass1"},
+                }
+            },
+        }
+    },
 )
 async def reset_ressy_admin_password(
     uuid: str,
@@ -224,6 +311,17 @@ async def reset_ressy_admin_password(
     "/admin-users/{uuid}/role",
     summary="Update Ressy admin role",
     description="Update the role_id for a Ressy admin user and return the updated record.",
+    openapi_extra={
+        "requestBody": {
+            "required": True,
+            "content": {
+                "application/json": {
+                    "schema": RessyRoleUpdateRequest.model_json_schema(),
+                    "example": {"role_id": 2},
+                }
+            },
+        }
+    },
 )
 async def update_ressy_admin_role(
     uuid: str,
@@ -252,6 +350,22 @@ async def update_ressy_admin_role(
     status_code=status.HTTP_201_CREATED,
     summary="Bulk create Ressy admin users",
     description="Create multiple Ressy admin users in one transaction. Rejects duplicates and existing emails.",
+    openapi_extra={
+        "requestBody": {
+            "required": True,
+            "content": {
+                "application/json": {
+                    "schema": RessyBulkCreateRequest.model_json_schema(),
+                    "example": {
+                        "users": [
+                            {"email": "ops1@example.com", "password": "StrongPass1", "role_id": 1},
+                            {"email": "ops2@example.com", "password": "AnotherPass2", "role_id": 2},
+                        ]
+                    },
+                }
+            },
+        }
+    },
 )
 async def bulk_create_ressy_admin_users(
     payload: dict | None = Body(None, description="Payload with admin users array"),

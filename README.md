@@ -43,7 +43,6 @@ ressy-ai-backend/
 │   │   ├── transport.py       # Transport layer
 │   │   └── tests/             # Agent FC tests
 │   ├── api/                   # FastAPI route handlers
-│   │   ├── admin.py           # Administration endpoints
 │   │   ├── auth.py            # Authentication endpoints
 │   │   ├── calls.py           # Call management endpoints
 │   │   ├── dashboard_reservations.py  # Dashboard reservation management
@@ -53,9 +52,9 @@ ressy-ai-backend/
 │   │   ├── order_history.py   # Order history endpoints
 │   │   ├── orders.py          # Order endpoints
 │   │   ├── reservations.py    # In-house reservation endpoints
-│   │   ├── ressy_admins.py    # Ressy platform admin management endpoints
-│   │   ├── restaurant_admins.py # Client CRM user management endpoints
-│   │   ├── restaurants.py     # Restaurant endpoints
+│   │   ├── admin_users.py     # Ressy platform admin management endpoints
+│   │   ├── client_users.py    # Client CRM user management endpoints
+│   │   ├── restaurants.py     # Restaurant endpoints (Admin CRM)
 │   │   ├── transcripts.py     # Transcript management endpoints
 │   │   ├── users.py           # User management endpoints
 │   │   └── websocket.py       # WebSocket handler
@@ -512,15 +511,6 @@ All endpoints are organized by tags in the Swagger documentation:
   - `POST /auth/refresh` - Refresh access token
   - `POST /auth/logout` - Logout and revoke session
 
-- **Administration** (`/admin/*`):
-  - `GET /admin/users` - Get all users (admin only)
-  - `GET /admin/restaurants/{id}/faqs` - FAQ management
-  - `POST /admin/restaurants/{id}/faqs` - Create FAQ
-  - `POST /admin/restaurants/{id}/faqs/bulk` - Bulk create FAQs
-  - `GET /admin/faqs/{id}` - Get FAQ by ID
-  - `PUT /admin/faqs/{id}` - Update FAQ
-  - `DELETE /admin/faqs/{id}` - Delete FAQ
-
 - **Users** (`/users/*`):
   - `POST /users/` - Create user (admin only)
   - `GET /users/{restaurant_id}` - List users
@@ -528,11 +518,20 @@ All endpoints are organized by tags in the Swagger documentation:
   - `DELETE /users/{user_id}` - Delete user
 
 - **Restaurants** (`/restaurants/*`):
-  - `POST /restaurants/` - Create restaurant (admin only)
-  - `GET /restaurants/` - List all restaurants (admin only)
-  - `GET /restaurants/{id}` - Get restaurant details
-  - `PUT /restaurants/{id}` - Update restaurant
+  - `POST /restaurants/` - Create restaurant (admin only; validates phone and integration settings)
+  - `GET /restaurants/` - List restaurants with pagination, search, and credit-card filter
+  - `GET /restaurants/{id}` - Get restaurant details (includes integration JSON fields)
+  - `PUT /restaurants/{id}` - Update restaurant (partial updates supported)
   - `DELETE /restaurants/{id}` - Delete restaurant
+  - `GET /restaurants/{id}/stats` - Aggregated stats (menus, FAQs, admins, calls, minute usage)
+
+- **FAQs** (`/admin/faqs*`, `/admin/restaurants/{restaurant_id}/faqs*`) - Admin only:
+  - `GET /admin/restaurants/{id}/faqs` - List FAQs for a restaurant
+  - `POST /admin/restaurants/{id}/faqs` - Create FAQ
+  - `POST /admin/restaurants/{id}/faqs/bulk` - Bulk create FAQs
+  - `GET /admin/faqs/{id}` - Get FAQ by ID
+  - `PUT /admin/faqs/{id}` - Update FAQ
+  - `DELETE /admin/faqs/{id}` - Delete FAQ
 
 - **Menus** (`/api/v1/admin/*`) - Admin only:
   - `POST /api/v1/admin/restaurants/{restaurant_id}/menu` - Create menu item

@@ -85,6 +85,7 @@ class FAQService:
     def list_faqs(self, restaurant_id: int, limit: Optional[int] = None) -> List[Dict[str, Any]]:
         """List FAQs for a restaurant (used by internal consumers)."""
         self._validate_restaurant(restaurant_id)
+        # Repo already returns restaurant_name via JOIN; no enrichment needed here.
         return self.faq_repo.get_by_restaurant(restaurant_id, limit=limit)
 
     def list_faqs_paginated(self, restaurant_id: int, page: int, limit: int, search: Optional[str]) -> Dict[str, Any]:
@@ -185,6 +186,7 @@ class FAQService:
         items, total = self.faq_repo.search_all(search_term, page, limit)
         restaurant_cache: Dict[int, Optional[str]] = {}
         for item in items:
+            # Repo may already return restaurant_name; enrichment remains as a fallback for search path
             self._enrich_with_restaurant_name(item, restaurant_cache)
         return {
             "items": items,
