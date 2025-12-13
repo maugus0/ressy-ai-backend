@@ -12,6 +12,31 @@ from app.repositories.mysql_base import MySQLBaseRepository
 class MySQLFAQRepository(MySQLBaseRepository):
     """Repository for FAQ data access in MySQL."""
 
+    def get_by_restaurant_and_question(
+        self, restaurant_id: int, question: str, exclude_id: Optional[int] = None
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Get a single FAQ by restaurant/question (case-insensitive), optionally excluding an ID.
+        """
+        query = """
+            SELECT
+                f.id,
+                f.restaurant_id,
+                f.question,
+                f.answer,
+                f.created_at,
+                f.updated_at
+            FROM FAQs f
+            WHERE f.restaurant_id = %s AND LOWER(f.question) = LOWER(%s)
+        """
+        params: List[Any] = [restaurant_id, question]
+        if exclude_id is not None:
+            query += " AND f.id <> %s"
+            params.append(exclude_id)
+        query += " LIMIT 1"
+        results = self._execute_query(query, tuple(params))
+        return results[0] if results else None
+
     def get_by_restaurant(self, restaurant_id: int, limit: Optional[int] = None) -> List[Dict[str, Any]]:
         """
         Get FAQs for a restaurant, optionally limited.

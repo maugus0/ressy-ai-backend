@@ -53,6 +53,8 @@ ressy-ai-backend/
 │   │   ├── order_history.py   # Order history endpoints
 │   │   ├── orders.py          # Order endpoints
 │   │   ├── reservations.py    # In-house reservation endpoints
+│   │   ├── ressy_admins.py    # Ressy platform admin management endpoints
+│   │   ├── restaurant_admins.py # Client CRM user management endpoints
 │   │   ├── restaurants.py     # Restaurant endpoints
 │   │   ├── transcripts.py     # Transcript management endpoints
 │   │   ├── users.py           # User management endpoints
@@ -74,6 +76,8 @@ ressy-ai-backend/
 │   │   ├── mysql_opentable_log_repo.py
 │   │   ├── mysql_order_repo.py
 │   │   ├── mysql_reservation_repo.py
+│   │   ├── mysql_ressy_admin_repo.py
+│   │   ├── mysql_restaurant_admin_repo.py
 │   │   ├── mysql_restaurant_repo.py
 │   │   ├── mysql_transcript_repo.py
 │   │   └── mysql_user_repo.py
@@ -91,7 +95,9 @@ ressy-ai-backend/
 │   │   ├── opentable_service.py
 │   │   ├── order_service.py
 │   │   ├── reservation_service.py
+│   │   ├── ressy_admin_service.py
 │   │   ├── restaurant_service.py
+│   │   ├── restaurant_admin_service.py
 │   │   ├── transcript_service.py
 │   │   ├── twilio_service.py
 │   │   ├── user_service.py
@@ -111,6 +117,10 @@ ressy-ai-backend/
 │   ├── test_faq_api.py       # FAQ API tests
 │   ├── test_faq_service.py   # FAQ service tests
 │   ├── test_main.py          # Main app tests
+│   ├── test_restaurant_admin_api.py # Client CRM API tests
+│   ├── test_restaurant_admin_service.py # Client CRM service tests
+│   ├── test_ressy_admin_api.py    # Ressy admin API tests
+│   ├── test_ressy_admin_service.py # Ressy admin service tests
 │   └── test_syntax.py        # Syntax validation tests
 ├── migrations/                # Database migration scripts
 │   ├── 001-016_create_*.sql  # Initial schema migrations
@@ -573,11 +583,30 @@ All endpoints are organized by tags in the Swagger documentation:
   - `PUT /opentable/booking/{restaurant_id}/{rid}/reservations/{confirmation_id}` - Update reservation
   - `PUT /opentable/booking/{restaurant_id}/{rid}/reservations/{confirmation_id}/cancel` - Cancel reservation
 
+- **Ressy Admin Users (Admin CRM platform users)**:
+  - `/admin/admin-users` (POST create, GET list with pagination/role filters)
+  - `/admin/admin-users/bulk` (POST bulk create in a transaction)
+  - `/admin/admin-users/{uuid}` (GET, PUT, DELETE single admin user)
+  - `/admin/admin-users/{uuid}/role` (PATCH role assignment)
+  - `/admin/admin-users/{uuid}/reset-password` (POST reset + revoke sessions, rate limited)
+
+- **Client Users (Restaurant staff/admin managed by Admin CRM)**:
+  - `/admin/restaurants/{restaurant_id}/client-users` (POST create, GET list for that restaurant)
+  - `/admin/restaurants/{restaurant_id}/client-users/bulk` (POST bulk create in a transaction)
+  - `/admin/restaurants/{restaurant_id}/client-users/{uuid}` (GET, PUT, DELETE single client user)
+  - `/admin/restaurants/{restaurant_id}/client-users/{uuid}/role` (PATCH role assignment)
+  - `/admin/restaurants/{restaurant_id}/client-users/{uuid}/reset-password` (POST reset + revoke sessions, rate limited)
+
 ### API Documentation
 
 When running locally, visit:
 - Swagger UI: `http://localhost:5001/docs`
 - ReDoc: `http://localhost:5001/redoc`
+
+### Password Policy
+
+- Admin and client-user passwords must be at least 8 characters and include uppercase, lowercase, and numeric characters.
+- Password reset endpoints are rate limited (default 5 attempts per 60-second sliding window per user) and revoke existing refresh sessions.
 
 ## 🏗️ Architecture
 

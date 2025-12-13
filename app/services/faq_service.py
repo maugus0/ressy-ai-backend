@@ -29,6 +29,18 @@ class FAQService:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"{field} cannot be empty")
         return cleaned
 
+    def _normalize_question_key(self, question: str) -> str:
+        """Normalize a question string for duplicate detection."""
+        return self._validate_question_answer(question, "question").lower()
+
+    def _ensure_unique_question(self, restaurant_id: int, question: str, exclude_id: Optional[int] = None):
+        existing = self.faq_repo.get_by_restaurant_and_question(restaurant_id, question, exclude_id=exclude_id)
+        if existing:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="An FAQ with the same question already exists for this restaurant",
+            )
+
     def _validate_pagination(self, page: int, limit: int) -> Tuple[int, int]:
         if page < 1 or limit < 1:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="page and limit must be positive")
@@ -62,6 +74,7 @@ class FAQService:
         restaurant = self._validate_restaurant(restaurant_id)
         question = self._validate_question_answer(data.get("question"), "question")
         answer = self._validate_question_answer(data.get("answer"), "answer")
+        self._ensure_unique_question(restaurant_id, question)
         created = self.faq_repo.create(restaurant_id, {"question": question, "answer": answer})
         if not created:
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to create FAQ")
@@ -104,9 +117,14 @@ class FAQService:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST, detail="At least one field (question or answer) is required"
             )
+        current = self.faq_repo.get_by_id(faq_id)
+        if not current:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="FAQ not found")
         update_fields: Dict[str, str] = {}
         if "question" in data:
-            update_fields["question"] = self._validate_question_answer(data.get("question"), "question")
+            question = self._validate_question_answer(data.get("question"), "question")
+            self._ensure_unique_question(int(current["restaurant_id"]), question, exclude_id=faq_id)
+            update_fields["question"] = question
         if "answer" in data:
             update_fields["answer"] = self._validate_question_answer(data.get("answer"), "answer")
         if not update_fields:
@@ -132,13 +150,19 @@ class FAQService:
         if not faqs:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="faqs list cannot be empty")
         clean_faqs: List[Dict[str, str]] = []
+        seen_questions: set[str] = set()
         for faq in faqs:
-            clean_faqs.append(
-                {
-                    "question": self._validate_question_answer(faq.get("question"), "question"),
-                    "answer": self._validate_question_answer(faq.get("answer"), "answer"),
-                }
-            )
+            question = self._validate_question_answer(faq.get("question"), "question")
+            answer = self._validate_question_answer(faq.get("answer"), "answer")
+            key = self._normalize_question_key(question)
+            if key in seen_questions:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Duplicate question found in payload for this restaurant",
+                )
+            seen_questions.add(key)
+            self._ensure_unique_question(restaurant_id, question)
+            clean_faqs.append({"question": question, "answer": answer})
         try:
             created = self.faq_repo.bulk_create(restaurant_id, clean_faqs)
         except HTTPException:

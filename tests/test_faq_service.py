@@ -29,6 +29,32 @@ def test_update_faq_changes_content():
     assert updated["answer"] == "Yes, within 5 miles."
 
 
+def test_duplicate_question_rejected_per_restaurant():
+    service, _, _ = _build_service()
+    service.create_faq(1, {"question": "Do you deliver?", "answer": "Yes"})
+    with pytest.raises(HTTPException) as exc_info:
+        service.create_faq(1, {"question": "Do you deliver?", "answer": "Different"})
+    assert exc_info.value.status_code == 400
+
+    # Case-insensitive duplicate should be rejected
+    with pytest.raises(HTTPException) as exc_info:
+        service.create_faq(1, {"question": "DO YOU DELIVER?", "answer": "Different"})
+    assert exc_info.value.status_code == 400
+
+    # Same question on a different restaurant should be allowed
+    other = service.create_faq(2, {"question": "Do you deliver?", "answer": "No"})
+    assert other["restaurant_id"] == 2
+
+
+def test_update_prevents_duplicate_question_collision():
+    service, _, _ = _build_service()
+    service.create_faq(1, {"question": "Q1", "answer": "A1"})
+    second = service.create_faq(1, {"question": "Q2", "answer": "A2"})
+    with pytest.raises(HTTPException) as exc_info:
+        service.update_faq(second["id"], {"question": "Q1"})
+    assert exc_info.value.status_code == 400
+
+
 def test_bulk_create_rollback_on_error():
     service, faq_repo, _ = _build_service()
     with pytest.raises(HTTPException) as exc_info:
@@ -65,3 +91,17 @@ def test_list_faqs_paginated_with_search():
     result = service.list_faqs_paginated(1, page=1, limit=1, search="pasta")
     assert result["pagination"]["total"] == 1
     assert len(result["items"]) == 1
+
+
+def test_bulk_create_rejects_duplicate_questions_in_payload():
+    service, faq_repo, _ = _build_service()
+    with pytest.raises(HTTPException) as exc_info:
+        service.bulk_create_faqs(
+            1,
+            [
+                {"question": "Same?", "answer": "A1"},
+                {"question": "Same?", "answer": "A2"},
+            ],
+        )
+    assert exc_info.value.status_code == 400
+    assert faq_repo.get_by_restaurant(1) == []

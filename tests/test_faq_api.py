@@ -83,6 +83,28 @@ def test_bulk_create_and_rollback_on_validation(client_with_overrides):
     assert len(ok_resp.json()["items"]) == 2
 
 
+def test_duplicate_question_rejected_per_restaurant(client_with_overrides):
+    client, _ = client_with_overrides
+    first = client.post("/api/v1/admin/restaurants/1/faqs", json={"question": "Do you deliver?", "answer": "Yes"})
+    assert first.status_code == 201
+    dup = client.post("/api/v1/admin/restaurants/1/faqs", json={"question": "Do you deliver?", "answer": "No"})
+    assert dup.status_code == 400
+
+    # Case-insensitive duplicate
+    dup_case = client.post("/api/v1/admin/restaurants/1/faqs", json={"question": "DO YOU DELIVER?", "answer": "Nope"})
+    assert dup_case.status_code == 400
+
+
+def test_bulk_duplicate_questions_rejected(client_with_overrides):
+    client, faq_repo = client_with_overrides
+    resp = client.post(
+        "/api/v1/admin/restaurants/1/faqs/bulk",
+        json={"faqs": [{"question": "Same?", "answer": "A1"}, {"question": "Same?", "answer": "A2"}]},
+    )
+    assert resp.status_code == 400
+    assert faq_repo.get_by_restaurant(1) == []
+
+
 def test_search_across_restaurants(client_with_overrides):
     client, _ = client_with_overrides
     client.post("/api/v1/admin/restaurants/1/faqs", json={"question": "How to order pizza?", "answer": "Online"})
