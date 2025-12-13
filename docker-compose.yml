@@ -1,0 +1,91 @@
+version: '3.8'
+
+services:
+  # MySQL Database Service
+  db:
+    image: mysql:8.0
+    container_name: ressy-db
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_PASSWORD:-${MYSQL_PASSWORD:-rootpassword}}
+      MYSQL_DATABASE: ${DB_NAME:-${MYSQL_DATABASE:-ressy}}
+    ports:
+      - "${DOCKER_MYSQL_PORT:-3307}:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${DB_PASSWORD:-${MYSQL_PASSWORD:-rootpassword}}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    networks:
+      - ressy-network
+
+  # Backend Application Service
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ressy-backend
+    restart: unless-stopped
+    ports:
+      - "5001:5001"
+    environment:
+      # Database Configuration (supports both DB_* and MYSQL_* naming)
+      DB_HOST: db
+      DB_PORT: 3306
+      DB_NAME: ${DB_NAME:-${MYSQL_DATABASE:-ressy}}
+      DB_USERNAME: ${DB_USERNAME:-${MYSQL_USER:-root}}
+      DB_PASSWORD: ${DB_PASSWORD:-${MYSQL_PASSWORD:-rootpassword}}
+      
+      # Application Settings
+      USE_MOCK_DATA: ${USE_MOCK_DATA:-false}
+      ALLOW_DB_FAILURE: ${ALLOW_DB_FAILURE:-false}
+      SEED_DATABASE: ${SEED_DATABASE:-true}
+      
+      # JWT Configuration (RS256)
+      JWT_PRIVATE_KEY: ${JWT_PRIVATE_KEY:-}
+      JWT_PUBLIC_KEY: ${JWT_PUBLIC_KEY:-}
+      JWT_ACCESS_TOKEN_EXP_SECONDS: ${JWT_ACCESS_TOKEN_EXP_SECONDS:-3600}
+      JWT_REFRESH_TOKEN_EXP_SECONDS: ${JWT_REFRESH_TOKEN_EXP_SECONDS:-2592000}
+      JWT_ISSUER: ${JWT_ISSUER:-ressy.ai/auth}
+      JWT_ADMIN_AUDIENCE: ${JWT_ADMIN_AUDIENCE:-ressy-admin-api}
+      JWT_CLIENT_AUDIENCE: ${JWT_CLIENT_AUDIENCE:-ressy-client-api}
+      JWT_AUTH_AUDIENCE: ${JWT_AUTH_AUDIENCE:-ressy-auth}
+      
+      # Deepgram Configuration
+      DEEPGRAM_API_KEY: ${DEEPGRAM_API_KEY:-}
+      DEEPGRAM_AUDIO_INPUT_ENCODING: ${DEEPGRAM_AUDIO_INPUT_ENCODING:-mulaw}
+      DEEPGRAM_AUDIO_INPUT_SAMPLE_RATE: ${DEEPGRAM_AUDIO_INPUT_SAMPLE_RATE:-8000}
+      DEEPGRAM_AGENT_LANGUAGE: ${DEEPGRAM_AGENT_LANGUAGE:-en}
+      DEEPGRAM_LISTEN_MODEL: ${DEEPGRAM_LISTEN_MODEL:-nova-3}
+      DEEPGRAM_THINK_MODEL: ${DEEPGRAM_THINK_MODEL:-gpt-4o-mini}
+      DEEPGRAM_SPEAK_MODEL: ${DEEPGRAM_SPEAK_MODEL:-aura-2-amalthea-en}
+      
+      # Timezone
+      RESTAURANT_TIMEZONE: ${RESTAURANT_TIMEZONE:-America/Vancouver}
+      
+      # AWS Configuration
+      AWS_REGION: ${AWS_REGION:-ca-central-1}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      
+      # Sample Admin Credentials (for seeding)
+      SAMPLE_ADMIN_EMAIL: ${SAMPLE_ADMIN_EMAIL:-admin@ressy.ai}
+      SAMPLE_ADMIN_PASSWORD: ${SAMPLE_ADMIN_PASSWORD:-AdminPass!23}
+      SAMPLE_RESTAURANT_ADMIN_EMAIL: ${SAMPLE_RESTAURANT_ADMIN_EMAIL:-manager@restaurant.com}
+      SAMPLE_RESTAURANT_ADMIN_PASSWORD: ${SAMPLE_RESTAURANT_ADMIN_PASSWORD:-ManagerPass!23}
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - ressy-network
+
+networks:
+  ressy-network:
+    driver: bridge
+
+volumes:
+  mysql_data:
+    driver: local
