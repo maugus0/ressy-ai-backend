@@ -33,6 +33,12 @@ class CreateRestaurantRequest(BaseModel):
     is_credit_card_required_for_reservation: bool | None = Field(
         False, description="Require credit card for reservations"
     )
+    opening_time: str | None = Field(
+        None, pattern=r"^\d{2}:\d{2}:\d{2}$", description="Opening time in HH:MM:SS (24h) format"
+    )
+    closing_time: str | None = Field(
+        None, pattern=r"^\d{2}:\d{2}:\d{2}$", description="Closing time in HH:MM:SS (24h) format"
+    )
     model_config = ConfigDict(extra="ignore")
 
     @field_validator("name")
@@ -65,6 +71,12 @@ class UpdateRestaurantRequest(BaseModel):
     backward_minutes: int | None = Field(None, ge=0, description="Backward booking window in minutes")
     is_credit_card_required_for_reservation: bool | None = Field(
         None, description="Require credit card for reservations"
+    )
+    opening_time: str | None = Field(
+        None, pattern=r"^\d{2}:\d{2}:\d{2}$", description="Opening time in HH:MM:SS (24h) format"
+    )
+    closing_time: str | None = Field(
+        None, pattern=r"^\d{2}:\d{2}:\d{2}$", description="Closing time in HH:MM:SS (24h) format"
     )
     model_config = ConfigDict(extra="ignore")
 
@@ -171,6 +183,8 @@ router = APIRouter(
                         "twilio_details": {"workspace_sid": "WSxxxx", "phone_sid": "PNxxxx"},
                         "deepgram_details": {"project_id": "dg-project-1"},
                         "open_table_details": {"rid": "99999"},
+                        "opening_time": "09:00:00",
+                        "closing_time": "22:00:00",
                     },
                 }
             },
@@ -326,6 +340,8 @@ async def get_restaurant(
                         "forward_minutes": 60,
                         "is_credit_card_required_for_reservation": False,
                         "open_table_details": {"rid": "12345", "api_key": "secret"},
+                        "opening_time": "10:00:00",
+                        "closing_time": "23:00:00",
                     },
                 }
             },
