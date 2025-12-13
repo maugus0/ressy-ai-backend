@@ -13,6 +13,10 @@ from app.api import (
     admin_users,
     auth,
     calls,
+    client_client_users,
+    client_faqs,
+    client_menus,
+    client_restaurant,
     client_users,
     dashboard_reservations,
     faqs,
@@ -72,11 +76,11 @@ Access tokens expire. Use `/api/v1/auth/refresh` with your `refresh_token` to ge
         },
         {
             "name": "Menus",
-            "description": "Menu management endpoints. Full CRUD operations for menu items including categories, availability, specials, and bulk operations. Admin access only.",
+            "description": "Menu management endpoints for Admin and Client CRM. Full CRUD, categories, availability, specials, and bulk updates; client endpoints are auto-scoped to the token restaurant.",
         },
         {
             "name": "Restaurants",
-            "description": "Restaurant management endpoints. Create, update, and manage restaurant information and settings.",
+            "description": "Restaurant management endpoints for Admin CRM; Client CRM can read/update its own restaurant only.",
         },
         {
             "name": "Orders",
@@ -92,7 +96,7 @@ Access tokens expire. Use `/api/v1/auth/refresh` with your `refresh_token` to ge
         },
         {
             "name": "FAQs",
-            "description": "Frequently Asked Questions management. Create and manage FAQs for restaurants to help the voice agent answer customer questions.",
+            "description": "Frequently Asked Questions management for Admin and Client CRM. Admin can manage any restaurant; client endpoints are scoped to the token restaurant.",
         },
         {
             "name": "OpenTable",
@@ -112,7 +116,7 @@ Access tokens expire. Use `/api/v1/auth/refresh` with your `refresh_token` to ge
         },
         {
             "name": "Client Users",
-            "description": "Restaurant client CRM users (admins/staff) managed by Ressy admins. Includes CRUD, role assignment, and password resets.",
+            "description": "Restaurant client CRM users (admins/staff). Admin CRM can manage all; Client CRM (manager role) manages its own restaurant. Self password reset supported.",
         },
         {
             "name": "Voice Agent",
@@ -147,6 +151,10 @@ app.include_router(reservations.router, prefix="/api/v1/reservations", tags=["Re
 app.include_router(dashboard_reservations.router, prefix="/api/v1/dashboard", tags=["Dashboard Reservations"])
 app.include_router(admin_users.router, tags=["Admin Users"])
 app.include_router(client_users.router, tags=["Client Users"])
+app.include_router(client_faqs.router)
+app.include_router(client_menus.router)
+app.include_router(client_restaurant.router)
+app.include_router(client_client_users.router)
 
 
 # WebSocket Endpoint

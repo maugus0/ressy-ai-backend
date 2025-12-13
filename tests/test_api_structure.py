@@ -33,6 +33,10 @@ def test_api_routes_import():
             admin_users,
             auth,
             calls,
+            client_client_users,
+            client_faqs,
+            client_menus,
+            client_restaurant,
             client_users,
             dashboard_reservations,
             faqs,
@@ -54,6 +58,10 @@ def test_api_routes_import():
         assert restaurants is not None
         assert admin_users is not None
         assert client_users is not None
+        assert client_client_users is not None
+        assert client_faqs is not None
+        assert client_menus is not None
+        assert client_restaurant is not None
         assert faqs is not None
         assert opentable is not None
         assert order_history is not None
