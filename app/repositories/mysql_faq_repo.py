@@ -43,15 +43,17 @@ class MySQLFAQRepository(MySQLBaseRepository):
         """
         query = """
             SELECT
-                id,
-                restaurant_id,
-                question,
-                answer,
-                created_at,
-                updated_at
-            FROM FAQs
-            WHERE restaurant_id = %s
-            ORDER BY created_at DESC
+                f.id,
+                f.restaurant_id,
+                r.name AS restaurant_name,
+                f.question,
+                f.answer,
+                f.created_at,
+                f.updated_at
+            FROM FAQs f
+            LEFT JOIN Restaurants r ON r.id = f.restaurant_id
+            WHERE f.restaurant_id = %s
+            ORDER BY f.created_at DESC
         """
         params: Tuple[Any, ...] = (restaurant_id,)
         if limit:
@@ -82,11 +84,13 @@ class MySQLFAQRepository(MySQLBaseRepository):
             SELECT
                 f.id,
                 f.restaurant_id,
+                r.name AS restaurant_name,
                 f.question,
                 f.answer,
                 f.created_at,
                 f.updated_at
             FROM FAQs f
+            LEFT JOIN Restaurants r ON r.id = f.restaurant_id
             WHERE {where_clause}
             ORDER BY f.created_at DESC
             LIMIT %s OFFSET %s

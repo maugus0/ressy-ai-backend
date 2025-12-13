@@ -22,8 +22,10 @@ def test_api_files_syntax():
     api_files = [
         "auth.py",
         "calls.py",
-        "admin.py",
         "users.py",
+        "restaurants.py",
+        "admin_users.py",
+        "client_users.py",
     ]
 
     for api_file in api_files:

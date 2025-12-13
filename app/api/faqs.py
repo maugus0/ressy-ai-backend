@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from fastapi import APIRouter, Body, Depends, Query, status
 from pydantic import BaseModel, ConfigDict, ValidationInfo, field_validator, model_validator
 
@@ -67,6 +69,31 @@ FAQ_UPDATE_SCHEMA = FAQUpdateRequest.model_json_schema()
 FAQ_BULK_SCHEMA = FAQBulkCreateRequest.model_json_schema()
 
 
+class FAQResponse(BaseModel):
+    id: int
+    restaurant_id: int
+    restaurant_name: str | None = None
+    question: str
+    answer: str
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+    model_config = ConfigDict(extra="ignore")
+
+
+class PaginationResponse(BaseModel):
+    page: int
+    limit: int
+    total: int
+    pages: int
+    model_config = ConfigDict(extra="ignore")
+
+
+class FAQListResponse(BaseModel):
+    items: list[FAQResponse]
+    pagination: PaginationResponse
+    model_config = ConfigDict(extra="ignore")
+
+
 @router.post(
     "/restaurants/{restaurant_id}/faqs",
     status_code=status.HTTP_201_CREATED,
@@ -97,6 +124,33 @@ async def create_faq(
     "/restaurants/{restaurant_id}/faqs",
     summary="List FAQs for a restaurant",
     description="Get paginated FAQs for a restaurant with optional FULLTEXT search. Admin access only.",
+    response_model=FAQListResponse,
+    response_description="Paginated list of FAQs with metadata.",
+    openapi_extra={
+        "responses": {
+            200: {
+                "description": "FAQs retrieved",
+                "content": {
+                    "application/json": {
+                        "example": {
+                            "items": [
+                                {
+                                    "id": 1,
+                                    "restaurant_id": 10,
+                                    "restaurant_name": "Ressy Test Kitchen",
+                                    "question": "Do you offer delivery?",
+                                    "answer": "Yes, within 5 miles.",
+                                    "created_at": "2024-02-01T10:00:00Z",
+                                    "updated_at": "2024-02-01T10:00:00Z",
+                                }
+                            ],
+                            "pagination": {"page": 1, "limit": 20, "total": 1, "pages": 1},
+                        }
+                    }
+                },
+            }
+        }
+    },
 )
 async def list_faqs(
     restaurant_id: int,
@@ -112,6 +166,33 @@ async def list_faqs(
     "/faqs/search",
     summary="Search FAQs",
     description="Search FAQs across all restaurants using FULLTEXT. Admin access only.",
+    response_model=FAQListResponse,
+    response_description="Paginated FAQs with restaurant names for search results.",
+    openapi_extra={
+        "responses": {
+            200: {
+                "description": "Search results",
+                "content": {
+                    "application/json": {
+                        "example": {
+                            "items": [
+                                {
+                                    "id": 5,
+                                    "restaurant_id": 12,
+                                    "restaurant_name": "Pizza Plaza",
+                                    "question": "Do you have gluten-free pizza?",
+                                    "answer": "Yes, we have gluten-free crust.",
+                                    "created_at": "2024-02-05T12:00:00Z",
+                                    "updated_at": "2024-02-05T12:00:00Z",
+                                }
+                            ],
+                            "pagination": {"page": 1, "limit": 20, "total": 1, "pages": 1},
+                        }
+                    }
+                },
+            }
+        }
+    },
 )
 async def search_faqs(
     q: str | None = Query(None, description="Search term for FULLTEXT search"),
@@ -126,6 +207,28 @@ async def search_faqs(
     "/faqs/{faq_id}",
     summary="Get FAQ by ID",
     description="Fetch a single FAQ by ID including its restaurant name. Admin access only.",
+    response_model=FAQResponse,
+    response_description="Single FAQ record.",
+    openapi_extra={
+        "responses": {
+            200: {
+                "description": "FAQ retrieved",
+                "content": {
+                    "application/json": {
+                        "example": {
+                            "id": 2,
+                            "restaurant_id": 10,
+                            "restaurant_name": "Ressy Test Kitchen",
+                            "question": "Do you take reservations?",
+                            "answer": "Yes, via phone or online.",
+                            "created_at": "2024-02-02T10:00:00Z",
+                            "updated_at": "2024-02-03T09:30:00Z",
+                        }
+                    }
+                },
+            }
+        }
+    },
 )
 async def get_faq(
     faq_id: int,

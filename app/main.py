@@ -9,7 +9,6 @@ from starlette.requests import Request
 from starlette.responses import Response
 
 from app.api import (
-    admin,
     admin_users,
     auth,
     calls,
@@ -39,10 +38,6 @@ app = FastAPI(
         {
             "name": "Calls",
             "description": "Voice call management endpoints. Track call history, transcripts, and analytics for restaurant voice interactions.",
-        },
-        {
-            "name": "Administration",
-            "description": "System administration endpoints. Manage users, restaurants, and system-wide operations (admin access only).",
         },
         {
             "name": "Users",
@@ -110,10 +105,9 @@ app.add_middleware(
 
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["Authentication"])
 app.include_router(calls.router, prefix="/api/v1/calls", tags=["Calls"])
-app.include_router(admin.router, prefix="/api/v1/admin", tags=["Administration"])
 app.include_router(users.router, prefix="/api/v1/users", tags=["Users"])
 app.include_router(menus.router)
-app.include_router(restaurants.router, prefix="/api/v1/restaurants", tags=["Restaurants"])
+app.include_router(restaurants.router)
 app.include_router(orders.router, prefix="/api/v1/orders", tags=["Orders"])
 app.include_router(order_history.router, prefix="/api/v1/order-history", tags=["Order History"])
 app.include_router(transcripts.router, prefix="/api/v1/transcripts", tags=["Transcripts"])
