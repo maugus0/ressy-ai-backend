@@ -13,29 +13,64 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
 
     def get_by_name(self, name: str) -> Optional[Dict]:
         """Get restaurant by name."""
-        query = """
-            SELECT
-                id,
-                name,
-                address,
-                phone_number,
-                twilio_phone_number,
-                twilio_details,
-                deepgram_details,
-                open_table_details,
-                forward_minutes,
-                backward_minutes,
-                is_credit_card_required_for_reservation,
-                opening_time,
-                closing_time,
-                created_at,
-                updated_at
-            FROM Restaurants
-            WHERE name = %s
-            LIMIT 1
-        """
-        results = self._execute_query(query, (name,))
-        return results[0] if results else None
+        try:
+            query = """
+                SELECT
+                    id,
+                    name,
+                    address,
+                    phone_number,
+                    twilio_phone_number,
+                    twilio_details,
+                    deepgram_details,
+                    open_table_details,
+                    forward_minutes,
+                    backward_minutes,
+                    is_credit_card_required_for_reservation,
+                    opening_time,
+                    closing_time,
+                    created_at,
+                    updated_at
+                FROM Restaurants
+                WHERE name = %s
+                LIMIT 1
+            """
+            results = self._execute_query(query, (name,))
+            if results:
+                result = results[0]
+                if "opening_time" not in result or result.get("opening_time") is None:
+                    result["opening_time"] = "09:00:00"
+                if "closing_time" not in result or result.get("closing_time") is None:
+                    result["closing_time"] = "22:00:00"
+                return result
+            return None
+        except Exception:
+            query = """
+                SELECT
+                    id,
+                    name,
+                    address,
+                    phone_number,
+                    twilio_phone_number,
+                    twilio_details,
+                    deepgram_details,
+                    open_table_details,
+                    forward_minutes,
+                    backward_minutes,
+                    is_credit_card_required_for_reservation,
+                    created_at,
+                    updated_at
+                FROM Restaurants
+                WHERE name = %s
+                LIMIT 1
+            """
+            results = self._execute_query(query, (name,))
+            if results:
+                result = results[0]
+                result["opening_time"] = "09:00:00"
+                result["closing_time"] = "22:00:00"
+                return result
+            return None
 
     def get_by_twilio_number(self, twilio_phone_number: str) -> Optional[Dict]:
         """

@@ -68,11 +68,11 @@ class InMemoryRestaurantRepository:
                 return copy.deepcopy(restaurant)
         return None
 
-    def get_by_phone(self, phone_number: str) -> Dict[str, Any]:
+    def get_by_phone(self, phone_number: str) -> Optional[Dict[str, Any]]:
         for restaurant in self._restaurants.values():
             if restaurant.get("phone_number") == phone_number:
                 return copy.deepcopy(restaurant)
-        return {}
+        return None
 
     def get_by_twilio_number(self, twilio_phone_number: str) -> Optional[Dict[str, Any]]:
         for restaurant in self._restaurants.values():

@@ -58,14 +58,9 @@ class RestaurantService:
                 return None
             return default
 
-        # Accept native time/timedelta objects defensively
-        if isinstance(value, time):
-            return value.strftime("%H:%M:%S")
-        if isinstance(value, timedelta):
-            total_seconds = int(value.total_seconds()) % 86400
-            hours, remainder = divmod(total_seconds, 3600)
-            minutes, seconds = divmod(remainder, 60)
-            return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+        converted = self._time_like_to_string(value)
+        if converted is not None:
+            return converted
 
         if not isinstance(value, str):
             raise HTTPException(
@@ -105,6 +100,18 @@ class RestaurantService:
         return restaurant
 
     @staticmethod
+    def _time_like_to_string(value: Any) -> Optional[str]:
+        """Convert datetime.time or timedelta to HH:MM:SS string."""
+        if isinstance(value, time):
+            return value.strftime("%H:%M:%S")
+        if isinstance(value, timedelta):
+            total_seconds = int(value.total_seconds()) % 86400
+            hours, remainder = divmod(total_seconds, 3600)
+            minutes, seconds = divmod(remainder, 60)
+            return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+        return None
+
+    @staticmethod
     def _format_time_field(value: Any, default: str) -> str:
         """
         Normalize database time values to HH:MM:SS strings for API responses.
@@ -116,13 +123,10 @@ class RestaurantService:
             return default
         if isinstance(value, str):
             return value
-        if isinstance(value, time):
-            return value.strftime("%H:%M:%S")
-        if isinstance(value, timedelta):
-            total_seconds = int(value.total_seconds()) % 86400
-            hours, remainder = divmod(total_seconds, 3600)
-            minutes, seconds = divmod(remainder, 60)
-            return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+
+        converted = RestaurantService._time_like_to_string(value)
+        if converted is not None:
+            return converted
         return str(value)
 
     def _get_or_404(self, restaurant_id: int) -> Dict[str, Any]:

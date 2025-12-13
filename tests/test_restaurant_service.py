@@ -58,7 +58,15 @@ def test_duplicate_twilio_rejected():
 
 def test_update_duplicate_name_rejected():
     service, repo = _build_service()
-    service.create_restaurant({"name": "First"})["id"]
+    service.create_restaurant({"name": "First"})
     second_id = service.create_restaurant({"name": "Second"})["id"]
     with pytest.raises(HTTPException):
         service.update_restaurant(second_id, {"name": "First"})
+
+
+def test_update_duplicate_twilio_rejected():
+    service, repo = _build_service()
+    service.create_restaurant({"name": "First", "twilio_phone_number": "+1000"})
+    second_id = service.create_restaurant({"name": "Second", "twilio_phone_number": "+2000"})["id"]
+    with pytest.raises(HTTPException):
+        service.update_restaurant(second_id, {"twilio_phone_number": "+1000"})
