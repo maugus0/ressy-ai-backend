@@ -333,9 +333,9 @@ class InMemoryMenuRepository:
         if sub_category is not None:
             items = [i for i in items if i.get("sub_category") == sub_category]
         if is_available is not None:
-            items = [i for i in items if i.get("is_available") is is_available]
+            items = [i for i in items if i.get("is_available") == is_available]
         if is_special is not None:
-            items = [i for i in items if i.get("is_special") is is_special]
+            items = [i for i in items if i.get("is_special") == is_special]
         if search:
             query = search.lower()
             items = [i for i in items if query in (i.get("item_name") or "").lower()]
