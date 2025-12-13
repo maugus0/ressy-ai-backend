@@ -15,6 +15,7 @@ from app.api import (
     calls,
     client_users,
     dashboard_reservations,
+    dashboard_users,
     faqs,
     menus,
     opentable,
@@ -107,6 +108,10 @@ Access tokens expire. Use `/api/v1/auth/refresh` with your `refresh_token` to ge
             "description": "Dashboard-specific reservation management with RBAC. Create, finalize, view, update notes, and manage reservations. Admins can access all restaurants; restaurant managers can only access their own restaurant's reservations.",
         },
         {
+            "name": "Dashboard Users",
+            "description": "Dashboard-specific user management with RBAC. Create, view, update, and delete customer users. Includes user statistics (calls, orders, reservations). Admins can access all restaurants; restaurant managers can only access their own restaurant's users.",
+        },
+        {
             "name": "Admin Users",
             "description": "Ressy platform admin user management (Admin CRM). Create, update, list, reset passwords, and manage roles.",
         },
@@ -145,6 +150,7 @@ app.include_router(faqs.router)
 app.include_router(opentable.router, prefix="/api/v1/opentable", tags=["OpenTable"])
 app.include_router(reservations.router, prefix="/api/v1/reservations", tags=["Reservations"])
 app.include_router(dashboard_reservations.router, prefix="/api/v1/dashboard", tags=["Dashboard Reservations"])
+app.include_router(dashboard_users.router, prefix="/api/v1/dashboard", tags=["Dashboard Users"])
 app.include_router(admin_users.router, tags=["Admin Users"])
 app.include_router(client_users.router, tags=["Client Users"])
 
