@@ -11,7 +11,7 @@ DB_HOST="${DB_HOST:-${MYSQL_HOST:-db}}"
 DB_PORT="${DB_PORT:-${MYSQL_PORT:-3306}}"
 DB_NAME="${DB_NAME:-${MYSQL_DATABASE:-ressy}}"
 DB_USERNAME="${DB_USERNAME:-${MYSQL_USER:-root}}"
-DB_PASSWORD="${DB_PASSWORD:-${MYSQL_PASSWORD:-root}}"
+DB_PASSWORD="${DB_PASSWORD:-${MYSQL_PASSWORD:-rootpassword}}"
 
 echo "Database Configuration:"
 echo "  Host: ${DB_HOST}"
