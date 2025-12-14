@@ -136,10 +136,12 @@ class UserService:
             is_spam=is_spam,
         )
 
-        # Add statistics for each user
+        # Add statistics for each user using a batch query to avoid N+1 problem
+        user_ids = [user["id"] for user in users]
+        stats_by_user_id = self.user_repo.get_users_statistics(user_ids, restaurant_id)
         users_with_stats = []
         for user in users:
-            stats = self.user_repo.get_user_statistics(user["id"], restaurant_id)
+            stats = stats_by_user_id.get(user["id"], {})
             user_with_stats = {**user, "statistics": stats}
             users_with_stats.append(user_with_stats)
 
