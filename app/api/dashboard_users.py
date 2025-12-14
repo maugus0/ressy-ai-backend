@@ -40,7 +40,8 @@ class CreateUserRequest(BaseModel):
         ...,
         min_length=1,
         max_length=20,
-        description="User's phone number",
+        pattern=r"^\+[1-9]\d{9,14}$",
+        description="User's phone number in E.164 format (e.g., +1234567890)",
         json_schema_extra={"example": "+1234567890"},
     )
     email: Optional[EmailStr] = Field(
