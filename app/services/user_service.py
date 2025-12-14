@@ -234,13 +234,16 @@ class UserService:
             raise ValueError(f"User with ID {user_id} not found")
 
         # Check for duplicate phone/email if being updated
-        if user_data.get("phone_number") or user_data.get("email"):
-            duplicate_id = self.user_repo.get_user_id_by_phone_or_email(
-                user_data.get("phone_number"), user_data.get("email")
-            )
+        phone_number = user_data.get("phone_number")
+        email = user_data.get("email")
+        if phone_number:
+            duplicate_id = self.user_repo.get_user_id_by_phone_or_email(phone_number, None)
             if duplicate_id and duplicate_id != user_id:
-                raise ValueError("Another user with this phone number or email already exists")
-
+                raise ValueError("Another user with this phone number already exists")
+        if email:
+            duplicate_id = self.user_repo.get_user_id_by_phone_or_email(None, email)
+            if duplicate_id and duplicate_id != user_id:
+                raise ValueError("Another user with this email already exists")
         rows_affected = self.user_repo.update_user(user_id, user_data)
         if rows_affected == 0 and user_data:
             raise ValueError("No fields were updated")
