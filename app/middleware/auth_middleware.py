@@ -5,7 +5,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.utils.jwt_util import JWTUtil
 
-security = HTTPBearer()
+security = HTTPBearer(scheme_name="HTTPBearer")
 jwt_util = JWTUtil()
 
 

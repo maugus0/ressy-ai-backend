@@ -6,7 +6,7 @@ from app.services.auth_service import AuthService
 
 router = APIRouter()
 auth_service = AuthService()
-security = HTTPBearer()
+security = HTTPBearer(scheme_name="HTTPBearer")
 
 
 class LoginRequest(BaseModel):
