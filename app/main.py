@@ -256,11 +256,9 @@ def custom_openapi():
     # Get existing security schemes from routers
     existing_schemes = openapi_schema["components"].get("securitySchemes", {})
 
-    # Standardize to a single HTTPBearer scheme
-    # Remove any duplicates and keep only HTTPBearer
+    # Remove BearerAuth if it exists (we'll use HTTPBearer instead)
     if "BearerAuth" in existing_schemes:
-        # If BearerAuth exists, rename it to HTTPBearer for consistency
-        existing_schemes["HTTPBearer"] = existing_schemes.pop("BearerAuth")
+        del existing_schemes["BearerAuth"]
 
     # Ensure HTTPBearer exists with proper configuration
     existing_schemes["HTTPBearer"] = {

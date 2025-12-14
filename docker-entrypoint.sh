@@ -101,6 +101,9 @@ if [ "${SEED_DATABASE:-true}" = "true" ]; then
     # Add sample restaurant data (menu items, FAQs)
     python3 scripts/add_sample_data.py
     
+    # Seed pilot restaurants with menus (4 restaurants)
+    python3 scripts/seed_pilot_restaurants.py
+    
     echo "Database seeding completed!"
 else
     echo "Skipping database seeding (SEED_DATABASE=${SEED_DATABASE})"
