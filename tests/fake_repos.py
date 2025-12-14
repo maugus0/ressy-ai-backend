@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import json
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -117,6 +118,120 @@ class InMemoryRestaurantRepository:
 
     def get_statistics(self, restaurant_id: int) -> Dict[str, Any]:
         return copy.deepcopy(self._stats.get(restaurant_id, {}))
+
+
+class InMemoryCallRepository:
+    """In-memory call repository for API/service tests."""
+
+    def __init__(self, calls: Optional[List[Dict[str, Any]]] = None):
+        self._calls: Dict[int, Dict[str, Any]] = {}
+        for call in calls or []:
+            cid = int(call.get("id"))
+            self._calls[cid] = copy.deepcopy(call)
+
+    def list_calls(
+        self,
+        restaurant_id: Optional[str] = None,
+        date_from: Optional[str] = None,
+        date_to: Optional[str] = None,
+        status: Optional[str] = None,
+        duration_min: Optional[int] = None,
+        duration_max: Optional[int] = None,
+        caller_phone: Optional[str] = None,
+        page: int = 1,
+        limit: int = 20,
+        sort_by: str = "created_at",
+        sort_order: str = "desc",
+        search_term: Optional[str] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        calls = list(self._calls.values())
+        if restaurant_id is not None:
+            calls = [c for c in calls if str(c.get("restaurant_id")) == str(restaurant_id)]
+        if status:
+            calls = [c for c in calls if c.get("call_status") == status]
+        if duration_min is not None:
+            calls = [c for c in calls if (c.get("call_duration") or 0) >= duration_min]
+        if duration_max is not None:
+            calls = [c for c in calls if (c.get("call_duration") or 0) <= duration_max]
+        if caller_phone:
+            calls = [c for c in calls if caller_phone in str(c.get("caller_phone", ""))]
+        if search_term:
+            filtered: List[Dict[str, Any]] = []
+            for c in calls:
+                transcript = c.get("call_transcript")
+                if transcript:
+                    try:
+                        payload = json.loads(transcript)
+                        conversation = payload.get("conversation", [])
+                    except (json.JSONDecodeError, TypeError):
+                        conversation = []
+                    if any(search_term.lower() in (entry.get("content", "").lower()) for entry in conversation):
+                        filtered.append(c)
+                        continue
+                if search_term.lower() in str(c.get("caller_phone", "")).lower():
+                    filtered.append(c)
+            calls = filtered
+
+        total = len(calls)
+        start = (page - 1) * limit
+        end = start + limit
+        rows = []
+        for c in calls[start:end]:
+            row = copy.deepcopy(c)
+            row["has_transcript"] = bool(row.get("call_transcript"))
+            rows.append(row)
+        return rows, total
+
+    def get_call_by_id(self, call_id: int) -> Optional[Dict[str, Any]]:
+        call = self._calls.get(int(call_id))
+        if not call:
+            return None
+        row = copy.deepcopy(call)
+        row["restaurant_name"] = call.get("restaurant_name")
+        return row
+
+    def update_call_transcript(self, call_id: int, conversation: List[Dict[str, Any]]) -> None:
+        call = self._calls.get(int(call_id))
+        if call is None:
+            return
+        call["call_transcript"] = json.dumps({"conversation": conversation})
+
+    def delete_call(self, call_id: int) -> int:
+        removed = self._calls.pop(int(call_id), None)
+        return 1 if removed else 0
+
+    def delete_call_transcript(self, call_id: int) -> int:
+        call = self._calls.get(int(call_id))
+        if not call:
+            return 0
+        call["call_transcript"] = None
+        return 1
+
+    def get_call_analytics(
+        self,
+        restaurant_id: Optional[str] = None,
+        date_from: Optional[str] = None,
+        date_to: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        calls = list(self._calls.values())
+        if restaurant_id is not None:
+            calls = [c for c in calls if str(c.get("restaurant_id")) == str(restaurant_id)]
+        total_calls = len(calls)
+        total_duration = sum(c.get("call_duration", 0) or 0 for c in calls)
+        avg_duration = total_duration / total_calls if total_calls else 0
+        status_breakdown: Dict[str, int] = {}
+        for c in calls:
+            status = c.get("call_status") or "unknown"
+            status_breakdown[status] = status_breakdown.get(status, 0) + 1
+        return {
+            "total_calls": total_calls,
+            "average_call_duration": avg_duration,
+            "total_duration": total_duration,
+            "status_breakdown": status_breakdown,
+            "time_of_day_distribution": [],
+            "top_restaurants": [],
+            "calls_by_day_of_week": [],
+        }
 
 
 class InMemoryFAQRepository:

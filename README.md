@@ -44,7 +44,8 @@ ressy-ai-backend/
 │   │   └── tests/             # Agent FC tests
 │   ├── api/                   # FastAPI route handlers
 │   │   ├── auth.py            # Authentication endpoints
-│   │   ├── calls.py           # Call management endpoints
+│   │   ├── calls.py           # Admin CRM call endpoints
+│   │   ├── client_calls.py    # Client CRM call endpoints
 │   │   ├── dashboard_reservations.py  # Dashboard reservation management
 │   │   ├── faqs.py            # FAQ management endpoints
 │   │   ├── menus.py           # Menu endpoints
@@ -621,10 +622,20 @@ All endpoints are organized by tags in the Swagger documentation:
 - **Order History** (`/api/v1/order-history/*`):
   - `GET /api/v1/order-history/{order_id}/history` - Get order history
 
-- **Calls** (`/api/v1/calls/*`):
-  - `GET /api/v1/calls/history` - Get call history with optional filtering
-  - `GET /api/v1/calls/{call_id}/transcripts` - Get call transcripts
-  - `GET /api/v1/calls/analytics/summary` - Get call analytics (admin only)
+- **Calls (Admin CRM)** (`/api/v1/admin/calls*`):
+  - `GET /api/v1/admin/calls` - Paginated calls across all restaurants with filters/sort
+  - `GET /api/v1/admin/calls/{call_id}` - Call detail with transcript
+  - `GET /api/v1/admin/calls/analytics` - Aggregated analytics (date range required)
+  - `GET /api/v1/admin/calls/search` - Search by caller phone/transcript with filters
+  - `DELETE /api/v1/admin/calls/{call_id}` - Delete call (and transcript)
+  - `DELETE /api/v1/admin/calls/{call_id}/transcript` - Delete transcript only
+
+- **Calls (Client CRM)** (`/api/v1/client/calls*`) – auto-scoped to authenticated restaurant:
+  - `GET /api/v1/client/calls` - Paginated calls with filters/sort
+  - `GET /api/v1/client/calls/{call_id}` - Call detail with transcript (ownership enforced)
+  - `GET /api/v1/client/calls/analytics` - Restaurant analytics (date range required)
+  - `GET /api/v1/client/calls/search` - Search own calls/transcripts
+  - `GET /api/v1/client/calls/export` - CSV export with same filters
 
 - **Transcripts** (`/api/v1/transcripts/*`):
   - `DELETE /api/v1/transcripts/{transcript_id}` - Delete transcript (admin only)
@@ -928,6 +939,7 @@ Migrations should be run in numerical order (001, 002, 003, etc.) as they have d
 19. **018_add_reservation_type_flag.sql** - Adds reservation type flag
 20. **019_add_restaurant_opening_closing_times.sql** - Adds restaurant opening/closing times
 21. **020_add_party_size_and_special_request.sql** - Adds party size and special request fields
+22. **021_add_call_transcript_to_calls.sql** - Adds `call_transcript` JSON column and indexes to `Calls`
 
 ### Database Schema Overview
 

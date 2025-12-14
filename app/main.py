@@ -13,6 +13,7 @@ from app.api import (
     admin_users,
     auth,
     calls,
+    client_calls,
     client_client_users,
     client_faqs,
     client_menus,
@@ -26,7 +27,6 @@ from app.api import (
     orders,
     reservations,
     restaurants,
-    transcripts,
     users,
 )
 from app.api.websocket import twilio_websocket_handler
@@ -71,10 +71,6 @@ app = FastAPI(
             "description": "Order history and tracking endpoints. Retrieve detailed order history and status information.",
         },
         {
-            "name": "Transcripts",
-            "description": "Call transcript management endpoints. Access and manage transcripts from voice interactions.",
-        },
-        {
             "name": "FAQs",
             "description": "Frequently Asked Questions management for Admin and Client CRM. Admin can manage any restaurant; client endpoints are scoped to the token restaurant.",
         },
@@ -115,7 +111,8 @@ app.add_middleware(
 )
 
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["Authentication"])
-app.include_router(calls.router, prefix="/api/v1/calls", tags=["Calls"])
+app.include_router(calls.router)
+app.include_router(client_calls.router)
 app.include_router(users.router, prefix="/api/v1/users", tags=["Users"])
 app.include_router(menus.router)
 app.include_router(
@@ -124,7 +121,6 @@ app.include_router(
 )
 app.include_router(orders.router, prefix="/api/v1/orders", tags=["Orders"])
 app.include_router(order_history.router, prefix="/api/v1/order-history", tags=["Order History"])
-app.include_router(transcripts.router, prefix="/api/v1/transcripts", tags=["Transcripts"])
 app.include_router(faqs.router)
 app.include_router(opentable.router, prefix="/api/v1/opentable", tags=["OpenTable"])
 app.include_router(reservations.router, prefix="/api/v1/reservations", tags=["Reservations"])

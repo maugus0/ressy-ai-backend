@@ -18,6 +18,7 @@ from app.agent_fc.responses import AgentSideEffect
 from app.agent_fc.router import FunctionCallRouter
 from app.agent_fc.transport import Transport
 from app.config import settings
+from app.repositories.mysql_user_repo import MySQLUserRepository
 from app.services.call_service import CallService
 from app.services.callmanager.call_filler import FillerManager
 from app.services.callmanager.call_latency import log_agent_audio_start_latency, log_assistant_text_latency
@@ -26,7 +27,6 @@ from app.services.deepgram_service import DeepgramService
 from app.services.faq_service import FAQService
 from app.services.menu_service import MenuService
 from app.services.restaurant_service import RestaurantService
-from app.services.transcript_service import TranscriptService
 from app.utils import prompt_loader
 
 
@@ -45,10 +45,10 @@ class WebSocketService:
     def __init__(self):
         self.deepgram_service = DeepgramService()
         self.call_service = CallService()
+        self.user_repo = MySQLUserRepository()
         self.restaurant_service = RestaurantService()
         self.menu_service = MenuService()
         self.faq_service = FAQService()
-        self.transcript_service = TranscriptService()
         self._active_twilio: set[WebSocket] = set()
         self._active_deepgram: set[Any] = set()
         self._connections_lock = asyncio.Lock()
@@ -275,6 +275,35 @@ class WebSocketService:
             think_prompt=think_prompt,
         )
 
+    def _resolve_user_id(self, caller_phone: Optional[str], provided_user_id: Optional[str]) -> str:
+        """
+        Resolve a concrete Users.id to store on Calls.
+        Preference: existing user by caller phone, then create a placeholder user, then fallback to provided ID.
+        """
+        fallback_user_id = str(provided_user_id) if provided_user_id else None
+
+        if caller_phone:
+            try:
+                existing_id = self.user_repo.get_user_id_by_phone_or_email(caller_phone, None)
+                if existing_id:
+                    return str(existing_id)
+                created_id = self.user_repo.create_user(
+                    {
+                        "name": None,
+                        "phone_number": caller_phone,
+                        "email": None,
+                        "address": None,
+                        "is_spam": False,
+                        "credit_card": None,
+                    }
+                )
+                if created_id:
+                    return str(created_id)
+            except Exception as exc:
+                print(f"[WARN] Failed to resolve/create user for phone {caller_phone}: {exc}")
+
+        return fallback_user_id or "unknown"
+
     def _build_function_router(self, sts_ws) -> Transport:
         registry = FunctionRegistry()
         registry.register(
@@ -342,12 +371,14 @@ class WebSocketService:
         self,
         user_id: str,
         restaurant_id: Optional[str],
+        twilio_sid: Optional[str],
+        deepgram_session_id: Optional[str],
     ) -> Optional[str]:
         try:
             call_id = self.call_service.create_call_session(
                 user_id,
-                "twilio-demo",
-                "deepgram-demo",
+                twilio_sid,
+                deepgram_session_id,
                 restaurant_id,
             )
             print(f"📞 Call session created: {call_id}")
@@ -450,7 +481,8 @@ class WebSocketService:
             state.last_assistant_audio_start_time = None
 
     def _store_transcript_entry(self, decoded: dict[str, Any], call_id: Optional[str], state: StreamState) -> None:
-        if decoded.get("type") not in {"ConversationText", "History"}:
+        # Record only live ConversationText events to avoid duplicate transcript entries from History payloads.
+        if decoded.get("type") != "ConversationText":
             return
         text = decoded.get("content")
         if not text:
@@ -464,18 +496,6 @@ class WebSocketService:
             "sequence": state.message_seq,
         }
         state.conversation_history.append(entry)
-        # Write-through to call service when available for compatibility.
-        try:
-            if call_id:
-                self.call_service.store_transcript_message(
-                    call_id=call_id,
-                    message_sequence=state.message_seq,
-                    speaker=role,
-                    message=text,
-                    timestamp=entry["timestamp"],
-                )
-        except Exception as exc:
-            print(f"[WARN] Failed to persist transcript entry: {exc}")
 
     async def _route_function_calls(
         self,
@@ -694,6 +714,7 @@ class WebSocketService:
         shutdown_event: Optional[asyncio.Event] = None,
         to_number_queue: Optional[asyncio.Queue] = None,
         from_number_queue: Optional[asyncio.Queue] = None,
+        call_sid_queue: Optional[asyncio.Queue] = None,
     ):
         """Receive audio from Twilio and forward to Deepgram."""
         buffer_size = 20 * 160  # 3200 bytes per 100ms
@@ -710,12 +731,15 @@ class WebSocketService:
                     streamsid = data["start"]["streamSid"]
                     await streamsid_queue.put(streamsid)
                     params = data.get("start", {}).get("customParameters", {}) or {}
+                    call_sid = data.get("start", {}).get("callSid")
                     to_number = params.get("toNumber")
                     from_number = params.get("fromNumber")
                     if to_number_queue and to_number:
                         await to_number_queue.put(to_number)
                     if from_number_queue and from_number:
                         await from_number_queue.put(from_number)
+                    if call_sid_queue and call_sid:
+                        await call_sid_queue.put(call_sid)
                     print(f"📞 Stream started: {streamsid}, to={to_number}, from={from_number}")
                 elif event == "media":
                     chunk = base64.b64decode(data["media"]["payload"])
@@ -739,11 +763,18 @@ class WebSocketService:
                 print("Twilio receiver closed after shutdown")
             else:
                 print(f"Twilio receiver error: {e}")
+        finally:
+            if shutdown_event and not shutdown_event.is_set():
+                shutdown_event.set()
+            try:
+                audio_queue.put_nowait(None)
+            except asyncio.QueueFull:
+                pass
 
     async def twilio_websocket_handler(
         self,
         twilio_ws: WebSocket,
-        user_id: str = "demo-user",
+        user_id: Optional[str] = None,
         restaurant_twilio_number: Optional[str] = None,
         caller_number: Optional[str] = None,
     ) -> None:
@@ -757,9 +788,11 @@ class WebSocketService:
         streamsid_queue: asyncio.Queue = asyncio.Queue()
         to_number_queue: asyncio.Queue = asyncio.Queue()
         from_number_queue: asyncio.Queue = asyncio.Queue()
+        call_sid_queue: asyncio.Queue = asyncio.Queue()
         shutdown_event = asyncio.Event()
         state = self._create_stream_state()
         call_id = None
+        call_sid: Optional[str] = None
         transport: Optional[Transport] = None
         restaurant_record: Optional[Dict[str, Any]] = None
         deepgram_api_key: Optional[str] = None
@@ -773,6 +806,7 @@ class WebSocketService:
                 shutdown_event,
                 to_number_queue,
                 from_number_queue,
+                call_sid_queue,
             )
         )
 
@@ -788,6 +822,11 @@ class WebSocketService:
                     caller_number = await asyncio.wait_for(from_number_queue.get(), timeout=0.5)
                 except asyncio.TimeoutError:
                     caller_number = None
+            if not call_sid:
+                try:
+                    call_sid = await asyncio.wait_for(call_sid_queue.get(), timeout=0.5)
+                except asyncio.TimeoutError:
+                    call_sid = None
 
             restaurant_record = self.restaurant_service.get_restaurant_by_twilio(restaurant_twilio_number)
             if not restaurant_record:
@@ -829,7 +868,10 @@ class WebSocketService:
                         await sts_ws.send(config_message_json)
 
                         transport = self._build_function_router(sts_ws)
-                        call_id = self._create_call_session(user_id, call_resources.restaurant_id)
+                        resolved_user_id = self._resolve_user_id(caller_number, user_id)
+                        call_id = self._create_call_session(
+                            resolved_user_id, call_resources.restaurant_id, call_sid, None
+                        )
 
                         tasks = [
                             twilio_task,
@@ -849,7 +891,16 @@ class WebSocketService:
                             ),
                         ]
                         try:
-                            await asyncio.gather(*tasks)
+                            done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+                            # Signal shutdown to remaining tasks and drain queues
+                            shutdown_event.set()
+                            try:
+                                audio_queue.put_nowait(None)
+                            except asyncio.QueueFull:
+                                pass
+                            for task in pending:
+                                task.cancel()
+                            await asyncio.gather(*tasks, return_exceptions=True)
                         finally:
                             for task in tasks:
                                 if not task.done():
@@ -880,25 +931,11 @@ class WebSocketService:
             except Exception:
                 pass
 
-            if state.conversation_history:
-                call_log = {
-                    "call_id": call_id,
-                    "conversation": state.conversation_history,
-                    "timestamp": datetime.utcnow().isoformat(),
-                }
-                transcript_user_id = None
+            if state.conversation_history and call_id:
                 try:
-                    transcript_user_id = int(user_id)
-                except (TypeError, ValueError):
-                    transcript_user_id = None
-                try:
-                    self.transcript_service.create_transcript(
-                        transcript_user_id,
-                        None,
-                        call_log,
-                    )
-                    print("[INFO] Transcript stored to MySQL")
+                    self.call_service.save_call_transcript(call_id, state.conversation_history)
+                    print("[INFO] Transcript stored to Calls.call_transcript")
                 except Exception as exc:
-                    print(f"[WARN] Failed to store transcript: {exc}")
+                    print(f"[WARN] Failed to store call transcript: {exc}")
 
             print("🔌 Twilio connection closed")
