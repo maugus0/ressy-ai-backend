@@ -134,13 +134,13 @@ class MySQLCallRepository(MySQLBaseRepository):
         search_term: Optional[str] = None,
     ) -> tuple[List[Dict], int]:
         """List calls with filtering, pagination, and optional transcript search."""
-        allowed_sort = {
+        allowed_sort_columns = {
             "created_at": "c.created_at",
             "duration": "c.call_duration",
             "restaurant_id": "c.restaurant_id",
             "started_at": "c.started_at",
         }
-        sort_column = allowed_sort.get(sort_by, "c.created_at")
+        sort_column = allowed_sort_columns.get(sort_by, "c.created_at")
         order = "DESC" if str(sort_order).lower() == "desc" else "ASC"
         offset = max(page - 1, 0) * limit
 

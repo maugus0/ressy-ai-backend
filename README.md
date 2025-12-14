@@ -56,7 +56,6 @@ ressy-ai-backend/
 │   │   ├── admin_users.py     # Ressy platform admin management endpoints
 │   │   ├── client_users.py    # Client CRM user management endpoints
 │   │   ├── restaurants.py     # Restaurant endpoints (Admin CRM)
-│   │   ├── transcripts.py     # Transcript management endpoints
 │   │   ├── users.py           # User management endpoints
 │   │   └── websocket.py       # WebSocket handler
 │   ├── integrations/          # Third-party integrations
@@ -637,9 +636,6 @@ All endpoints are organized by tags in the Swagger documentation:
   - `GET /api/v1/client/calls/search` - Search own calls/transcripts
   - `GET /api/v1/client/calls/export` - CSV export with same filters
 
-- **Transcripts** (`/api/v1/transcripts/*`):
-  - `DELETE /api/v1/transcripts/{transcript_id}` - Delete transcript (admin only)
-
 - **Reservations** (`/api/v1/reservations/*`):
   - `GET /api/v1/reservations/availability/{restaurant_id}` - Get table availability
   - `POST /api/v1/reservations/booking/{restaurant_id}/slot_locks` - Lock booking slot
@@ -927,7 +923,6 @@ Migrations should be run in numerical order (001, 002, 003, etc.) as they have d
 7. **007_create_order_details.sql** - Creates the Order_Details table (depends on Orders and Menus)
 8. **008_create_faqs.sql** - Creates the FAQs table (depends on Restaurants)
 9. **009_create_notifications.sql** - Creates the Notifications table (depends on Orders)
-10. **010_create_transcripts.sql** - Creates the Transcripts table (depends on Users and Orders)
 11. **011_create_table_availability_requests.sql** - Creates the Table_Availability_Requests table (depends on Restaurants)
 12. **012_create_slot_bookings.sql** - Creates the Slot_Bookings table (depends on Restaurants)
 13. **013_create_reservations.sql** - Creates the Reservations table (depends on Table_Availability_Requests, Slot_Bookings, and Users)
@@ -939,7 +934,7 @@ Migrations should be run in numerical order (001, 002, 003, etc.) as they have d
 19. **018_add_reservation_type_flag.sql** - Adds reservation type flag
 20. **019_add_restaurant_opening_closing_times.sql** - Adds restaurant opening/closing times
 21. **020_add_party_size_and_special_request.sql** - Adds party size and special request fields
-22. **021_add_call_transcript_to_calls.sql** - Adds `call_transcript` JSON column and indexes to `Calls`
+22. **022_add_call_transcript_to_calls.sql** - Adds `call_transcript` JSON column and indexes to `Calls`
 
 ### Database Schema Overview
 
@@ -968,7 +963,6 @@ Migrations should be run in numerical order (001, 002, 003, etc.) as they have d
 
 - **FAQs**: Frequently asked questions
 - **Notifications**: Order notifications
-- **Transcripts**: Call transcripts and logs
 - **Calls**: Call session information
 - **Auth_Sessions**: JWT refresh token sessions
 
@@ -1061,7 +1055,7 @@ The WebSocket handler supports multitenancy, where each incoming call is automat
     - Users table (user details)
     - Orders table (order info)
     - Order_Details table (order items)
-    - Transcripts table (full conversation)
+    - Calls table (call metadata and conversation transcript)
 ```
 
 ### Twilio Number Extraction

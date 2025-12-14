@@ -302,7 +302,12 @@ class WebSocketService:
             except Exception as exc:
                 print(f"[WARN] Failed to resolve/create user for phone {caller_phone}: {exc}")
 
-        return fallback_user_id or "unknown"
+        if fallback_user_id:
+            return fallback_user_id
+
+        # No phone or provided user – use a safe sentinel to avoid breaking FK/analytics
+        print("[WARN] No caller phone or provided user_id; defaulting to user_id=0 for call logging")
+        return "0"
 
     def _build_function_router(self, sts_ws) -> Transport:
         registry = FunctionRegistry()
