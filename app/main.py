@@ -20,6 +20,7 @@ from app.api import (
     client_restaurant,
     client_users,
     dashboard_reservations,
+    dashboard_users,
     faqs,
     menus,
     opentable,
@@ -87,6 +88,10 @@ app = FastAPI(
             "description": "Dashboard reservation management with RBAC. Admins access all restaurants; managers access only their restaurant's reservations.",
         },
         {
+            "name": "Dashboard Users",
+            "description": "Dashboard-specific user management with RBAC. Create, view, update, and delete customer users. Includes user statistics (calls, orders, reservations). Admins can access all restaurants; restaurant managers can only access their own restaurant's users.",
+        },
+        {
             "name": "Admin Users",
             "description": "Ressy platform admin user management (Admin CRM). Create, update, list, reset passwords, and manage roles.",
         },
@@ -125,6 +130,7 @@ app.include_router(faqs.router)
 app.include_router(opentable.router, prefix="/api/v1/opentable", tags=["OpenTable"])
 app.include_router(reservations.router, prefix="/api/v1/reservations", tags=["Reservations"])
 app.include_router(dashboard_reservations.router, prefix="/api/v1/dashboard", tags=["Dashboard Reservations"])
+app.include_router(dashboard_users.router, prefix="/api/v1/dashboard", tags=["Dashboard Users"])
 app.include_router(admin_users.router, tags=["Admin Users"])
 app.include_router(client_users.router, tags=["Client Users"])
 app.include_router(client_faqs.router)
