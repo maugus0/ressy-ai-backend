@@ -311,7 +311,7 @@ async def create_user(
     description="""
 Retrieve all users who have interacted with a specific restaurant.
 
-Users are identified through their reservations and calls to the restaurant.
+Users are identified through their direct dashboard associations (User_Restaurant_Metadata), reservations, and calls to the restaurant.
 Each user includes statistics: total calls, total orders, and total reservations.
 
 **Authentication**: Required (admin or restaurant manager role)
