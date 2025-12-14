@@ -209,7 +209,7 @@ class MySQLUserRepository(MySQLBaseRepository):
                 OR c.restaurant_id = %s
             )
         """
-        params: List = [restaurant_id, restaurant_id, str(restaurant_id)]
+        params: List = [restaurant_id, restaurant_id, restaurant_id]
 
         if search:
             query += """ AND (
