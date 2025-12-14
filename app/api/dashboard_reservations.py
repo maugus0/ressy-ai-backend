@@ -13,7 +13,7 @@ from app.middleware.auth_middleware import require_role
 from app.services.reservation_service import ReservationService
 
 security = HTTPBearer(
-    scheme_name="BearerAuth",  # Match the security scheme name defined in main.py
+    scheme_name="HTTPBearer",  # Standardized security scheme name
     description="Enter your JWT access token obtained from login endpoints",
 )
 

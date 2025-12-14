@@ -34,27 +34,7 @@ from app.api.websocket import twilio_websocket_handler
 app = FastAPI(
     title="RessyAI Backend",
     version="1.0.0",
-    description="""
-FastAPI backend for a multitenant, function-calling voice agent.
-Manages restaurants, menus, orders, reservations, calls, and user authentication.
-
-## Authentication
-
-This API uses **Bearer Token** authentication (JWT). To authenticate:
-
-1. **Login** using one of the login endpoints:
-   - `/api/v1/auth/admin/login` - For Ressy platform admins
-   - `/api/v1/auth/client/login` - For restaurant managers/staff
-
-2. **Copy the `access_token`** from the login response
-
-3. **Click "Authorize" button** (top right) and enter: `Bearer <your_access_token>`
-
-4. All subsequent requests will include the authentication header
-
-### Token Refresh
-Access tokens expire. Use `/api/v1/auth/refresh` with your `refresh_token` to get new tokens.
-""",
+    description="FastAPI backend for a multitenant, function-calling voice agent. Manages restaurants, menus, orders, reservations, calls, and user authentication.",
     swagger_ui_parameters={
         "persistAuthorization": True,  # Keep auth token across page refreshes
         "displayRequestDuration": True,  # Show request duration
@@ -108,7 +88,7 @@ Access tokens expire. Use `/api/v1/auth/refresh` with your `refresh_token` to ge
         },
         {
             "name": "Dashboard Reservations",
-            "description": "Dashboard-specific reservation management with RBAC. Create, finalize, view, update notes, and manage reservations. Admins can access all restaurants; restaurant managers can only access their own restaurant's reservations.",
+            "description": "Dashboard reservation management with RBAC. Admins access all restaurants; managers access only their restaurant's reservations.",
         },
         {
             "name": "Admin Users",
@@ -273,14 +253,34 @@ def custom_openapi():
     if "components" not in openapi_schema:
         openapi_schema["components"] = {}
 
-    # Merge security schemes (keep existing ones from routers, add/update BearerAuth)
+    # Get existing security schemes from routers
     existing_schemes = openapi_schema["components"].get("securitySchemes", {})
-    existing_schemes["BearerAuth"] = {
+
+    # Standardize to a single HTTPBearer scheme
+    # Remove any duplicates and keep only HTTPBearer
+    if "BearerAuth" in existing_schemes:
+        # If BearerAuth exists, rename it to HTTPBearer for consistency
+        existing_schemes["HTTPBearer"] = existing_schemes.pop("BearerAuth")
+
+    # Ensure HTTPBearer exists with proper configuration
+    existing_schemes["HTTPBearer"] = {
         "type": "http",
         "scheme": "bearer",
         "bearerFormat": "JWT",
         "description": "Enter your JWT access token obtained from login endpoints. Just paste the token without 'Bearer ' prefix.",
     }
+
+    # Remove any other bearer token schemes to avoid duplicates
+    schemes_to_remove = [
+        key
+        for key in existing_schemes.keys()
+        if key != "HTTPBearer"
+        and existing_schemes[key].get("type") == "http"
+        and existing_schemes[key].get("scheme") == "bearer"
+    ]
+    for key in schemes_to_remove:
+        del existing_schemes[key]
+
     openapi_schema["components"]["securitySchemes"] = existing_schemes
 
     app.openapi_schema = openapi_schema
