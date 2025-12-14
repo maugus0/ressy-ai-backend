@@ -46,7 +46,6 @@ def test_api_routes_import():
             orders,
             reservations,
             restaurants,
-            transcripts,
             users,
             websocket,
         )
@@ -67,7 +66,6 @@ def test_api_routes_import():
         assert order_history is not None
         assert orders is not None
         assert reservations is not None
-        assert transcripts is not None
         assert dashboard_reservations is not None
         assert websocket is not None
     except Exception as e:

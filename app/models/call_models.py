@@ -44,3 +44,67 @@ class CallHistoryPage(BaseModel):
 
     items: List[CallResponse] = Field(..., description="List of call records")
     total: int = Field(..., description="Total number of calls matching the query")
+
+
+class ConversationEntry(BaseModel):
+    """Single message in a call transcript conversation."""
+
+    sequence: int = Field(..., description="Order of the message in the conversation")
+    role: str = Field(..., description="Speaker role (user/assistant)")
+    content: str = Field(..., description="Transcript content")
+    timestamp: Optional[str] = Field(None, description="Timestamp when the message was recorded")
+
+
+class CallListItem(BaseModel):
+    """Summary row for admin/client call listings."""
+
+    call_id: str
+    restaurant_id: Optional[str] = None
+    restaurant_name: Optional[str] = None
+    caller_phone: Optional[str] = None
+    duration_seconds: int
+    status: str
+    started_at: Optional[str] = None
+    has_transcript: bool = False
+    summary: Optional[str] = None
+
+
+class CallListPage(BaseModel):
+    """Paginated call list wrapper."""
+
+    items: List[CallListItem]
+    total: int
+    page: int
+    limit: int
+
+
+class CallDetailResponse(BaseModel):
+    """Detailed call view including transcript."""
+
+    call_id: str
+    restaurant_id: Optional[str] = None
+    restaurant_name: Optional[str] = None
+    caller_phone: Optional[str] = None
+    status: str
+    started_at: Optional[str] = None
+    ended_at: Optional[str] = None
+    duration_seconds: int
+    cost: float
+    call_direction: Optional[str] = None
+    has_transcript: bool = False
+    transcript: Optional[List[ConversationEntry]] = None
+    order_id: Optional[str] = None
+    reservation_id: Optional[str] = None
+    summary: Optional[str] = None
+
+
+class CallAnalyticsV2(BaseModel):
+    """Extended analytics payload for admin/client dashboards."""
+
+    total_calls: int
+    average_call_duration: float
+    status_breakdown: dict
+    time_of_day_distribution: List[dict]
+    top_restaurants: Optional[List[dict]] = None
+    calls_by_day_of_week: Optional[List[dict]] = None
+    conversion_rates: Optional[dict] = None

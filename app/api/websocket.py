@@ -13,7 +13,6 @@ async def twilio_websocket_handler(websocket: WebSocket):
     )
     await websocket_service.twilio_websocket_handler(
         websocket,
-        user_id="demo-user",
         restaurant_twilio_number=restaurant_twilio_number,
         caller_number=caller_number,
     )
