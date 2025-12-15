@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 
 from app.middleware.auth_middleware import require_role
 from app.services.reservation_service import ReservationService
+from app.services.sse_service import SSEService, ReservationEventSubtype
 
 security = HTTPBearer(
     scheme_name="HTTPBearer",  # Standardized security scheme name
@@ -21,6 +22,7 @@ router = APIRouter(
     dependencies=[Depends(security)],  # Apply security to all endpoints in this router
 )
 reservation_service = ReservationService()
+sse_service = SSEService()
 
 
 # ---------- Pydantic models for request validation ----------
@@ -277,6 +279,22 @@ async def create_reservation_direct(
             special_request=request.special_request,
             notes=request.notes,
         )
+
+        # Emit SSE event for new reservation
+        await sse_service.emit_reservation_event(
+            restaurant_id=restaurant_id,
+            reservation_id=result["reservation_id"],
+            subtype=ReservationEventSubtype.NEW_RESERVATION,
+            data={
+                "reservation_id": result["reservation_id"],
+                "confirmation_number": result.get("confirmation_number"),
+                "status": result.get("status"),
+                "date_time": result.get("date_time"),
+                "party_size": result.get("party_size"),
+                "name": result.get("name"),
+            },
+        )
+
         return result
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -553,7 +571,8 @@ async def update_reservation(
     current_user: dict = Depends(require_role(["admin", "client"])),
 ):
     """Update reservation and slot booking details."""
-    _check_reservation_access(current_user, reservation_id)
+    reservation = _check_reservation_access(current_user, reservation_id)
+    restaurant_id = reservation.get("restaurant_id")
 
     try:
         result = reservation_service.update_reservation(
@@ -567,6 +586,21 @@ async def update_reservation(
             last_cancel_time=request.last_cancel_time,
             manage_reservation_url=request.manage_reservation_url,
         )
+
+        # Emit SSE event for reservation update
+        if restaurant_id:
+            await sse_service.emit_reservation_event(
+                restaurant_id=restaurant_id,
+                reservation_id=reservation_id,
+                subtype=ReservationEventSubtype.RESERVATION_UPDATED,
+                data={
+                    "reservation_id": reservation_id,
+                    "status": result.get("status"),
+                    "date_time": result.get("date_time"),
+                    "party_size": result.get("party_size"),
+                },
+            )
+
         return result
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -616,10 +650,24 @@ async def cancel_reservation_dashboard(
     current_user: dict = Depends(require_role(["admin", "client"])),
 ):
     """Cancel a reservation."""
-    _check_reservation_access(current_user, reservation_id)
+    reservation = _check_reservation_access(current_user, reservation_id)
+    restaurant_id = reservation.get("restaurant_id")
 
     try:
         result = reservation_service.cancel_reservation(reservation_id=reservation_id)
+
+        # Emit SSE event for reservation cancellation
+        if restaurant_id:
+            await sse_service.emit_reservation_event(
+                restaurant_id=restaurant_id,
+                reservation_id=reservation_id,
+                subtype=ReservationEventSubtype.RESERVATION_CANCELLED,
+                data={
+                    "reservation_id": reservation_id,
+                    "status": "cancelled",
+                },
+            )
+
         return result
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))

@@ -19,6 +19,7 @@ from app.api import (
     client_menus,
     client_restaurant,
     client_users,
+    dashboard_orders,
     dashboard_reservations,
     dashboard_users,
     faqs,
@@ -28,6 +29,8 @@ from app.api import (
     orders,
     reservations,
     restaurants,
+    sse,
+    transcripts,
     users,
 )
 from app.api.websocket import twilio_websocket_handler
@@ -100,6 +103,14 @@ app = FastAPI(
             "description": "Restaurant client CRM users (admins/staff). Admin CRM can manage all; Client CRM (manager role) manages its own restaurant. Self password reset supported.",
         },
         {
+            "name": "Dashboard Orders",
+            "description": "Dashboard-specific order management with RBAC. Create, view, update, cancel, and soft-delete orders. Admins can access all restaurants; restaurant managers can only access their own restaurant's orders.",
+        },
+        {
+            "name": "Server-Sent Events",
+            "description": "Real-time event streaming via Server-Sent Events (SSE). Subscribe to live updates for orders, reservations, and escalations. Supports escalation events (user_requested, internal_server_error, suspected_spam), order events (new_order, order_updated, order_cancelled), and reservation events (new_reservation, reservation_updated, reservation_cancelled).",
+        },
+        {
             "name": "Voice Agent",
             "description": "Voice agent webhook endpoints for Twilio integration. Handles incoming calls and WebSocket streaming for the voice agent system.",
         },
@@ -130,7 +141,9 @@ app.include_router(faqs.router)
 app.include_router(opentable.router, prefix="/api/v1/opentable", tags=["OpenTable"])
 app.include_router(reservations.router, prefix="/api/v1/reservations", tags=["Reservations"])
 app.include_router(dashboard_reservations.router, prefix="/api/v1/dashboard", tags=["Dashboard Reservations"])
+app.include_router(dashboard_orders.router, prefix="/api/v1/dashboard", tags=["Dashboard Orders"])
 app.include_router(dashboard_users.router, prefix="/api/v1/dashboard", tags=["Dashboard Users"])
+app.include_router(sse.router, prefix="/api/v1/sse", tags=["Server-Sent Events"])
 app.include_router(admin_users.router, tags=["Admin Users"])
 app.include_router(client_users.router, tags=["Client Users"])
 app.include_router(client_faqs.router)
