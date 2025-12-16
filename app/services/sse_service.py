@@ -244,6 +244,7 @@ class SSEService:
             connection = self.connections.get(connection_id)
             if connection and connection.connected:
                 await connection.send(event)
+
     async def emit_event(
         self,
         event_type: SSEEventType,
