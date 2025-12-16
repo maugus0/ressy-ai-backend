@@ -3,6 +3,7 @@ Dashboard API routes for order management.
 Includes RBAC: admins can access all, managers can only access their restaurant's orders.
 """
 
+import logging
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -12,6 +13,8 @@ from pydantic import BaseModel, Field
 from app.middleware.auth_middleware import require_role
 from app.services.dashboard_order_service import DashboardOrderService
 from app.services.sse_service import OrderEventSubtype, SSEService
+
+logger = logging.getLogger(__name__)
 
 security = HTTPBearer(
     scheme_name="BearerAuth",
@@ -409,18 +412,21 @@ async def create_order(
             status=request.status or "pending",
         )
 
-        # Emit SSE event for new order
-        await sse_service.emit_order_event(
-            restaurant_id=restaurant_id,
-            order_id=result["order_id"],
-            subtype=OrderEventSubtype.NEW_ORDER,
-            data={
-                "order_id": result["order_id"],
-                "status": result["status"],
-                "total_amount": result["total_amount"],
-                "customer_name": result.get("customer_name"),
-            },
-        )
+        # Emit SSE event for new order (non-blocking, log errors)
+        try:
+            await sse_service.emit_order_event(
+                restaurant_id=restaurant_id,
+                order_id=result["order_id"],
+                subtype=OrderEventSubtype.NEW_ORDER,
+                data={
+                    "order_id": result["order_id"],
+                    "status": result["status"],
+                    "total_amount": result["total_amount"],
+                    "customer_name": result.get("customer_name"),
+                },
+            )
+        except Exception as sse_error:
+            logger.error(f"Failed to emit SSE event for new order {result['order_id']}: {sse_error}")
 
         return result
     except ValueError as e:
@@ -706,18 +712,21 @@ async def update_order(
             customization=request.customization,
         )
 
-        # Emit SSE event for order update
+        # Emit SSE event for order update (non-blocking, log errors)
         if restaurant_id:
-            await sse_service.emit_order_event(
-                restaurant_id=restaurant_id,
-                order_id=order_id,
-                subtype=OrderEventSubtype.ORDER_UPDATED,
-                data={
-                    "order_id": order_id,
-                    "status": result.get("status"),
-                    "total_amount": result.get("total_amount"),
-                },
-            )
+            try:
+                await sse_service.emit_order_event(
+                    restaurant_id=restaurant_id,
+                    order_id=order_id,
+                    subtype=OrderEventSubtype.ORDER_UPDATED,
+                    data={
+                        "order_id": order_id,
+                        "status": result.get("status"),
+                        "total_amount": result.get("total_amount"),
+                    },
+                )
+            except Exception as sse_error:
+                logger.error(f"Failed to emit SSE event for order update {order_id}: {sse_error}")
 
         return result
     except ValueError as e:
@@ -802,17 +811,20 @@ async def update_order_status(
     try:
         result = order_service.update_order_status(order_id=order_id, status=request.status)
 
-        # Emit SSE event for order update
+        # Emit SSE event for order update (non-blocking, log errors)
         if restaurant_id:
-            await sse_service.emit_order_event(
-                restaurant_id=restaurant_id,
-                order_id=order_id,
-                subtype=OrderEventSubtype.ORDER_UPDATED,
-                data={
-                    "order_id": order_id,
-                    "status": request.status,
-                },
-            )
+            try:
+                await sse_service.emit_order_event(
+                    restaurant_id=restaurant_id,
+                    order_id=order_id,
+                    subtype=OrderEventSubtype.ORDER_UPDATED,
+                    data={
+                        "order_id": order_id,
+                        "status": request.status,
+                    },
+                )
+            except Exception as sse_error:
+                logger.error(f"Failed to emit SSE event for order status update {order_id}: {sse_error}")
 
         return result
     except ValueError as e:
@@ -895,17 +907,20 @@ async def cancel_order(
     try:
         result = order_service.cancel_order(order_id=order_id)
 
-        # Emit SSE event for order cancellation
+        # Emit SSE event for order cancellation (non-blocking, log errors)
         if restaurant_id:
-            await sse_service.emit_order_event(
-                restaurant_id=restaurant_id,
-                order_id=order_id,
-                subtype=OrderEventSubtype.ORDER_CANCELLED,
-                data={
-                    "order_id": order_id,
-                    "status": "cancelled",
-                },
-            )
+            try:
+                await sse_service.emit_order_event(
+                    restaurant_id=restaurant_id,
+                    order_id=order_id,
+                    subtype=OrderEventSubtype.ORDER_CANCELLED,
+                    data={
+                        "order_id": order_id,
+                        "status": "cancelled",
+                    },
+                )
+            except Exception as sse_error:
+                logger.error(f"Failed to emit SSE event for order cancellation {order_id}: {sse_error}")
 
         return result
     except ValueError as e:

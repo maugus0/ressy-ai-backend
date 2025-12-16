@@ -9,12 +9,15 @@ Supports the following event types:
 
 import asyncio
 import json
+import logging
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, AsyncGenerator, Dict, List, Optional, Set
 
 from pydantic import BaseModel, Field
+
+logger = logging.getLogger(__name__)
 
 
 class SSEEventType(str, Enum):
@@ -57,7 +60,7 @@ class SSEEvent(BaseModel):
     event_type: SSEEventType
     subtype: Optional[str] = None
     restaurant_id: Optional[int] = None
-    timestamp: str = Field(default_factory=lambda: datetime.utcnow().isoformat() + "Z")
+    timestamp: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"))
     data: Dict[str, Any] = Field(default_factory=dict)
 
     def to_sse_format(self) -> str:
@@ -87,14 +90,18 @@ class SSEConnection:
         self.restaurant_id = restaurant_id
         self.user_id = user_id
         self.is_admin = is_admin
-        self.queue: asyncio.Queue = asyncio.Queue()
+        self.queue: asyncio.Queue = asyncio.Queue(maxsize=100)
         self.connected = True
-        self.created_at = datetime.utcnow()
+        self.created_at = datetime.now(timezone.utc)
 
     async def send(self, event: SSEEvent):
-        """Add event to connection queue."""
+        """Add event to connection queue. Disconnect if queue is full."""
         if self.connected:
-            await self.queue.put(event)
+            try:
+                self.queue.put_nowait(event)
+            except asyncio.QueueFull:
+                logger.warning(f"[SSE] Queue full for connection {self.connection_id}, disconnecting slow client")
+                await self.disconnect()
 
     async def disconnect(self):
         """Mark connection as disconnected."""
@@ -113,7 +120,7 @@ class SSEService:
     """
 
     _instance = None
-    _lock = asyncio.Lock()
+    _lock: Optional[asyncio.Lock] = None
 
     def __new__(cls):
         """Singleton pattern for SSE service."""
@@ -126,6 +133,9 @@ class SSEService:
         if self._initialized:
             return
         self._initialized = True
+        # Initialize lock at runtime when event loop is available
+        if SSEService._lock is None:
+            SSEService._lock = asyncio.Lock()
         self.connections: Dict[str, SSEConnection] = {}
         self.restaurant_connections: Dict[int, Set[str]] = {}
         self.admin_connections: Set[str] = set()

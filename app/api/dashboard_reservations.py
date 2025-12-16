@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 
 from app.middleware.auth_middleware import require_role
 from app.services.reservation_service import ReservationService
-from app.services.sse_service import SSEService, ReservationEventSubtype
+from app.services.sse_service import ReservationEventSubtype, SSEService
 
 security = HTTPBearer(
     scheme_name="HTTPBearer",  # Standardized security scheme name

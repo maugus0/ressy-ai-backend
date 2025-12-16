@@ -1,6 +1,7 @@
 import asyncio
 import traceback
 import urllib.parse
+from contextlib import asynccontextmanager
 from xml.sax.saxutils import escape
 
 from fastapi import FastAPI, WebSocket
@@ -30,15 +31,27 @@ from app.api import (
     reservations,
     restaurants,
     sse,
-    transcripts,
     users,
 )
 from app.api.websocket import twilio_websocket_handler
+from app.services.sse_service import SSEService
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Lifespan context manager for startup and shutdown events."""
+    # Startup
+    yield
+    # Shutdown: cleanup SSE connections and heartbeat task
+    sse_service = SSEService()
+    await sse_service.shutdown()
+
 
 app = FastAPI(
     title="RessyAI Backend",
     version="1.0.0",
     description="FastAPI backend for a multitenant, function-calling voice agent. Manages restaurants, menus, orders, reservations, calls, and user authentication.",
+    lifespan=lifespan,
     swagger_ui_parameters={
         "persistAuthorization": True,  # Keep auth token across page refreshes
         "displayRequestDuration": True,  # Show request duration
