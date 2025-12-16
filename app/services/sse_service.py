@@ -215,7 +215,9 @@ class SSEService:
 
     async def _broadcast_to_all(self, event: SSEEvent):
         """Broadcast event to all connections."""
-        for connection in list(self.connections.values()):
+        async with self._lock:
+            connections = list(self.connections.values())
+        for connection in connections:
             if connection.connected:
                 await connection.send(event)
 
