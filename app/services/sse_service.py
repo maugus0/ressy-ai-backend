@@ -221,20 +221,17 @@ class SSEService:
 
     async def _broadcast_to_restaurant(self, restaurant_id: int, event: SSEEvent):
         """Broadcast event to connections for a specific restaurant."""
-        # Get restaurant-specific connections
-        connection_ids: Set[str] = set()
-
-        if restaurant_id in self.restaurant_connections:
-            connection_ids.update(self.restaurant_connections[restaurant_id])
-
-        # Also include admin connections (they see everything)
-        connection_ids.update(self.admin_connections)
-
+        # Get a consistent snapshot of connection IDs under the lock
+        async with self._lock:
+            connection_ids: Set[str] = set()
+            if restaurant_id in self.restaurant_connections:
+                connection_ids.update(self.restaurant_connections[restaurant_id])
+            connection_ids.update(self.admin_connections)
+        # Now iterate and send events outside the lock
         for connection_id in connection_ids:
             connection = self.connections.get(connection_id)
             if connection and connection.connected:
                 await connection.send(event)
-
     async def emit_event(
         self,
         event_type: SSEEventType,
