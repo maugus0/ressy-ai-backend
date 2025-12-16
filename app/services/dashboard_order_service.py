@@ -120,7 +120,7 @@ class DashboardOrderService:
             "customization": customization or {},
         }
 
-        order_id = self.order_repo.create_order(user_id or 0, order_data)
+        order_id = self.order_repo.create_order(user_id, order_data)
 
         return {
             "order_id": order_id,
