@@ -250,13 +250,16 @@ async def voice(request: Request):
             stream_url = f"{stream_url}?{query}"
 
         stream_url = escape(stream_url)
+        # Escape user-controlled values before embedding into TwiML XML.
+        from_number_xml = escape(from_number) if from_number is not None else ""
+        to_number_xml = escape(to_number) if to_number is not None else ""
         print(f"Final websocket stream URL: {stream_url}")
         xml = f"""
         <Response>
             <Connect>
                 <Stream url="{stream_url}">
-                    <Parameter name="fromNumber" value="{from_number}"/>
-                    <Parameter name="toNumber" value="{to_number}"/>
+                    <Parameter name="fromNumber" value="{from_number_xml}"/>
+                    <Parameter name="toNumber" value="{to_number_xml}"/>
                 </Stream>
             </Connect>
         </Response>
