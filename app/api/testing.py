@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import re
 from typing import Any, Optional
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 from xml.sax.saxutils import escape
 
 import requests
-from fastapi import APIRouter, Depends, HTTPException, Request, status
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from pydantic import BaseModel, Field, field_validator
 
 from app.config import settings
 from app.middleware.auth_middleware import get_current_admin_user
@@ -16,6 +17,14 @@ from app.services.restaurant_service import RestaurantService
 class OutboundCallRequest(BaseModel):
     restaurant_id: int = Field(..., description="Restaurant ID whose Twilio settings to use")
     to_number: str = Field(..., description="Your phone number to call (E.164)")
+
+    @field_validator("to_number")
+    @classmethod
+    def validate_e164(cls, value: str) -> str:
+        v = str(value or "").strip()
+        if not re.fullmatch(r"^\+[1-9]\d{7,14}$", v):
+            raise ValueError("to_number must be a valid E.164 phone number (e.g. +14155551234)")
+        return v
 
 
 class OutboundCallResponse(BaseModel):
@@ -48,7 +57,7 @@ callback_router = APIRouter(prefix="/api/v1/testing", tags=["Outbound Calls"])
     description="Receives Twilio status callbacks for outbound test calls. Protected by OUTBOUND_CALL_STATUS_SECRET.",
     include_in_schema=False,
 )
-async def twilio_status_callback(request: Request, secret: str | None = None):
+async def twilio_status_callback(request: Request, secret: str | None = Query(None)):
     if settings.OUTBOUND_CALL_STATUS_SECRET and secret != settings.OUTBOUND_CALL_STATUS_SECRET:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid status callback secret")
     # Twilio sends StatusCallback as application/x-www-form-urlencoded.
@@ -138,7 +147,7 @@ def place_outbound_call(
     url = f"https://api.twilio.com/2010-04-01/Accounts/{account_sid}/Calls.json"
     status_cb = f"{str(settings.PUBLIC_BASE_URL).rstrip('/')}/api/v1/testing/twilio-status"
     if settings.OUTBOUND_CALL_STATUS_SECRET:
-        status_cb = f"{status_cb}?secret={settings.OUTBOUND_CALL_STATUS_SECRET}"
+        status_cb = f"{status_cb}?secret={quote(settings.OUTBOUND_CALL_STATUS_SECRET, safe='')}"
     data = {
         "To": payload.to_number,
         "From": effective_from,
@@ -161,12 +170,12 @@ def place_outbound_call(
             detail=f"Twilio API error ({resp.status_code}): {resp.text}",
         )
 
-    payload = resp.json()
+    response_data = resp.json()
     return {
         "message": "Outbound call initiated",
-        "twilio_call_sid": payload.get("sid"),
-        "to": payload.get("to"),
-        "from": payload.get("from"),
-        "status": payload.get("status"),
+        "twilio_call_sid": response_data.get("sid"),
+        "to": response_data.get("to"),
+        "from": response_data.get("from"),
+        "status": response_data.get("status"),
         "stream_url": stream_url,
     }

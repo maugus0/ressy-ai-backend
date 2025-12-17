@@ -35,11 +35,9 @@ class MySQLCallRepository(MySQLBaseRepository):
         Update call cost and duration, mark as completed.
         """
         # Keep stored Calls.cost aligned with admin cost breakdown logic.
-        twilio_cost = duration_seconds * float(settings.TWILIO_COST_PER_SECOND) * float(settings.TWILIO_MULTIPLIER)
-        deepgram_cost = (
-            duration_seconds * float(settings.DEEPGRAM_COST_PER_SECOND) * float(settings.DEEPGRAM_MULTIPLIER)
-        )
-        ressy_cost = (twilio_cost + deepgram_cost) * float(settings.RESSY_MULTIPLIER)
+        twilio_cost = duration_seconds * settings.TWILIO_COST_PER_SECOND * settings.TWILIO_MULTIPLIER
+        deepgram_cost = duration_seconds * settings.DEEPGRAM_COST_PER_SECOND * settings.DEEPGRAM_MULTIPLIER
+        ressy_cost = (twilio_cost + deepgram_cost) * settings.RESSY_MULTIPLIER
 
         query = """
             UPDATE Calls

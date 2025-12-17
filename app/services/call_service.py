@@ -238,6 +238,8 @@ class CallService:
         - twilio_cost = duration_seconds * TWILIO_COST_PER_SECOND * TWILIO_MULTIPLIER
         - deepgram_cost = duration_seconds * DEEPGRAM_COST_PER_SECOND * DEEPGRAM_MULTIPLIER
         - ressy_cost = (twilio_cost + deepgram_cost) * RESSY_MULTIPLIER
+
+        RESSY_MULTIPLIER is a *total multiplier* (e.g. 1.2 means 20% markup on top of Twilio+Deepgram).
         """
         normalized_id = self._safe_int(call_id)
         if normalized_id is None:
@@ -266,11 +268,9 @@ class CallService:
                 )
 
         duration_seconds = int(call_row.get("call_duration") or 0)
-        twilio_cost = duration_seconds * float(settings.TWILIO_COST_PER_SECOND) * float(settings.TWILIO_MULTIPLIER)
-        deepgram_cost = (
-            duration_seconds * float(settings.DEEPGRAM_COST_PER_SECOND) * float(settings.DEEPGRAM_MULTIPLIER)
-        )
-        ressy_cost = (twilio_cost + deepgram_cost) * float(settings.RESSY_MULTIPLIER)
+        twilio_cost = duration_seconds * settings.TWILIO_COST_PER_SECOND * settings.TWILIO_MULTIPLIER
+        deepgram_cost = duration_seconds * settings.DEEPGRAM_COST_PER_SECOND * settings.DEEPGRAM_MULTIPLIER
+        ressy_cost = (twilio_cost + deepgram_cost) * settings.RESSY_MULTIPLIER
 
         started_at = call_row.get("started_at")
         ended_at = call_row.get("ended_at")

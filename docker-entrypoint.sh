@@ -97,8 +97,12 @@ if [ "${RUN_STARTUP_SCRIPTS_EFFECTIVE}" = "true" ]; then
     echo "Running startup scripts in ./scripts ..."
     echo "=========================================="
 
-    # Run any .sql files in scripts/ (if present)
-    for sql_file in scripts/*.sql; do
+    # Safer globbing (no-match -> empty)
+    shopt -s nullglob
+
+    # Run allowlisted .sql files in scripts/ (if present).
+    # NOTE: executing arbitrary SQL at startup can be dangerous; keep this list explicit.
+    for sql_file in scripts/update_session_tracking_columns.sql; do
         if [ -f "$sql_file" ]; then
             echo "Running SQL script: ${sql_file}"
             python3 - "$sql_file" <<'PY'
@@ -130,13 +134,15 @@ PY
     done
 
     # Run all python scripts in scripts/ (excluding run_migrations.py)
-    for py_file in $(ls -1 scripts/*.py | sort); do
+    for py_file in scripts/*.py; do
         if [[ "$py_file" == "scripts/run_migrations.py" ]]; then
             continue
         fi
         echo "Running Python script: ${py_file}"
         python3 "$py_file"
     done
+
+    shopt -u nullglob
 else
     echo "Skipping startup scripts (RUN_STARTUP_SCRIPTS=${RUN_STARTUP_SCRIPTS:-unset}, SEED_DATABASE=${SEED_DATABASE:-unset})"
 fi
