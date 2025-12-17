@@ -186,6 +186,12 @@ Create a `.env` file in the repository root:
 # Deepgram Configuration
 DEEPGRAM_API_KEY=your_deepgram_api_key
 
+# Outbound Calls (Developer Testing)
+# Public base URL reachable by Twilio/ngrok (used for WS streaming and status callbacks)
+PUBLIC_BASE_URL=https://your-ngrok-domain.ngrok-free.dev
+# Optional: protects the Twilio status callback endpoint
+OUTBOUND_CALL_STATUS_SECRET=your_random_secret
+
 # MySQL Database Configuration
 DB_HOST=localhost
 DB_NAME=ressy
@@ -218,6 +224,15 @@ JWT_AUTH_AUDIENCE=ressy-auth
 # Application Settings
 USE_MOCK_DATA=false
 ALLOW_DB_FAILURE=false  # Set to 'true' for testing without database
+
+# Call Cost Settings (USD)
+# Admin call detail returns a cost breakdown: twilio_cost, deepgram_cost, ressy_cost.
+# Defaults are set to "highest discussed" per-second costs, but can be overridden here.
+TWILIO_COST_PER_SECOND=0.0003
+DEEPGRAM_COST_PER_SECOND=0.0013333333
+TWILIO_MULTIPLIER=1.0
+DEEPGRAM_MULTIPLIER=1.0
+RESSY_MULTIPLIER=1.0
 ```
 
 > Store RSA keys as multiline PEM strings; when injecting via environment variables, escape newlines as `\n` if your process manager requires single-line values.
@@ -310,15 +325,24 @@ cp .env.example .env
 
 Key variables:
 - `DB_PASSWORD` - MySQL root password (default: `rootpassword`)
-- `SEED_DATABASE` - Set to `false` to skip seeding (default: `true`)
+- `SEED_DATABASE` - Legacy toggle; set to `false` to skip running startup scripts (default: `true`)
+- `RUN_STARTUP_SCRIPTS` - Preferred toggle; overrides `SEED_DATABASE` when set
 - `JWT_PRIVATE_KEY` / `JWT_PUBLIC_KEY` - RSA keys for authentication
 - `DEEPGRAM_API_KEY` - Required for voice features
+- `PUBLIC_BASE_URL` - Public URL (e.g. ngrok) reachable by Twilio for voice/WebSocket flows
+- `TWILIO_COST_PER_SECOND` / `DEEPGRAM_COST_PER_SECOND` + multipliers - Cost calculation settings
 
 **Disabling database seeding:**
 
 ```bash
 # Set in .env or pass directly
 SEED_DATABASE=false docker-compose up --build -d
+```
+
+**Disabling startup scripts (preferred):**
+
+```bash
+RUN_STARTUP_SCRIPTS=false docker-compose up --build -d
 ```
 
 ### Docker (Backend Only)
@@ -623,11 +647,14 @@ All endpoints are organized by tags in the Swagger documentation:
 
 - **Calls (Admin CRM)** (`/api/v1/admin/calls*`):
   - `GET /api/v1/admin/calls` - Paginated calls across all restaurants with filters/sort
-  - `GET /api/v1/admin/calls/{call_id}` - Call detail with transcript
+  - `GET /api/v1/admin/calls/{call_id}` - Call detail with transcript and cost breakdown (`twilio_cost`, `deepgram_cost`, `ressy_cost`)
   - `GET /api/v1/admin/calls/analytics` - Aggregated analytics (date range required)
   - `GET /api/v1/admin/calls/search` - Search by caller phone/transcript with filters
   - `DELETE /api/v1/admin/calls/{call_id}` - Delete call (and transcript)
   - `DELETE /api/v1/admin/calls/{call_id}/transcript` - Delete transcript only
+
+- **Outbound Calls (Developer Testing)** (`/api/v1/testing*`):
+  - `POST /api/v1/testing/outbound-call` - Place an outbound call to your phone from a restaurant's Twilio number (admin auth required)
 
 - **Calls (Client CRM)** (`/api/v1/client/calls*`) – auto-scoped to authenticated restaurant:
   - `GET /api/v1/client/calls` - Paginated calls with filters/sort

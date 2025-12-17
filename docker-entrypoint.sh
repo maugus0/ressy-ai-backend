@@ -82,11 +82,16 @@ python3 scripts/run_migrations.py
 # ============================================================================
 # ⚠️  SECURITY WARNING
 # ============================================================================
-# RUN_STARTUP_SCRIPTS defaults to 'true' which will execute *all* scripts in
-# ./scripts on container start. Some of these scripts may seed sample data with
-# default credentials. For production: set RUN_STARTUP_SCRIPTS=false.
+# Backward-compatible toggle:
+# - SEED_DATABASE is the legacy flag used by docs/docker-compose to control whether startup scripts run.
+# - RUN_STARTUP_SCRIPTS is the newer, explicit flag.
+#
+# If RUN_STARTUP_SCRIPTS is not set, it will default to SEED_DATABASE (default true).
+# Some scripts may seed sample data with default credentials.
+# For production: set SEED_DATABASE=false (legacy) or RUN_STARTUP_SCRIPTS=false (preferred).
 # ============================================================================
-if [ "${RUN_STARTUP_SCRIPTS:-true}" = "true" ]; then
+RUN_STARTUP_SCRIPTS_EFFECTIVE="${RUN_STARTUP_SCRIPTS:-${SEED_DATABASE:-true}}"
+if [ "${RUN_STARTUP_SCRIPTS_EFFECTIVE}" = "true" ]; then
     echo ""
     echo "=========================================="
     echo "Running startup scripts in ./scripts ..."
@@ -133,7 +138,7 @@ PY
         python3 "$py_file"
     done
 else
-    echo "Skipping startup scripts (RUN_STARTUP_SCRIPTS=${RUN_STARTUP_SCRIPTS})"
+    echo "Skipping startup scripts (RUN_STARTUP_SCRIPTS=${RUN_STARTUP_SCRIPTS:-unset}, SEED_DATABASE=${SEED_DATABASE:-unset})"
 fi
 
 echo ""

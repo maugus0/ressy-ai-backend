@@ -5,7 +5,7 @@ from urllib.parse import urlencode
 from xml.sax.saxutils import escape
 
 import requests
-from fastapi import APIRouter, Body, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
 
 from app.config import settings
@@ -48,9 +48,12 @@ callback_router = APIRouter(prefix="/api/v1/testing", tags=["Outbound Calls"])
     description="Receives Twilio status callbacks for outbound test calls. Protected by OUTBOUND_CALL_STATUS_SECRET.",
     include_in_schema=False,
 )
-async def twilio_status_callback(payload: dict = Body(...), secret: str | None = None):  # noqa: ANN401
+async def twilio_status_callback(request: Request, secret: str | None = None):
     if settings.OUTBOUND_CALL_STATUS_SECRET and secret != settings.OUTBOUND_CALL_STATUS_SECRET:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid status callback secret")
+    # Twilio sends StatusCallback as application/x-www-form-urlencoded.
+    form = await request.form()
+    payload = dict(form)
     # Log the callback for debugging (contains CallStatus, CallSid, ErrorCode, etc.)
     print(f"[Twilio StatusCallback] {payload}")
     return {"ok": True}
