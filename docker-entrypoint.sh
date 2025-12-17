@@ -123,23 +123,42 @@ conn = mysql.connector.connect(
 cur = conn.cursor()
 sql = sql_path.read_text(encoding="utf-8")
 statements = [s.strip() for s in sql.split(";") if s.strip()]
-for stmt in statements:
-    cur.execute(stmt)
-conn.commit()
-cur.close()
-conn.close()
-print(f"✅ Ran SQL script: {sql_path.name}")
+try:
+    for stmt in statements:
+        try:
+            cur.execute(stmt)
+        except Exception as exc:
+            print(f"[ERROR] Failed SQL statement in {sql_path.name}: {exc}")
+            print(f"[ERROR] Statement (first 200 chars): {stmt[:200]}")
+            raise
+    conn.commit()
+    print(f"✅ Ran SQL script: {sql_path.name}")
+finally:
+    try:
+        cur.close()
+    except Exception:
+        pass
+    try:
+        conn.close()
+    except Exception:
+        pass
 PY
         fi
     done
 
-    # Run all python scripts in scripts/ (excluding run_migrations.py)
-    for py_file in scripts/*.py; do
-        if [[ "$py_file" == "scripts/run_migrations.py" ]]; then
-            continue
+    # Run allowlisted python scripts in scripts/.
+    # NOTE: executing arbitrary Python at startup can be dangerous; keep this list explicit.
+    startup_py_scripts=(
+        "scripts/add_sample_admins.py"
+        "scripts/add_sample_data.py"
+        "scripts/load_sample_users_and_calls.py"
+        "scripts/seed_pilot_restaurants.py"
+    )
+    for py_file in "${startup_py_scripts[@]}"; do
+        if [ -f "$py_file" ]; then
+            echo "Running Python script: ${py_file}"
+            python3 "$py_file"
         fi
-        echo "Running Python script: ${py_file}"
-        python3 "$py_file"
     done
 
     shopt -u nullglob

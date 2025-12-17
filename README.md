@@ -178,6 +178,8 @@ pip install -r requirements.txt
 pip install -r requirements-dev.txt
 ```
 
+**Virtualenv folder name:** we recommend using `.venv/` at the repo root (supported: `.venv/`, `venv/`, `env/`).
+
 ### 3. Environment Configuration
 
 Create a `.env` file in the repository root:
