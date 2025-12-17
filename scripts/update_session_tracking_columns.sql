@@ -5,9 +5,10 @@
 -- Make it idempotent so restarts don't crash with "Duplicate column" errors.
 
 -- Important: This file is executed by a simple Python runner that executes
--- statements one-by-one without fetching result sets. Avoid statements that
--- return rows (e.g., `SELECT ...`) or mysql-connector may raise "Unread result found".
---
+-- statements one-by-one without fetching result sets. Avoid standalone statements
+-- that return rows to the client (e.g., top-level `SELECT ...`), or mysql-connector
+-- may raise "Unread result found". It is safe to use SELECT subqueries inside
+-- expressions such as SET/IF, since they do not return result sets to the client.
 -- MySQL doesn't support `ADD COLUMN IF NOT EXISTS` in all environments.
 -- Use dynamic SQL + information_schema checks (via SET subqueries) instead.
 
