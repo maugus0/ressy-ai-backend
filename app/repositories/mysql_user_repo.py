@@ -244,16 +244,17 @@ class MySQLUserRepository(MySQLBaseRepository):
             FROM Calls
             WHERE user_id = %s AND restaurant_id = %s
         """
+        # NOTE: Calls.restaurant_id is stored as VARCHAR in our schema, so we compare against str(restaurant_id).
         calls_result = self._execute_query(calls_query, (phone_number, str(restaurant_id)))
         total_calls = calls_result[0]["total"] if calls_result else 0
 
-        # Count orders (orders don't have direct restaurant link, count all for user)
+        # Count orders for this restaurant
         orders_query = """
             SELECT COUNT(*) as total
             FROM Orders
-            WHERE user_id = %s
+            WHERE user_id = %s AND restaurant_id = %s AND deleted_at IS NULL
         """
-        orders_result = self._execute_query(orders_query, (user_id,))
+        orders_result = self._execute_query(orders_query, (user_id, restaurant_id))
         total_orders = orders_result[0]["total"] if orders_result else 0
 
         # Count reservations for this restaurant
@@ -313,6 +314,7 @@ class MySQLUserRepository(MySQLBaseRepository):
                 WHERE user_id IN ({phone_placeholders}) AND restaurant_id = %s
                 GROUP BY user_id
             """
+            # NOTE: Calls.restaurant_id is stored as VARCHAR in our schema, so we compare against str(restaurant_id).
             calls_params = tuple(phone_numbers) + (str(restaurant_id),)
             calls_results = self._execute_query(calls_query, calls_params)
             for row in calls_results:
@@ -321,14 +323,15 @@ class MySQLUserRepository(MySQLBaseRepository):
                     uid = phone_to_user_id[phone]
                     result[uid]["total_calls"] = row["total"]
 
-        # Batch query for orders
+        # Batch query for orders for this restaurant
         orders_query = f"""
             SELECT user_id, COUNT(*) as total
             FROM Orders
-            WHERE user_id IN ({placeholders})
+            WHERE user_id IN ({placeholders}) AND restaurant_id = %s AND deleted_at IS NULL
             GROUP BY user_id
         """
-        orders_results = self._execute_query(orders_query, tuple(user_ids))
+        orders_params = tuple(user_ids) + (restaurant_id,)
+        orders_results = self._execute_query(orders_query, orders_params)
         for row in orders_results:
             uid = row["user_id"]
             if uid in result:
