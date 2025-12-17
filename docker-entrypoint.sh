@@ -78,35 +78,92 @@ echo "Running database migrations..."
 echo "=========================================="
 python3 scripts/run_migrations.py
 
-# Check if seeding is enabled
+# Run startup scripts (all scripts/ folder scripts)
 # ============================================================================
-# ⚠️  SECURITY WARNING: Database Seeding
+# ⚠️  SECURITY WARNING
 # ============================================================================
-# WARNING: SEED_DATABASE defaults to 'true' which will create sample admin accounts
-# with DEFAULT CREDENTIALS. These credentials are publicly documented and should
-# NEVER be used in production environments.
+# Backward-compatible toggle:
+# - SEED_DATABASE is the legacy flag used by docs/docker-compose to control whether startup scripts run.
+# - RUN_STARTUP_SCRIPTS is the newer, explicit flag.
 #
-# For production: Set SEED_DATABASE=false in your .env file or environment variables.
+# If RUN_STARTUP_SCRIPTS is not set, it will default to SEED_DATABASE (default true).
+# Some scripts may seed sample data with default credentials.
+# For production: set SEED_DATABASE=false (legacy) or RUN_STARTUP_SCRIPTS=false (preferred).
 # ============================================================================
-if [ "${SEED_DATABASE:-true}" = "true" ]; then
+RUN_STARTUP_SCRIPTS_EFFECTIVE="${RUN_STARTUP_SCRIPTS:-${SEED_DATABASE:-true}}"
+if [ "${RUN_STARTUP_SCRIPTS_EFFECTIVE}" = "true" ]; then
     echo ""
     echo "=========================================="
-    echo "⚠️  WARNING: Seeding database with sample data..."
-    echo "⚠️  This creates accounts with DEFAULT CREDENTIALS - NOT FOR PRODUCTION!"
+    echo "Running startup scripts in ./scripts ..."
     echo "=========================================="
-    
-    # Add sample admins (creates roles, permissions, and admin users)
-    python3 scripts/add_sample_admins.py
-    
-    # Add sample restaurant data (menu items, FAQs)
-    python3 scripts/add_sample_data.py
-    
-    # Seed pilot restaurants with menus (4 restaurants)
-    python3 scripts/seed_pilot_restaurants.py
-    
-    echo "Database seeding completed!"
+
+    # Safer globbing (no-match -> empty)
+    shopt -s nullglob
+
+    # Run allowlisted .sql files in scripts/ (if present).
+    # NOTE: executing arbitrary SQL at startup can be dangerous; keep this list explicit.
+    for sql_file in scripts/update_session_tracking_columns.sql; do
+        if [ -f "$sql_file" ]; then
+            echo "Running SQL script: ${sql_file}"
+            python3 - "$sql_file" <<'PY'
+import os
+import sys
+from pathlib import Path
+
+import mysql.connector
+
+sql_path = Path(sys.argv[1])
+conn = mysql.connector.connect(
+    host=os.getenv("DB_HOST", "localhost"),
+    port=int(os.getenv("DB_PORT", 3306)),
+    user=os.getenv("DB_USERNAME", "root"),
+    password=os.getenv("DB_PASSWORD", "root"),
+    database=os.getenv("DB_NAME", "ressy"),
+)
+cur = conn.cursor()
+sql = sql_path.read_text(encoding="utf-8")
+statements = [s.strip() for s in sql.split(";") if s.strip()]
+try:
+    for stmt in statements:
+        try:
+            cur.execute(stmt)
+        except Exception as exc:
+            print(f"[ERROR] Failed SQL statement in {sql_path.name}: {exc}")
+            print(f"[ERROR] Statement (first 200 chars): {stmt[:200]}")
+            raise
+    conn.commit()
+    print(f"✅ Ran SQL script: {sql_path.name}")
+finally:
+    try:
+        cur.close()
+    except Exception:
+        pass
+    try:
+        conn.close()
+    except Exception:
+        pass
+PY
+        fi
+    done
+
+    # Run allowlisted python scripts in scripts/.
+    # NOTE: executing arbitrary Python at startup can be dangerous; keep this list explicit.
+    startup_py_scripts=(
+        "scripts/add_sample_admins.py"
+        "scripts/add_sample_data.py"
+        "scripts/load_sample_users_and_calls.py"
+        "scripts/seed_pilot_restaurants.py"
+    )
+    for py_file in "${startup_py_scripts[@]}"; do
+        if [ -f "$py_file" ]; then
+            echo "Running Python script: ${py_file}"
+            python3 "$py_file"
+        fi
+    done
+
+    shopt -u nullglob
 else
-    echo "Skipping database seeding (SEED_DATABASE=${SEED_DATABASE})"
+    echo "Skipping startup scripts (RUN_STARTUP_SCRIPTS=${RUN_STARTUP_SCRIPTS:-unset}, SEED_DATABASE=${SEED_DATABASE:-unset})"
 fi
 
 echo ""

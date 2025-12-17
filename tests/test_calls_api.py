@@ -86,6 +86,9 @@ def test_admin_call_detail_and_delete_transcript(client_with_calls):
     detail = resp.json()
     assert detail["call_id"] == "1"
     assert detail["has_transcript"] is True
+    assert "twilio_cost" in detail
+    assert "deepgram_cost" in detail
+    assert "ressy_cost" in detail
     assert detail["transcript"][0]["content"] == "book a table"
 
     delete_tx = client.delete("/api/v1/admin/calls/1/transcript")

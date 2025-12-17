@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.middleware.auth_middleware import get_current_admin_user
-from app.models.call_models import CallAnalyticsV2, CallDetailResponse, CallListPage
+from app.models.call_models import AdminCallDetailResponse, CallAnalyticsV2, CallListPage
 from app.services.call_service import CallService
 
 
@@ -226,7 +226,7 @@ async def search_admin_calls(
     "/calls/{call_id}",
     summary="Get call details (Admin)",
     description="Return full call details, metadata, and transcript for the specified call.",
-    response_model=CallDetailResponse,
+    response_model=AdminCallDetailResponse,
     response_description="Call detail with transcript (if available).",
     openapi_extra={
         "responses": {
@@ -243,7 +243,9 @@ async def search_admin_calls(
                             "started_at": "2024-03-01T12:00:00Z",
                             "ended_at": "2024-03-01T12:05:20Z",
                             "duration_seconds": 320,
-                            "cost": 0.12,
+                            "twilio_cost": 0.096,
+                            "deepgram_cost": 0.4266666667,
+                            "ressy_cost": 0.5226666667,
                             "call_direction": "inbound",
                             "has_transcript": True,
                             "transcript": [
@@ -265,7 +267,7 @@ async def search_admin_calls(
     },
 )
 async def get_admin_call_detail(call_id: str, call_service: CallService = Depends(get_call_service)):
-    call, _ = call_service.get_call_detail(call_id)
+    call = call_service.get_admin_call_detail(call_id)
     if not call:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Call not found")
     return call

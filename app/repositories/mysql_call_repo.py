@@ -5,6 +5,7 @@ MySQL Call Repository for call session operations.
 import json
 from typing import Dict, List, Optional
 
+from app.config import settings
 from app.repositories.mysql_base import MySQLBaseRepository
 
 
@@ -33,8 +34,10 @@ class MySQLCallRepository(MySQLBaseRepository):
         """
         Update call cost and duration, mark as completed.
         """
-        cost_per_second = 0.00009833
-        total_cost = duration_seconds * cost_per_second
+        # Keep stored Calls.cost aligned with admin cost breakdown logic.
+        twilio_cost = duration_seconds * settings.TWILIO_COST_PER_SECOND * settings.TWILIO_MULTIPLIER
+        deepgram_cost = duration_seconds * settings.DEEPGRAM_COST_PER_SECOND * settings.DEEPGRAM_MULTIPLIER
+        ressy_cost = (twilio_cost + deepgram_cost) * settings.RESSY_MULTIPLIER
 
         query = """
             UPDATE Calls
@@ -45,8 +48,12 @@ class MySQLCallRepository(MySQLBaseRepository):
                 updated_at = NOW()
             WHERE id = %s
         """
-        self._execute_update(query, (duration_seconds, total_cost, call_id))
-        print(f"[MySQL] Updated call: call_id={call_id}, duration={duration_seconds}s, cost=${total_cost:.6f}")
+        self._execute_update(query, (duration_seconds, ressy_cost, call_id))
+        print(
+            "[MySQL] Updated call: "
+            f"call_id={call_id}, duration={duration_seconds}s, "
+            f"twilio_cost=${twilio_cost:.6f}, deepgram_cost=${deepgram_cost:.6f}, ressy_cost=${ressy_cost:.6f}"
+        )
 
     def update_call_transcript(self, call_id: int, conversation: List[Dict]) -> None:
         """

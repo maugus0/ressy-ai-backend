@@ -32,21 +32,26 @@ warning() {
 # Activate the local virtual environment if available so the tooling commands
 # (black, isort, etc.) are reachable even outside an activated shell.
 VENV_ACTIVATED=false
-if [ -d ".venv" ]; then
-    if [ -f ".venv/bin/activate" ]; then
+# Support common venv folder names: .venv (preferred), venv (legacy), env.
+for VENV_DIR in ".venv" "venv" "env"; do
+    if [ -d "${VENV_DIR}" ]; then
+        if [ -f "${VENV_DIR}/bin/activate" ]; then
         # shellcheck source=/dev/null
-        source ".venv/bin/activate"
-        VENV_ACTIVATED=true
-    elif [ -f ".venv/Scripts/activate" ]; then
+            source "${VENV_DIR}/bin/activate"
+            VENV_ACTIVATED=true
+            break
+        elif [ -f "${VENV_DIR}/Scripts/activate" ]; then
         # shellcheck source=/dev/null
         # Windows virtual environments place activate inside Scripts
-        source ".venv/Scripts/activate"
-        VENV_ACTIVATED=true
+            source "${VENV_DIR}/Scripts/activate"
+            VENV_ACTIVATED=true
+            break
+        fi
     fi
-fi
+done
 
 if [ "${VENV_ACTIVATED}" = true ]; then
-    success "Using Python virtual environment at .venv"
+    success "Using Python virtual environment"
 else
     warning "Proceeding without activating .venv (tools must already be on PATH)"
 fi
