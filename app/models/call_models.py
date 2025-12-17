@@ -98,6 +98,31 @@ class CallDetailResponse(BaseModel):
     summary: Optional[str] = None
 
 
+class AdminCallDetailResponse(BaseModel):
+    """Admin-only detailed call view including cost breakdown."""
+
+    call_id: str
+    restaurant_id: Optional[str] = None
+    restaurant_name: Optional[str] = None
+    caller_phone: Optional[str] = None
+    status: str
+    started_at: Optional[str] = None
+    ended_at: Optional[str] = None
+    duration_seconds: int
+
+    # Admin cost breakdown (computed from duration + env-configured rates/multipliers)
+    twilio_cost: float = Field(..., description="Computed Twilio cost in USD")
+    deepgram_cost: float = Field(..., description="Computed Deepgram cost in USD")
+    ressy_cost: float = Field(..., description="Computed Ressy cost in USD (based on Twilio+Deepgram and multiplier)")
+
+    call_direction: Optional[str] = None
+    has_transcript: bool = False
+    transcript: Optional[List[ConversationEntry]] = None
+    order_id: Optional[str] = None
+    reservation_id: Optional[str] = None
+    summary: Optional[str] = None
+
+
 class CallAnalyticsV2(BaseModel):
     """Extended analytics payload for admin/client dashboards."""
 

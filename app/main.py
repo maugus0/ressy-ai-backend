@@ -31,6 +31,7 @@ from app.api import (
     reservations,
     restaurants,
     sse,
+    testing,
     users,
 )
 from app.api.websocket import twilio_websocket_handler
@@ -127,6 +128,10 @@ app = FastAPI(
             "name": "Voice Agent",
             "description": "Voice agent webhook endpoints for Twilio integration. Handles incoming calls and WebSocket streaming for the voice agent system.",
         },
+        {
+            "name": "Outbound Calls",
+            "description": "Developer testing endpoints to initiate outbound calls (typically to a developer's own phone) to validate the end-to-end call flow without needing an external caller to dial in.",
+        },
     ],
 )
 
@@ -163,6 +168,10 @@ app.include_router(client_faqs.router)
 app.include_router(client_menus.router)
 app.include_router(client_restaurant.router)
 app.include_router(client_client_users.router)
+
+# Testing routes (keep last)
+app.include_router(testing.router)
+app.include_router(testing.callback_router)
 
 
 # WebSocket Endpoint
@@ -212,11 +221,22 @@ async def voice(request: Request):
     """
     try:
         form = await request.form()
-        from_number = form.get("From")
-        to_number = form.get("To")
+        # Twilio provides these in POST form data.
+        twilio_from = form.get("From")
+        twilio_to = form.get("To")
         call_sid = form.get("CallSid")
 
-        print(f"Incoming call call_sid={call_sid} from={from_number} to={to_number}")
+        # For outbound calls, Twilio flips To/From (To becomes the destination phone).
+        # Allow overriding toNumber/fromNumber via query params so we can keep websocket routing consistent:
+        # - toNumber should be the restaurant's Twilio number
+        # - fromNumber should be the end-caller phone (developer/user)
+        qp = request.query_params
+        from_number = qp.get("fromNumber") or twilio_from
+        to_number = qp.get("toNumber") or twilio_to
+
+        print(
+            f"Incoming call call_sid={call_sid} from={twilio_from} to={twilio_to} (ws from={from_number} to={to_number})"
+        )
         params = {
             "fromNumber": from_number,
             "toNumber": to_number,

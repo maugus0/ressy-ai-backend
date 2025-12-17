@@ -47,6 +47,24 @@ class Settings:
     # Minimum gap in seconds after last agent audio chunk before clearing Twilio buffer when user starts speaking
     BARGE_IN_CLEAR_SECONDS = float(os.getenv("BARGE_IN_CLEAR_SECONDS", "0.5"))
 
+    # Cost settings (USD)
+    #
+    # Defaults are intentionally set to the *highest* per-second costs discussed:
+    # - Twilio Voice (Mobile/PSTN, US): ~$0.018 / minute -> 0.0003 / second
+    # - Deepgram (Pay-as-you-go "basic services"): ~$0.08 / minute -> 0.0013333333 / second
+    #
+    # Multipliers allow applying markups/adjustments without code changes.
+    TWILIO_COST_PER_SECOND = float(os.getenv("TWILIO_COST_PER_SECOND", "0.0003"))
+    DEEPGRAM_COST_PER_SECOND = float(os.getenv("DEEPGRAM_COST_PER_SECOND", "0.0013333333"))
+    TWILIO_MULTIPLIER = float(os.getenv("TWILIO_MULTIPLIER", "1.0"))
+    DEEPGRAM_MULTIPLIER = float(os.getenv("DEEPGRAM_MULTIPLIER", "1.0"))
+    RESSY_MULTIPLIER = float(os.getenv("RESSY_MULTIPLIER", "1.0"))
+
+    # Public base URL (reachable by Twilio) used for outbound-call testing webhooks.
+    # Example: https://api.example.com
+    PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "http://localhost:5001")
+    OUTBOUND_CALL_STATUS_SECRET = os.getenv("OUTBOUND_CALL_STATUS_SECRET", "")
+
     # Database Tables
     RESTAURANTS_TABLE: str = "Restaurants"
     MENUS_TABLE: str = "Menus"

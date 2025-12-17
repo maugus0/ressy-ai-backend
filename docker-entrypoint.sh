@@ -78,35 +78,62 @@ echo "Running database migrations..."
 echo "=========================================="
 python3 scripts/run_migrations.py
 
-# Check if seeding is enabled
+# Run startup scripts (all scripts/ folder scripts)
 # ============================================================================
-# ⚠️  SECURITY WARNING: Database Seeding
+# ⚠️  SECURITY WARNING
 # ============================================================================
-# WARNING: SEED_DATABASE defaults to 'true' which will create sample admin accounts
-# with DEFAULT CREDENTIALS. These credentials are publicly documented and should
-# NEVER be used in production environments.
-#
-# For production: Set SEED_DATABASE=false in your .env file or environment variables.
+# RUN_STARTUP_SCRIPTS defaults to 'true' which will execute *all* scripts in
+# ./scripts on container start. Some of these scripts may seed sample data with
+# default credentials. For production: set RUN_STARTUP_SCRIPTS=false.
 # ============================================================================
-if [ "${SEED_DATABASE:-true}" = "true" ]; then
+if [ "${RUN_STARTUP_SCRIPTS:-true}" = "true" ]; then
     echo ""
     echo "=========================================="
-    echo "⚠️  WARNING: Seeding database with sample data..."
-    echo "⚠️  This creates accounts with DEFAULT CREDENTIALS - NOT FOR PRODUCTION!"
+    echo "Running startup scripts in ./scripts ..."
     echo "=========================================="
-    
-    # Add sample admins (creates roles, permissions, and admin users)
-    python3 scripts/add_sample_admins.py
-    
-    # Add sample restaurant data (menu items, FAQs)
-    python3 scripts/add_sample_data.py
-    
-    # Seed pilot restaurants with menus (4 restaurants)
-    python3 scripts/seed_pilot_restaurants.py
-    
-    echo "Database seeding completed!"
+
+    # Run any .sql files in scripts/ (if present)
+    for sql_file in scripts/*.sql; do
+        if [ -f "$sql_file" ]; then
+            echo "Running SQL script: ${sql_file}"
+            python3 - "$sql_file" <<'PY'
+import os
+import sys
+from pathlib import Path
+
+import mysql.connector
+
+sql_path = Path(sys.argv[1])
+conn = mysql.connector.connect(
+    host=os.getenv("DB_HOST", "localhost"),
+    port=int(os.getenv("DB_PORT", 3306)),
+    user=os.getenv("DB_USERNAME", "root"),
+    password=os.getenv("DB_PASSWORD", "root"),
+    database=os.getenv("DB_NAME", "ressy"),
+)
+cur = conn.cursor()
+sql = sql_path.read_text(encoding="utf-8")
+statements = [s.strip() for s in sql.split(";") if s.strip()]
+for stmt in statements:
+    cur.execute(stmt)
+conn.commit()
+cur.close()
+conn.close()
+print(f"✅ Ran SQL script: {sql_path.name}")
+PY
+        fi
+    done
+
+    # Run all python scripts in scripts/ (excluding run_migrations.py)
+    for py_file in $(ls -1 scripts/*.py | sort); do
+        if [[ "$py_file" == "scripts/run_migrations.py" ]]; then
+            continue
+        fi
+        echo "Running Python script: ${py_file}"
+        python3 "$py_file"
+    done
 else
-    echo "Skipping database seeding (SEED_DATABASE=${SEED_DATABASE})"
+    echo "Skipping startup scripts (RUN_STARTUP_SCRIPTS=${RUN_STARTUP_SCRIPTS})"
 fi
 
 echo ""

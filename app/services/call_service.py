@@ -1,7 +1,9 @@
 import json
 from typing import List, Optional
 
+from app.config import settings
 from app.models.call_models import (
+    AdminCallDetailResponse,
     AnalyticsResponse,
     CallAnalyticsV2,
     CallDetailResponse,
@@ -226,6 +228,71 @@ class CallService:
                 reservation_id=call_row.get("reservation_id"),
             ),
             False,
+        )
+
+    def get_admin_call_detail(self, call_id: str) -> Optional[AdminCallDetailResponse]:
+        """
+        Admin-only call detail with cost breakdown computed from duration.
+
+        Note: This does NOT rely on the stored `Calls.cost` column; it computes:
+        - twilio_cost = duration_seconds * TWILIO_COST_PER_SECOND * TWILIO_MULTIPLIER
+        - deepgram_cost = duration_seconds * DEEPGRAM_COST_PER_SECOND * DEEPGRAM_MULTIPLIER
+        - ressy_cost = (twilio_cost + deepgram_cost) * RESSY_MULTIPLIER
+        """
+        normalized_id = self._safe_int(call_id)
+        if normalized_id is None:
+            return None
+
+        call_row = self.call_repo.get_call_by_id(normalized_id)
+        if not call_row:
+            return None
+
+        transcript_entries: List[ConversationEntry] = []
+        raw_transcript = call_row.get("call_transcript")
+        if raw_transcript:
+            try:
+                payload = json.loads(raw_transcript)
+                conversation = payload.get("conversation") if isinstance(payload, dict) else []
+            except (json.JSONDecodeError, TypeError):
+                conversation = []
+            for entry in conversation or []:
+                transcript_entries.append(
+                    ConversationEntry(
+                        sequence=int(entry.get("sequence") or len(transcript_entries) + 1),
+                        role=str(entry.get("role") or "assistant"),
+                        content=str(entry.get("content") or entry.get("text") or ""),
+                        timestamp=entry.get("timestamp"),
+                    )
+                )
+
+        duration_seconds = int(call_row.get("call_duration") or 0)
+        twilio_cost = duration_seconds * float(settings.TWILIO_COST_PER_SECOND) * float(settings.TWILIO_MULTIPLIER)
+        deepgram_cost = (
+            duration_seconds * float(settings.DEEPGRAM_COST_PER_SECOND) * float(settings.DEEPGRAM_MULTIPLIER)
+        )
+        ressy_cost = (twilio_cost + deepgram_cost) * float(settings.RESSY_MULTIPLIER)
+
+        started_at = call_row.get("started_at")
+        ended_at = call_row.get("ended_at")
+
+        return AdminCallDetailResponse(
+            call_id=str(call_row.get("id")),
+            restaurant_id=str(call_row.get("restaurant_id")) if call_row.get("restaurant_id") is not None else None,
+            restaurant_name=call_row.get("restaurant_name"),
+            caller_phone=call_row.get("caller_phone"),
+            status=call_row.get("call_status", "unknown"),
+            started_at=str(started_at) if started_at is not None else None,
+            ended_at=str(ended_at) if ended_at else None,
+            duration_seconds=duration_seconds,
+            twilio_cost=float(twilio_cost),
+            deepgram_cost=float(deepgram_cost),
+            ressy_cost=float(ressy_cost),
+            call_direction=call_row.get("call_direction"),
+            has_transcript=bool(transcript_entries),
+            transcript=transcript_entries or None,
+            summary=call_row.get("outcome"),
+            order_id=call_row.get("order_id"),
+            reservation_id=call_row.get("reservation_id"),
         )
 
     def delete_call(self, call_id: str) -> bool:
