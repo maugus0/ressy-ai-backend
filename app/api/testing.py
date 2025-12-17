@@ -7,7 +7,7 @@ from xml.sax.saxutils import escape
 
 import requests
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.config import settings
 from app.middleware.auth_middleware import get_current_admin_user
@@ -34,6 +34,7 @@ class OutboundCallResponse(BaseModel):
     from_number: Optional[str] = Field(None, alias="from")
     status: Optional[str] = None
     stream_url: str
+    model_config = ConfigDict(populate_by_name=True)
 
 
 def get_restaurant_service() -> RestaurantService:
@@ -74,6 +75,7 @@ async def twilio_status_callback(request: Request, secret: str | None = Query(No
     description="Testing-only endpoint to place an outbound call to any number using a restaurant's Twilio settings. "
     "The call is configured to connect to this backend's `/voice` webhook for streaming to Deepgram.",
     response_model=OutboundCallResponse,
+    response_model_by_alias=True,
     openapi_extra={
         "requestBody": {
             "content": {
