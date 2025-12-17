@@ -272,6 +272,85 @@ class MySQLUserRepository(MySQLBaseRepository):
             "total_reservations": total_reservations,
         }
 
+    def get_users_statistics(self, user_ids: List[int], restaurant_id: int) -> Dict[int, Dict]:
+        """
+        Get statistics for multiple users at a specific restaurant (batch query).
+        Avoids N+1 query problem by fetching all stats in bulk.
+
+        Args:
+            user_ids: List of user IDs to get statistics for
+            restaurant_id: Restaurant ID to scope statistics to
+
+        Returns:
+            Dict mapping user_id -> {total_calls, total_orders, total_reservations}
+        """
+        if not user_ids:
+            return {}
+
+        # Initialize result dict with zeros for all users
+        result: Dict[int, Dict] = {
+            uid: {"total_calls": 0, "total_orders": 0, "total_reservations": 0} for uid in user_ids
+        }
+
+        # Get phone numbers for all users (needed for calls lookup)
+        placeholders = ", ".join(["%s"] * len(user_ids))
+        phone_query = f"""
+            SELECT id, phone_number
+            FROM Users
+            WHERE id IN ({placeholders})
+        """
+        phone_results = self._execute_query(phone_query, tuple(user_ids))
+        user_id_to_phone = {r["id"]: r["phone_number"] for r in phone_results}
+        phone_to_user_id = {r["phone_number"]: r["id"] for r in phone_results if r["phone_number"]}
+
+        # Batch query for calls (calls use phone_number as user_id column)
+        phone_numbers = [p for p in user_id_to_phone.values() if p]
+        if phone_numbers:
+            phone_placeholders = ", ".join(["%s"] * len(phone_numbers))
+            calls_query = f"""
+                SELECT user_id as phone_number, COUNT(*) as total
+                FROM Calls
+                WHERE user_id IN ({phone_placeholders}) AND restaurant_id = %s
+                GROUP BY user_id
+            """
+            calls_params = tuple(phone_numbers) + (str(restaurant_id),)
+            calls_results = self._execute_query(calls_query, calls_params)
+            for row in calls_results:
+                phone = row["phone_number"]
+                if phone in phone_to_user_id:
+                    uid = phone_to_user_id[phone]
+                    result[uid]["total_calls"] = row["total"]
+
+        # Batch query for orders
+        orders_query = f"""
+            SELECT user_id, COUNT(*) as total
+            FROM Orders
+            WHERE user_id IN ({placeholders})
+            GROUP BY user_id
+        """
+        orders_results = self._execute_query(orders_query, tuple(user_ids))
+        for row in orders_results:
+            uid = row["user_id"]
+            if uid in result:
+                result[uid]["total_orders"] = row["total"]
+
+        # Batch query for reservations at this restaurant
+        reservations_query = f"""
+            SELECT r.user_id, COUNT(*) as total
+            FROM Reservations r
+            INNER JOIN Slot_Bookings sb ON r.slot_booking_id = sb.id
+            WHERE r.user_id IN ({placeholders}) AND sb.restaurant_id = %s
+            GROUP BY r.user_id
+        """
+        reservations_params = tuple(user_ids) + (restaurant_id,)
+        reservations_results = self._execute_query(reservations_query, reservations_params)
+        for row in reservations_results:
+            uid = row["user_id"]
+            if uid in result:
+                result[uid]["total_reservations"] = row["total"]
+
+        return result
+
     def get_user_restaurant_ids(self, user_id: int) -> List[int]:
         """
         Get all restaurant_ids associated with a user.
