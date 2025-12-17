@@ -337,6 +337,11 @@ class WebSocketService:
             arg_model=reservations.CreateReservationArgs,
         )
         registry.register(
+            name="lookup_reservation",
+            handler=reservations.lookup_reservation,
+            arg_model=reservations.LookupReservationArgs,
+        )
+        registry.register(
             name="update_reservation",
             handler=reservations.update_reservation,
             arg_model=reservations.UpdateReservationArgs,

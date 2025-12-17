@@ -27,6 +27,7 @@ def get_function_definitions() -> List[Dict[str, Any]]:
     lookup_order_schema = orders.LookupOrderArgs.model_json_schema()
     create_res_schema = reservations.CreateReservationArgs.model_json_schema()
     update_res_schema = reservations.UpdateReservationArgs.model_json_schema()
+    lookup_res_schema = reservations.LookupReservationArgs.model_json_schema()
     check_items_schema = orders.CheckItemsAvailabilityArgs.model_json_schema()
     res_check_avail_schema = reservations.CheckAvailabilityArgs.model_json_schema()
     update_order_details_schema = orders.UpdateOrderDetailsArgs.model_json_schema()
@@ -57,8 +58,14 @@ def get_function_definitions() -> List[Dict[str, Any]]:
         ),
         _definition(
             name="create_reservation",
-            description="Create a reservation for a customer including party size and datetime.",
+            description="Create a table reservation for a customer. Use after gathering: date/time, party size, customer name, and contact. "
+            "The reservation will be submitted as pending for restaurant confirmation.",
             schema=create_res_schema,
+        ),
+        _definition(
+            name="lookup_reservation",
+            description="Look up the latest reservation for a caller using their phone number.",
+            schema=lookup_res_schema,
         ),
         _definition(
             name="update_reservation",
@@ -67,7 +74,8 @@ def get_function_definitions() -> List[Dict[str, Any]]:
         ),
         _definition(
             name="check_reservation_availability",
-            description="Check reservation availability for a party size over a date range.",
+            description="Check if a table is available for a party size at a specific date/time range. "
+            "Use this BEFORE creating a reservation to verify the timeslot is open.",
             schema=res_check_avail_schema,
         ),
         _definition(

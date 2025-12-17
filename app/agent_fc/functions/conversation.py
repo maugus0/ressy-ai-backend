@@ -18,6 +18,14 @@ FILLER_LIBRARY = {
         "Give me a second to see what tables we still have open...",
         "Let me double-check our reservation grid for that time...",
     ],
+    "reservation_booking": [
+        "Let me get that reservation set up for you...",
+        "Just a moment while I book that table for you...",
+    ],
+    "reservation_lookup": [
+        "Let me look up your reservation...",
+        "One moment while I find your booking details...",
+    ],
     "order_review": [
         "Let me make sure I captured everything correctly...",
         "Hang tight while I confirm those items with the kitchen...",
@@ -45,6 +53,8 @@ class AgentFillerArgs(BaseModel):
     filler_type: Literal[
         "menu_lookup",
         "table_availability_check",
+        "reservation_booking",
+        "reservation_lookup",
         "order_review",
         "payment_lookup",
         "general",
