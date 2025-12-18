@@ -64,7 +64,7 @@ def _generate_confirmation_number() -> str:
 async def create_reservation(**kwargs) -> Dict[str, Any]:
     """
     Create a new reservation for a customer.
-    
+
     Flow:
     1. Create or update user with customer details
     2. Create slot booking and reservation in a single transaction
@@ -85,17 +85,18 @@ async def create_reservation(**kwargs) -> Dict[str, Any]:
                 "credit_card": None,
             }
         )
-        
+
         # 2. Parse the datetime
         try:
             reservation_datetime = datetime.fromisoformat(args.datetime_iso.replace("Z", "+00:00"))
         except ValueError:
             # Fallback to a simpler format
             reservation_datetime = datetime.strptime(args.datetime_iso, "%Y-%m-%d %H:%M")
-        
-        # 3. Generate confirmation number
+
+        # 3. Generate confirmation number and reservation token
         confirmation_number = _generate_confirmation_number()
-        
+        reservation_token = str(uuid.uuid4())
+
         # 4. Combine special request and occasion into notes if provided
         combined_notes = []
         if args.occasion:
@@ -105,22 +106,34 @@ async def create_reservation(**kwargs) -> Dict[str, Any]:
         if args.notes:
             combined_notes.append(args.notes)
         final_notes = " | ".join(combined_notes) if combined_notes else None
-        
-        # 5. Create reservation directly (this creates slot booking + reservation in one transaction)
-        result = _reservation_repo.create_reservation_direct(
+
+        # 5. Create slot booking with expires_at = date_time + 15 minutes
+        expires_at = reservation_datetime + timedelta(minutes=15)
+        slot_id = _reservation_repo.create_slot_booking(
             restaurant_id=int(args.restaurant_id),
             date_time=reservation_datetime,
+            expires_at=expires_at,
+            reservation_token=reservation_token,
+            reservation_type="in-house",
+            status="reserved",
+            party_size=args.party_size,
+        )
+
+        # 6. Create reservation with status = "pending" (restaurant will confirm)
+        reservation_id = _reservation_repo.create_reservation(
+            slot_booking_id=slot_id,
             user_id=user_id,
             confirmation_number=confirmation_number,
-            party_size=args.party_size,
             reservation_type="in-house",
+            status="pending",
             special_request=args.special_request,
+            party_size=args.party_size,
             notes=final_notes,
         )
-        
+
         return {
-            "reservation_id": result["reservation_id"],
-            "slot_id": result["slot_id"],
+            "reservation_id": reservation_id,
+            "slot_id": slot_id,
             "user_id": user_id,
             "confirmation_number": confirmation_number,
             "party_size": args.party_size,
@@ -161,7 +174,7 @@ async def lookup_reservation(**kwargs) -> Dict[str, Any]:
         user_id = _user_repo.get_user_id_by_phone_or_email(args.customer_contact, None)
         if not user_id:
             return None
-        
+
         # Get the latest reservation for this user
         reservation = _reservation_repo.get_latest_by_user(user_id)
         return reservation
@@ -186,18 +199,18 @@ async def update_reservation(**kwargs) -> Dict[str, Any]:
         reservation = _reservation_repo.get_latest_by_user(user_id)
         if not reservation:
             return None
-        
+
         reservation_id = reservation.get("id")
         if not reservation_id:
             return None
-            
+
         # Extract allowed update fields
         changes = dict(args.changes)
         party_size = changes.get("party_size")
         special_request = changes.get("special_request")
         notes = changes.get("notes")
         status = changes.get("status")
-        
+
         # Update the reservation
         _reservation_repo.update_reservation(
             reservation_id=reservation_id,
@@ -206,7 +219,7 @@ async def update_reservation(**kwargs) -> Dict[str, Any]:
             notes=notes,
             status=status,
         )
-        
+
         # If datetime is being changed, update the slot booking
         new_datetime = changes.get("datetime_iso")
         if new_datetime and reservation.get("slot_booking_id"):
@@ -214,11 +227,8 @@ async def update_reservation(**kwargs) -> Dict[str, Any]:
                 parsed_datetime = datetime.fromisoformat(new_datetime.replace("Z", "+00:00"))
             except ValueError:
                 parsed_datetime = datetime.strptime(new_datetime, "%Y-%m-%d %H:%M")
-            _reservation_repo.update_slot_booking_datetime(
-                reservation.get("slot_booking_id"),
-                parsed_datetime
-            )
-        
+            _reservation_repo.update_slot_booking_datetime(reservation.get("slot_booking_id"), parsed_datetime)
+
         # Return updated reservation
         return _reservation_repo.get_reservation_by_id(reservation_id)
 
@@ -231,7 +241,7 @@ async def update_reservation(**kwargs) -> Dict[str, Any]:
 async def check_reservation_availability(**kwargs) -> Dict[str, Any]:
     """
     Check reservation availability for a party size over a date range.
-    
+
     This checks for locked/reserved slots in the given time range to determine
     if the restaurant can accommodate the party.
     """
@@ -248,12 +258,12 @@ async def check_reservation_availability(**kwargs) -> Dict[str, Any]:
                 start_dt = datetime.fromisoformat(args.date_start_iso.replace("Z", "+00:00"))
             except ValueError:
                 start_dt = datetime.strptime(args.date_start_iso, "%Y-%m-%d %H:%M")
-                
+
             try:
                 end_dt = datetime.fromisoformat(args.date_end_iso.replace("Z", "+00:00"))
             except ValueError:
                 end_dt = datetime.strptime(args.date_end_iso, "%Y-%m-%d %H:%M")
-            
+
             # Get locked/reserved slots in this time range
             locked_slots = _reservation_repo.get_locked_slots(
                 restaurant_id=int(args.restaurant_id),
@@ -261,22 +271,24 @@ async def check_reservation_availability(**kwargs) -> Dict[str, Any]:
                 end_date_time=end_dt,
                 reservation_type="in-house",
             )
-            
+
             # Generate available time slots (every 30 minutes within operating hours)
             # This is a simplified availability check - actual implementation may vary
             available_slots: List[Dict[str, Any]] = []
             locked_times = {slot.get("date_time") for slot in locked_slots if slot.get("date_time")}
-            
+
             # Generate slots every 30 minutes between start and end
             current = start_dt
             while current <= end_dt:
                 if current not in locked_times:
-                    available_slots.append({
-                        "datetime": current.isoformat(),
-                        "party_size_available": True,
-                    })
+                    available_slots.append(
+                        {
+                            "datetime": current.isoformat(),
+                            "party_size_available": True,
+                        }
+                    )
                 current += timedelta(minutes=30)
-            
+
             return {
                 "restaurant_id": args.restaurant_id,
                 "party_size": args.party_size,

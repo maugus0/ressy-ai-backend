@@ -640,11 +640,11 @@ class MySQLReservationRepository(MySQLBaseRepository):
     def get_latest_by_user(self, user_id: int, reservation_type: Optional[str] = None) -> Optional[Dict]:
         """
         Get the most recent reservation for a user.
-        
+
         Args:
             user_id: User ID
             reservation_type: Optional filter by reservation type
-            
+
         Returns:
             Latest reservation dict or None if not found
         """
