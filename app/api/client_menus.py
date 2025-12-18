@@ -167,6 +167,37 @@ async def list_menu_items(  # pylint: disable=too-many-arguments,too-many-positi
 
 
 @router.get(
+    "/menu/categories",
+    summary="Get Menu Categories (Client)",
+    description="Retrieve all distinct categories and sub-categories for the authenticated restaurant's menu.",
+    openapi_extra={
+        "responses": {
+            200: {
+                "description": "Categories retrieved",
+                "content": {
+                    "application/json": {
+                        "example": {
+                            "categories": {
+                                "Pizza": ["Classic", "Specialty"],
+                                "Drinks": ["Hot", "Cold"],
+                            }
+                        }
+                    }
+                },
+            }
+        }
+    },
+)
+async def get_menu_categories(
+    menu_service: MenuService = Depends(get_menu_service),
+    claims: dict = Depends(get_current_restaurant_user),
+) -> MenuCategoriesResponse:
+    restaurant_id = int(claims["restaurant_id"])
+    categories = menu_service.get_menu_categories(restaurant_id)
+    return MenuCategoriesResponse(categories=categories)
+
+
+@router.get(
     "/menu/{menu_id}",
     summary="Get Menu Item by ID (Client)",
     description="Retrieve a specific menu item for the authenticated restaurant.",
@@ -398,34 +429,3 @@ async def bulk_update_availability(
     data = _validate_payload(BulkAvailabilityRequest, payload)
     result = menu_service.bulk_update_availability(restaurant_id, data.menu_item_ids, data.is_available)
     return result
-
-
-@router.get(
-    "/menu/categories",
-    summary="Get Menu Categories (Client)",
-    description="Retrieve all distinct categories and sub-categories for the authenticated restaurant's menu.",
-    openapi_extra={
-        "responses": {
-            200: {
-                "description": "Categories retrieved",
-                "content": {
-                    "application/json": {
-                        "example": {
-                            "categories": {
-                                "Pizza": ["Classic", "Specialty"],
-                                "Drinks": ["Hot", "Cold"],
-                            }
-                        }
-                    }
-                },
-            }
-        }
-    },
-)
-async def get_menu_categories(
-    menu_service: MenuService = Depends(get_menu_service),
-    claims: dict = Depends(get_current_restaurant_user),
-) -> MenuCategoriesResponse:
-    restaurant_id = int(claims["restaurant_id"])
-    categories = menu_service.get_menu_categories(restaurant_id)
-    return MenuCategoriesResponse(categories=categories)
