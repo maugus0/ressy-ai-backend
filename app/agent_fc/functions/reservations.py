@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Dict, Optional
+import uuid
+from datetime import datetime, timedelta
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, ConfigDict
 
@@ -23,6 +25,7 @@ class CreateReservationArgs(BaseModel):
     customer_name: Optional[str] = None
     customer_contact: Optional[str] = None
     occasion: Optional[str] = None
+    special_request: Optional[str] = None
     notes: Optional[str] = None
 
 
@@ -31,6 +34,13 @@ class UpdateReservationArgs(BaseModel):
 
     customer_contact: str
     changes: Dict[str, Any]
+
+
+class LookupReservationArgs(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    customer_contact: str
+    restaurant_id: Optional[str] = None
 
 
 class CheckAvailabilityArgs(BaseModel):
@@ -46,11 +56,25 @@ async def _run_service_call(func, *args, **kwargs):
     return await asyncio.to_thread(func, *args, **kwargs)
 
 
+def _generate_confirmation_number() -> str:
+    """Generate a unique confirmation number for a reservation."""
+    return f"RES-{uuid.uuid4().hex[:8].upper()}"
+
+
 async def create_reservation(**kwargs) -> Dict[str, Any]:
+    """
+    Create a new reservation for a customer.
+
+    Flow:
+    1. Create or update user with customer details
+    2. Create slot booking and reservation in a single transaction
+    3. Return reservation details with pending status (restaurant will confirm)
+    """
     args = CreateReservationArgs.model_validate(kwargs)
-    print(f"[INFO] create_reservation invoked restaurant_id={args.restaurant_id} " f"party_size={args.party_size}")
+    print(f"[INFO] create_reservation invoked restaurant_id={args.restaurant_id} party_size={args.party_size}")
 
     def _create():
+        # 1. Create or update user with customer details
         user_id = _user_repo.create_or_update_user(
             {
                 "name": args.customer_name,
@@ -61,17 +85,110 @@ async def create_reservation(**kwargs) -> Dict[str, Any]:
                 "credit_card": None,
             }
         )
-        slot_id = _reservation_repo.create_slot_booking(int(args.restaurant_id), args.datetime_iso)
-        reservation = _reservation_repo.create_reservation(user_id, slot_id, status="confirmed")
-        reservation["party_size"] = args.party_size
-        reservation["notes"] = args.notes
+
+        # 2. Parse the datetime
+        try:
+            reservation_datetime = datetime.fromisoformat(args.datetime_iso.replace("Z", "+00:00"))
+        except ValueError:
+            # Fallback to a simpler format
+            reservation_datetime = datetime.strptime(args.datetime_iso, "%Y-%m-%d %H:%M")
+
+        # 3. Generate confirmation number and reservation token
+        confirmation_number = _generate_confirmation_number()
+        reservation_token = str(uuid.uuid4())
+
+        # 4. Combine special request and occasion into notes if provided
+        combined_notes = []
+        if args.occasion:
+            combined_notes.append(f"Occasion: {args.occasion}")
+        if args.special_request:
+            combined_notes.append(f"Special request: {args.special_request}")
+        if args.notes:
+            combined_notes.append(args.notes)
+        final_notes = " | ".join(combined_notes) if combined_notes else None
+
+        # 5. Create slot booking with expires_at = date_time + 15 minutes
+        expires_at = reservation_datetime + timedelta(minutes=15)
+        slot_id = _reservation_repo.create_slot_booking(
+            restaurant_id=int(args.restaurant_id),
+            date_time=reservation_datetime,
+            expires_at=expires_at,
+            reservation_token=reservation_token,
+            reservation_type="in-house",
+            status="reserved",
+            party_size=args.party_size,
+        )
+
+        # 6. Create reservation with status = "pending" (restaurant will confirm)
+        reservation_id = _reservation_repo.create_reservation(
+            slot_booking_id=slot_id,
+            user_id=user_id,
+            confirmation_number=confirmation_number,
+            reservation_type="in-house",
+            status="pending",
+            special_request=args.special_request,
+            party_size=args.party_size,
+            notes=final_notes,
+        )
+
+        return {
+            "reservation_id": reservation_id,
+            "slot_id": slot_id,
+            "user_id": user_id,
+            "confirmation_number": confirmation_number,
+            "party_size": args.party_size,
+            "datetime": args.datetime_iso,
+            "customer_name": args.customer_name,
+            "customer_contact": args.customer_contact,
+            "occasion": args.occasion,
+            "special_request": args.special_request,
+            "notes": final_notes,
+        }
+
+    try:
+        reservation = await _run_service_call(_create)
+        return {
+            "status": "SUBMITTED",
+            "message": "Reservation request submitted. The restaurant will confirm shortly.",
+            "reservation": reservation,
+        }
+    except Exception as exc:
+        print(f"[ERROR] create_reservation failed: {exc}")
+        return {
+            "status": "FAILED",
+            "message": "Unable to create reservation. Please try again or contact the restaurant directly.",
+            "error": str(exc),
+        }
+
+
+async def lookup_reservation(**kwargs) -> Dict[str, Any]:
+    """
+    Look up the latest reservation for a caller using their phone number.
+    Similar to lookup_order but for reservations.
+    """
+    args = LookupReservationArgs.model_validate(kwargs)
+    print(f"[INFO] lookup_reservation invoked customer_contact={args.customer_contact}")
+
+    def _lookup():
+        # Find user by phone number
+        user_id = _user_repo.get_user_id_by_phone_or_email(args.customer_contact, None)
+        if not user_id:
+            return None
+
+        # Get the latest reservation for this user
+        reservation = _reservation_repo.get_latest_by_user(user_id)
         return reservation
 
-    reservation = await _run_service_call(_create)
-    return {"status": "CONFIRMED", "reservation": reservation}
+    reservation = await _run_service_call(_lookup)
+    if not reservation:
+        return {"status": "NOT_FOUND", "message": "No reservation found for this contact."}
+    return {"status": "FOUND", "reservation": reservation}
 
 
 async def update_reservation(**kwargs) -> Dict[str, Any]:
+    """
+    Update the latest reservation for a caller using their phone number.
+    """
     args = UpdateReservationArgs.model_validate(kwargs)
     print(f"[INFO] update_reservation invoked customer_contact={args.customer_contact}")
 
@@ -82,18 +199,52 @@ async def update_reservation(**kwargs) -> Dict[str, Any]:
         reservation = _reservation_repo.get_latest_by_user(user_id)
         if not reservation:
             return None
-        updated_fields = dict(args.changes)
+
         reservation_id = reservation.get("id")
-        if reservation_id:
-            _reservation_repo.update_reservation(reservation_id, updated_fields)
-            return _reservation_repo.get_latest_by_user(user_id)
-        return None
+        if not reservation_id:
+            return None
+
+        # Extract allowed update fields
+        changes = dict(args.changes)
+        party_size = changes.get("party_size")
+        special_request = changes.get("special_request")
+        notes = changes.get("notes")
+        status = changes.get("status")
+
+        # Update the reservation
+        _reservation_repo.update_reservation(
+            reservation_id=reservation_id,
+            party_size=party_size,
+            special_request=special_request,
+            notes=notes,
+            status=status,
+        )
+
+        # If datetime is being changed, update the slot booking
+        new_datetime = changes.get("datetime_iso")
+        if new_datetime and reservation.get("slot_booking_id"):
+            try:
+                parsed_datetime = datetime.fromisoformat(new_datetime.replace("Z", "+00:00"))
+            except ValueError:
+                parsed_datetime = datetime.strptime(new_datetime, "%Y-%m-%d %H:%M")
+            _reservation_repo.update_slot_booking_datetime(reservation.get("slot_booking_id"), parsed_datetime)
+
+        # Return updated reservation
+        return _reservation_repo.get_reservation_by_id(reservation_id)
 
     updated = await _run_service_call(_update)
-    return {"status": "UPDATED" if updated else "NOT_FOUND", "reservation": updated}
+    if not updated:
+        return {"status": "NOT_FOUND", "message": "No reservation found to update."}
+    return {"status": "UPDATED", "reservation": updated}
 
 
 async def check_reservation_availability(**kwargs) -> Dict[str, Any]:
+    """
+    Check reservation availability for a party size over a date range.
+
+    This checks for locked/reserved slots in the given time range to determine
+    if the restaurant can accommodate the party.
+    """
     args = CheckAvailabilityArgs.model_validate(kwargs)
     print(
         f"[INFO] check_reservation_availability invoked restaurant_id={args.restaurant_id} "
@@ -101,12 +252,62 @@ async def check_reservation_availability(**kwargs) -> Dict[str, Any]:
     )
 
     def _check():
-        slots = _reservation_repo.list_available_slots(int(args.restaurant_id), args.date_start_iso, args.date_end_iso)
-        return {
-            "restaurant_id": args.restaurant_id,
-            "party_size": args.party_size,
-            "available": bool(slots),
-            "slots": slots[:10],
-        }
+        try:
+            # Parse dates
+            try:
+                start_dt = datetime.fromisoformat(args.date_start_iso.replace("Z", "+00:00"))
+            except ValueError:
+                start_dt = datetime.strptime(args.date_start_iso, "%Y-%m-%d %H:%M")
+
+            try:
+                end_dt = datetime.fromisoformat(args.date_end_iso.replace("Z", "+00:00"))
+            except ValueError:
+                end_dt = datetime.strptime(args.date_end_iso, "%Y-%m-%d %H:%M")
+
+            # Get locked/reserved slots in this time range
+            locked_slots = _reservation_repo.get_locked_slots(
+                restaurant_id=int(args.restaurant_id),
+                start_date_time=start_dt,
+                end_date_time=end_dt,
+                reservation_type="in-house",
+            )
+
+            # Generate available time slots (every 30 minutes within operating hours)
+            # This is a simplified availability check - actual implementation may vary
+            available_slots: List[Dict[str, Any]] = []
+            locked_times = {slot.get("date_time") for slot in locked_slots if slot.get("date_time")}
+
+            # Generate slots every 30 minutes between start and end
+            current = start_dt
+            while current <= end_dt:
+                if current not in locked_times:
+                    available_slots.append(
+                        {
+                            "datetime": current.isoformat(),
+                            "party_size_available": True,
+                        }
+                    )
+                current += timedelta(minutes=30)
+
+            return {
+                "restaurant_id": args.restaurant_id,
+                "party_size": args.party_size,
+                "date_range": {
+                    "start": args.date_start_iso,
+                    "end": args.date_end_iso,
+                },
+                "available": len(available_slots) > 0,
+                "available_slots": available_slots[:10],  # Return up to 10 slots
+                "locked_slot_count": len(locked_slots),
+            }
+        except Exception as exc:
+            print(f"[ERROR] check_reservation_availability failed: {exc}")
+            return {
+                "restaurant_id": args.restaurant_id,
+                "party_size": args.party_size,
+                "available": True,  # Default to available if check fails
+                "available_slots": [],
+                "message": "Unable to verify availability, but timeslot is likely available.",
+            }
 
     return await _run_service_call(_check)

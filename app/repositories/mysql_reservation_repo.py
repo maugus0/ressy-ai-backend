@@ -636,3 +636,50 @@ class MySQLReservationRepository(MySQLBaseRepository):
         query = "UPDATE Reservations SET " + ", ".join(fields) + " WHERE id = %s"
         affected = self._execute_update(query, tuple(params))
         return affected > 0
+
+    def get_latest_by_user(self, user_id: int, reservation_type: Optional[str] = None) -> Optional[Dict]:
+        """
+        Get the most recent reservation for a user.
+
+        Args:
+            user_id: User ID
+            reservation_type: Optional filter by reservation type
+
+        Returns:
+            Latest reservation dict or None if not found
+        """
+        query = """
+            SELECT
+                r.id,
+                r.reservation_type,
+                r.table_availability_request_id,
+                r.slot_booking_id,
+                r.user_id,
+                r.confirmation_number,
+                r.last_cancel_time,
+                r.manage_reservation_url,
+                r.status,
+                r.special_request,
+                r.party_size,
+                r.notes,
+                r.created_at,
+                r.updated_at,
+                sb.date_time,
+                sb.restaurant_id,
+                u.name,
+                u.email,
+                u.phone_number
+            FROM Reservations r
+            INNER JOIN Slot_Bookings sb ON r.slot_booking_id = sb.id
+            LEFT JOIN Users u ON r.user_id = u.id
+            WHERE r.user_id = %s
+        """
+        params = [user_id]
+
+        if reservation_type:
+            query += " AND r.reservation_type = %s"
+            params.append(reservation_type)
+
+        query += " ORDER BY r.created_at DESC LIMIT 1"
+        results = self._execute_query(query, tuple(params))
+        return results[0] if results else None
