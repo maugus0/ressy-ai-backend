@@ -20,6 +20,30 @@ class CallService:
     def __init__(self):
         self.call_repo = MySQLCallRepository()
 
+    @staticmethod
+    def calculate_call_costs(duration_seconds: int) -> dict:
+        """
+        Calculate call costs using current settings.
+
+        This is the single source of truth for cost calculations.
+        All cost calculations should use this method to ensure consistency.
+
+        Args:
+            duration_seconds: Call duration in seconds
+
+        Returns:
+            Dictionary with 'twilio_cost', 'deepgram_cost', and 'ressy_cost'
+        """
+        twilio_cost = duration_seconds * settings.TWILIO_COST_PER_SECOND * settings.TWILIO_MULTIPLIER
+        deepgram_cost = duration_seconds * settings.DEEPGRAM_COST_PER_SECOND * settings.DEEPGRAM_MULTIPLIER
+        ressy_cost = (twilio_cost + deepgram_cost) * settings.RESSY_MULTIPLIER
+
+        return {
+            "twilio_cost": float(twilio_cost),
+            "deepgram_cost": float(deepgram_cost),
+            "ressy_cost": float(ressy_cost),
+        }
+
     def create_call_session(
         self,
         user_id: str,
@@ -208,6 +232,12 @@ class CallService:
 
         started_at = call_row.get("started_at")
         ended_at = call_row.get("ended_at")
+        duration_seconds = int(call_row.get("call_duration") or 0)
+
+        # Calculate ressy_cost dynamically using centralized method
+        # This ensures clients see the correct Ressy cost (not raw Twilio/Deepgram costs)
+        # and costs are always calculated from current settings, not stored values
+        costs = self.calculate_call_costs(duration_seconds)
 
         return (
             CallDetailResponse(
@@ -218,8 +248,8 @@ class CallService:
                 status=call_row.get("call_status", "unknown"),
                 started_at=str(started_at) if started_at is not None else None,
                 ended_at=str(ended_at) if ended_at else None,
-                duration_seconds=int(call_row.get("call_duration") or 0),
-                cost=float(call_row.get("cost") or 0.0),
+                duration_seconds=duration_seconds,
+                cost=costs["ressy_cost"],  # Return calculated ressy_cost, not stored cost
                 call_direction=call_row.get("call_direction"),
                 has_transcript=bool(transcript_entries),
                 transcript=transcript_entries or None,
@@ -268,9 +298,10 @@ class CallService:
                 )
 
         duration_seconds = int(call_row.get("call_duration") or 0)
-        twilio_cost = duration_seconds * settings.TWILIO_COST_PER_SECOND * settings.TWILIO_MULTIPLIER
-        deepgram_cost = duration_seconds * settings.DEEPGRAM_COST_PER_SECOND * settings.DEEPGRAM_MULTIPLIER
-        ressy_cost = (twilio_cost + deepgram_cost) * settings.RESSY_MULTIPLIER
+
+        # Calculate costs dynamically using centralized method
+        # This ensures costs are always calculated from current settings, not stored values
+        costs = self.calculate_call_costs(duration_seconds)
 
         started_at = call_row.get("started_at")
         ended_at = call_row.get("ended_at")
@@ -284,9 +315,9 @@ class CallService:
             started_at=str(started_at) if started_at is not None else None,
             ended_at=str(ended_at) if ended_at else None,
             duration_seconds=duration_seconds,
-            twilio_cost=float(twilio_cost),
-            deepgram_cost=float(deepgram_cost),
-            ressy_cost=float(ressy_cost),
+            twilio_cost=costs["twilio_cost"],
+            deepgram_cost=costs["deepgram_cost"],
+            ressy_cost=costs["ressy_cost"],
             call_direction=call_row.get("call_direction"),
             has_transcript=bool(transcript_entries),
             transcript=transcript_entries or None,

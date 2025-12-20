@@ -33,8 +33,20 @@ class MySQLCallRepository(MySQLBaseRepository):
     def update_call_cost(self, call_id: int, duration_seconds: int) -> None:
         """
         Update call cost and duration, mark as completed.
+
+        Note: This calculates and stores ressy_cost in the database for historical reference.
+        However, API endpoints (admin and client) calculate costs dynamically from current
+        settings, so stored costs may become outdated if settings change.
+
+        The stored cost is used for:
+        - Historical records
+        - Legacy methods (get_call_history, get_analytics_summary)
+
+        API endpoints (get_call_detail, get_admin_call_detail) calculate costs dynamically
+        and do NOT rely on stored costs.
         """
-        # Keep stored Calls.cost aligned with admin cost breakdown logic.
+        # Calculate costs using the same logic as CallService.calculate_call_costs()
+        # This ensures consistency between stored and calculated costs
         twilio_cost = duration_seconds * settings.TWILIO_COST_PER_SECOND * settings.TWILIO_MULTIPLIER
         deepgram_cost = duration_seconds * settings.DEEPGRAM_COST_PER_SECOND * settings.DEEPGRAM_MULTIPLIER
         ressy_cost = (twilio_cost + deepgram_cost) * settings.RESSY_MULTIPLIER

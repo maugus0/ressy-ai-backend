@@ -427,7 +427,6 @@ Retrieve detailed information about a specific user.
                         "credit_card": None,
                         "created_at": "2025-12-13T10:00:00",
                         "updated_at": "2025-12-13T10:00:00",
-                        "restaurant_ids": [1, 2],
                     }
                 }
             },
@@ -442,6 +441,13 @@ async def get_user_dashboard(
 ):
     """Get a user by ID with authorization check."""
     user = _check_user_access(current_user, user_id)
+
+    # Remove restaurant_ids from response for clients (restaurant users)
+    # Admins should see restaurant_ids, but clients should not
+    user_type = current_user.get("user_type")
+    if user_type == "restaurant" and "restaurant_ids" in user:
+        user = {k: v for k, v in user.items() if k != "restaurant_ids"}
+
     return user
 
 
