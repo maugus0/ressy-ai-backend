@@ -38,16 +38,16 @@ for VENV_DIR in ".venv" "venv" "env"; do
         if [ -f "${VENV_DIR}/bin/activate" ]; then
         # shellcheck source=/dev/null
             source "${VENV_DIR}/bin/activate"
-            VENV_ACTIVATED=true
+        VENV_ACTIVATED=true
             break
         elif [ -f "${VENV_DIR}/Scripts/activate" ]; then
         # shellcheck source=/dev/null
         # Windows virtual environments place activate inside Scripts
             source "${VENV_DIR}/Scripts/activate"
-            VENV_ACTIVATED=true
+        VENV_ACTIVATED=true
             break
-        fi
     fi
+fi
 done
 
 if [ "${VENV_ACTIVATED}" = true ]; then
