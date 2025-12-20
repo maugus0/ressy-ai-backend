@@ -280,21 +280,47 @@ class WebSocketService:
                     self._active_deepgram.add(sts_ws)
 
                 try:
-                    # Send minimal config to Deepgram
-                    config_message = self.deepgram_service.load_config(
-                        think_prompt="You are a helpful assistant. Simply say the message provided.",
-                        key_terms=None,
-                        restaurant_name="the restaurant",
-                    )
-                    await sts_ws.send(json.dumps(config_message))
-
-                    # Inject the error message for Deepgram to speak
-                    inject_message = {
-                        "type": "InjectAgentMessage",
-                        "message": error_message,
+                    # Build config with the error message as the greeting
+                    # This ensures the error message is spoken immediately
+                    config_message = {
+                        "type": "Settings",
+                        "audio": {
+                            "input": {
+                                "encoding": settings.DEEPGRAM_AUDIO_INPUT_ENCODING or "mulaw",
+                                "sample_rate": settings.DEEPGRAM_AUDIO_INPUT_SAMPLE_RATE or 8000,
+                            },
+                            "output": {
+                                "encoding": settings.DEEPGRAM_AUDIO_OUTPUT_ENCODING or "mulaw",
+                                "sample_rate": settings.DEEPGRAM_AUDIO_OUTPUT_SAMPLE_RATE or 8000,
+                                "container": settings.DEEPGRAM_AUDIO_OUTPUT_CONTAINER or "none",
+                            },
+                        },
+                        "agent": {
+                            "language": settings.DEEPGRAM_AGENT_LANGUAGE,
+                            "listen": {
+                                "provider": {
+                                    "type": "deepgram",
+                                    "model": settings.DEEPGRAM_LISTEN_MODEL,
+                                }
+                            },
+                            "think": {
+                                "provider": {
+                                    "type": settings.DEEPGRAM_THINK_PROVIDER_TYPE,
+                                    "model": settings.DEEPGRAM_THINK_MODEL,
+                                },
+                                "prompt": "You are an automated message system. Do not respond to any user input.",
+                            },
+                            "speak": {
+                                "provider": {
+                                    "type": "deepgram",
+                                    "model": settings.DEEPGRAM_SPEAK_MODEL,
+                                }
+                            },
+                            "greeting": error_message,
+                        },
                     }
-                    await sts_ws.send(json.dumps(inject_message))
-                    print("[INFO] Sent error message to Deepgram for TTS")
+                    await sts_ws.send(json.dumps(config_message))
+                    print("[INFO] Sent config with error message as greeting to Deepgram")
 
                     # Create a stream state for audio handling
                     state = self._create_stream_state()

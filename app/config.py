@@ -46,8 +46,8 @@ class Settings:
     # Message played when an incoming call is for a Twilio number not registered to any restaurant
     UNREGISTERED_TWILIO_MESSAGE = os.getenv(
         "UNREGISTERED_TWILIO_MESSAGE",
-        "We are unable to connect to the restaurant at the moment. "
-        "Please use an alternate number or try again later.",
+        "We are unable to connect to the restaurant at the moment, "
+        "requesting you to use any alternate number or try again later.",
     )
 
     # Maximum time window (in seconds) for allowing updates to orders/reservations via voice agent
