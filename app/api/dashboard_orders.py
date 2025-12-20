@@ -3,11 +3,10 @@ Dashboard API routes for order management.
 Includes RBAC: admins can access all, managers can only access their restaurant's orders.
 """
 
-import asyncio
 import logging
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from fastapi.security import HTTPBearer
 from pydantic import BaseModel, Field
 
@@ -27,6 +26,30 @@ router = APIRouter(
 )
 order_service = DashboardOrderService()
 sse_service = SSEService()
+
+
+# ---------- Background task helpers ----------
+
+
+async def _emit_order_sse_event(
+    restaurant_id: int,
+    order_id: int,
+    subtype: OrderEventSubtype,
+    data: Dict[str, Any],
+) -> None:
+    """
+    Background task to emit SSE order events.
+    Logs errors but does not raise exceptions to avoid affecting other operations.
+    """
+    try:
+        await sse_service.emit_order_event(
+            restaurant_id=restaurant_id,
+            order_id=order_id,
+            subtype=subtype,
+            data=data,
+        )
+    except Exception as sse_error:
+        logger.error(f"Failed to emit SSE event for order {order_id} ({subtype.value}): {sse_error}")
 
 
 # ---------- Pydantic models for request validation ----------
@@ -493,6 +516,7 @@ phone orders, or to create orders on behalf of customers.
 async def create_order(
     restaurant_id: int,
     request: CreateOrderRequest,
+    background_tasks: BackgroundTasks,
     current_user: dict = Depends(require_role(["admin", "client"])),
 ):
     """Create a new order from the dashboard."""
@@ -513,25 +537,19 @@ async def create_order(
             status=request.status or "pending",
         )
 
-        # Emit SSE event for new order (fire-and-forget, non-blocking)
-        async def emit_sse_event():
-            try:
-                await sse_service.emit_order_event(
-                    restaurant_id=restaurant_id,
-                    order_id=result["order_id"],
-                    subtype=OrderEventSubtype.NEW_ORDER,
-                    data={
-                        "order_id": result["order_id"],
-                        "status": result["status"],
-                        "total_amount": result["total_amount"],
-                        "customer_name": result.get("customer_name"),
-                    },
-                )
-            except Exception as sse_error:
-                logger.error(f"Failed to emit SSE event for new order {result['order_id']}: {sse_error}")
-
-        # Fire and forget - don't await to avoid blocking the response
-        asyncio.create_task(emit_sse_event())
+        # Emit SSE event for new order (background task, properly managed by FastAPI)
+        background_tasks.add_task(
+            _emit_order_sse_event,
+            restaurant_id=restaurant_id,
+            order_id=result["order_id"],
+            subtype=OrderEventSubtype.NEW_ORDER,
+            data={
+                "order_id": result["order_id"],
+                "status": result["status"],
+                "total_amount": result["total_amount"],
+                "customer_name": result.get("customer_name"),
+            },
+        )
 
         return result
     except ValueError as e:
@@ -797,6 +815,7 @@ Cancelled orders cannot be updated (except by restoring them first).
 async def update_order(
     order_id: int,
     request: UpdateOrderRequest,
+    background_tasks: BackgroundTasks,
     current_user: dict = Depends(require_role(["admin", "client"])),
 ):
     """Update order details."""
@@ -817,21 +836,19 @@ async def update_order(
             customization=request.customization,
         )
 
-        # Emit SSE event for order update (non-blocking, log errors)
+        # Emit SSE event for order update (background task, properly managed by FastAPI)
         if restaurant_id:
-            try:
-                await sse_service.emit_order_event(
-                    restaurant_id=restaurant_id,
-                    order_id=order_id,
-                    subtype=OrderEventSubtype.ORDER_UPDATED,
-                    data={
-                        "order_id": order_id,
-                        "status": result.get("status"),
-                        "total_amount": result.get("total_amount"),
-                    },
-                )
-            except Exception as sse_error:
-                logger.error(f"Failed to emit SSE event for order update {order_id}: {sse_error}")
+            background_tasks.add_task(
+                _emit_order_sse_event,
+                restaurant_id=restaurant_id,
+                order_id=order_id,
+                subtype=OrderEventSubtype.ORDER_UPDATED,
+                data={
+                    "order_id": order_id,
+                    "status": result.get("status"),
+                    "total_amount": result.get("total_amount"),
+                },
+            )
 
         return result
     except ValueError as e:
@@ -907,6 +924,7 @@ This is a convenience endpoint for quick status updates during order processing.
 async def update_order_status(
     order_id: int,
     request: UpdateOrderStatusRequest,
+    background_tasks: BackgroundTasks,
     current_user: dict = Depends(require_role(["admin", "client"])),
 ):
     """Update order status."""
@@ -916,20 +934,18 @@ async def update_order_status(
     try:
         result = order_service.update_order_status(order_id=order_id, status=request.status)
 
-        # Emit SSE event for order update (non-blocking, log errors)
+        # Emit SSE event for order update (background task, properly managed by FastAPI)
         if restaurant_id:
-            try:
-                await sse_service.emit_order_event(
-                    restaurant_id=restaurant_id,
-                    order_id=order_id,
-                    subtype=OrderEventSubtype.ORDER_UPDATED,
-                    data={
-                        "order_id": order_id,
-                        "status": request.status,
-                    },
-                )
-            except Exception as sse_error:
-                logger.error(f"Failed to emit SSE event for order status update {order_id}: {sse_error}")
+            background_tasks.add_task(
+                _emit_order_sse_event,
+                restaurant_id=restaurant_id,
+                order_id=order_id,
+                subtype=OrderEventSubtype.ORDER_UPDATED,
+                data={
+                    "order_id": order_id,
+                    "status": request.status,
+                },
+            )
 
         return result
     except ValueError as e:
@@ -1003,6 +1019,7 @@ To undo a cancellation, you would need to update the status back to a valid stat
 )
 async def cancel_order(
     order_id: int,
+    background_tasks: BackgroundTasks,
     current_user: dict = Depends(require_role(["admin", "client"])),
 ):
     """Cancel an order."""
@@ -1012,20 +1029,18 @@ async def cancel_order(
     try:
         result = order_service.cancel_order(order_id=order_id)
 
-        # Emit SSE event for order cancellation (non-blocking, log errors)
+        # Emit SSE event for order cancellation (background task, properly managed by FastAPI)
         if restaurant_id:
-            try:
-                await sse_service.emit_order_event(
-                    restaurant_id=restaurant_id,
-                    order_id=order_id,
-                    subtype=OrderEventSubtype.ORDER_CANCELLED,
-                    data={
-                        "order_id": order_id,
-                        "status": "cancelled",
-                    },
-                )
-            except Exception as sse_error:
-                logger.error(f"Failed to emit SSE event for order cancellation {order_id}: {sse_error}")
+            background_tasks.add_task(
+                _emit_order_sse_event,
+                restaurant_id=restaurant_id,
+                order_id=order_id,
+                subtype=OrderEventSubtype.ORDER_CANCELLED,
+                data={
+                    "order_id": order_id,
+                    "status": "cancelled",
+                },
+            )
 
         return result
     except ValueError as e:

@@ -103,23 +103,26 @@ class DashboardOrderService:
         if status not in self.VALID_STATUSES:
             raise ValueError(f"Invalid status '{status}'. " f"Must be one of: {', '.join(self.VALID_STATUSES)}")
 
-        # Validate order items belong to the restaurant's menu
+        # Validate order items belong to the restaurant's menu (single batch query)
         item_ids = [item.get("item_id") for item in order_details if item.get("item_id") is not None]
         if item_ids:
-            # Check if all items exist and belong to this restaurant
-            if not self.menu_repo.verify_items_belong_to_restaurant(item_ids, restaurant_id):
-                # Find which items don't belong to identify them in the error
-                invalid_items = []
-                for item_id in item_ids:
-                    menu_item = self.menu_repo.get_by_id(item_id)
-                    if not menu_item:
-                        invalid_items.append(f"item_id {item_id} (not found)")
-                    elif menu_item.get("restaurant_id") != restaurant_id:
-                        item_restaurant_id = menu_item.get("restaurant_id")
-                        item_name = menu_item.get("item_name", "Unknown")
-                        invalid_items.append(
-                            f"'{item_name}' (item_id {item_id}) belongs to restaurant {item_restaurant_id}"
-                        )
+            # Fetch all menu items in a single query to avoid N+1 pattern
+            menu_items_by_id = self.menu_repo.get_by_ids(item_ids)
+
+            # Check for invalid items (missing or wrong restaurant)
+            invalid_items = []
+            for item_id in item_ids:
+                menu_item = menu_items_by_id.get(item_id)
+                if not menu_item:
+                    invalid_items.append(f"item_id {item_id} (not found)")
+                elif menu_item.get("restaurant_id") != restaurant_id:
+                    item_restaurant_id = menu_item.get("restaurant_id")
+                    item_name = menu_item.get("item_name", "Unknown")
+                    invalid_items.append(
+                        f"'{item_name}' (item_id {item_id}) belongs to restaurant {item_restaurant_id}"
+                    )
+
+            if invalid_items:
                 raise ValueError(
                     f"Order contains items that don't belong to restaurant {restaurant_id}: "
                     f"{', '.join(invalid_items)}"
