@@ -14,10 +14,12 @@ from app.repositories.mysql_user_repo import MySQLUserRepository
 from app.repositories.mysql_user_restaurant_metadata_repo import (
     MySQLUserRestaurantMetadataRepository,
 )
+from app.services.activity_history_service import ActivityHistoryService
 
 _reservation_repo = MySQLReservationRepository()
 _user_repo = MySQLUserRepository()
 _metadata_repo = MySQLUserRestaurantMetadataRepository()
+_history_service = ActivityHistoryService()
 
 
 class CreateReservationArgs(BaseModel):
@@ -163,6 +165,30 @@ async def create_reservation(**kwargs) -> Dict[str, Any]:
 
     try:
         reservation = await _run_service_call(_create)
+        
+        # Log activity history for voice agent reservation creation (run in thread since it's a DB operation)
+        def _log_history():
+            try:
+                print(f"[DEBUG] Logging reservation creation history: reservation_id={reservation['reservation_id']}, restaurant_id={args.restaurant_id}")
+                history_id = _history_service.log_reservation_created(
+                    reservation_id=reservation["reservation_id"],
+                    restaurant_id=int(args.restaurant_id),
+                    reservation_data={
+                        "status": "pending",
+                        "party_size": args.party_size,
+                        "date_time": args.datetime_iso,
+                        "name": args.customer_name,
+                    },
+                    actor_type="system",  # Voice agent is a system actor
+                )
+                print(f"[INFO] Activity history logged for reservation creation: history_id={history_id}")
+            except Exception as history_error:
+                print(f"[ERROR] Failed to log history for voice agent reservation creation: {history_error}")
+                import traceback
+                traceback.print_exc()
+        
+        await _run_service_call(_log_history)
+        
         return {
             "status": "SUBMITTED",
             "message": "Reservation request submitted. The restaurant will confirm shortly.",
@@ -211,14 +237,23 @@ async def update_reservation(**kwargs) -> Dict[str, Any]:
     def _update():
         user_id = _user_repo.get_user_id_by_phone_or_email(args.customer_contact, None)
         if not user_id:
-            return None
+            return None, None, None
         reservation = _reservation_repo.get_latest_by_user(user_id)
         if not reservation:
-            return None
+            return None, None, None
 
         reservation_id = reservation.get("id")
         if not reservation_id:
-            return None
+            return None, None, None
+
+        # Capture previous state for activity history
+        previous_data = {
+            "status": reservation.get("status"),
+            "party_size": reservation.get("party_size"),
+            "date_time": str(reservation.get("date_time")) if reservation.get("date_time") else None,
+            "special_request": reservation.get("special_request"),
+            "notes": reservation.get("notes"),
+        }
 
         # Extract allowed update fields
         changes = dict(args.changes)
@@ -245,12 +280,43 @@ async def update_reservation(**kwargs) -> Dict[str, Any]:
                 parsed_datetime = datetime.strptime(new_datetime, "%Y-%m-%d %H:%M")
             _reservation_repo.update_slot_booking_datetime(reservation.get("slot_booking_id"), parsed_datetime)
 
-        # Return updated reservation
-        return _reservation_repo.get_reservation_by_id(reservation_id)
+        # Return updated reservation and previous data for history logging
+        updated_reservation = _reservation_repo.get_reservation_by_id(reservation_id)
+        return updated_reservation, previous_data, reservation.get("restaurant_id")
 
-    updated = await _run_service_call(_update)
+    updated, previous_data, restaurant_id = await _run_service_call(_update)
     if not updated:
         return {"status": "NOT_FOUND", "message": "No reservation found to update."}
+    
+    # Log activity history for voice agent reservation update (run in thread since it's a DB operation)
+    def _log_history():
+        try:
+            if restaurant_id:
+                print(f"[DEBUG] Logging reservation update history: reservation_id={updated.get('id')}, restaurant_id={restaurant_id}")
+                new_data = {
+                    "status": updated.get("status"),
+                    "party_size": updated.get("party_size"),
+                    "date_time": str(updated.get("date_time")) if updated.get("date_time") else None,
+                    "special_request": updated.get("special_request"),
+                    "notes": updated.get("notes"),
+                }
+                history_id = _history_service.log_reservation_updated(
+                    reservation_id=updated.get("id"),
+                    restaurant_id=int(restaurant_id),
+                    previous_data=previous_data or {},
+                    new_data=new_data,
+                    actor_type="system",  # Voice agent is a system actor
+                )
+                print(f"[INFO] Activity history logged for reservation update: history_id={history_id}")
+            else:
+                print(f"[WARN] Cannot log history - restaurant_id is None for reservation {updated.get('id')}")
+        except Exception as history_error:
+            print(f"[ERROR] Failed to log history for voice agent reservation update: {history_error}")
+            import traceback
+            traceback.print_exc()
+    
+    await _run_service_call(_log_history)
+    
     return {"status": "UPDATED", "reservation": updated}
 
 

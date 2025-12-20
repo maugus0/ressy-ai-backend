@@ -5,9 +5,21 @@ Handles CRUD operations for order and reservation activity history/audit logs.
 
 import json
 from datetime import datetime
+from decimal import Decimal
 from typing import Any, Dict, List, Optional
 
 from app.repositories.mysql_base import MySQLBaseRepository
+
+
+class DecimalEncoder(json.JSONEncoder):
+    """Custom JSON encoder that handles Decimal types."""
+
+    def default(self, obj):
+        if isinstance(obj, Decimal):
+            return float(obj)
+        if isinstance(obj, datetime):
+            return obj.isoformat()
+        return super().default(obj)
 
 
 class MySQLActivityHistoryRepository(MySQLBaseRepository):
@@ -15,10 +27,12 @@ class MySQLActivityHistoryRepository(MySQLBaseRepository):
 
     def create_history_entry(
         self,
-        user_id: int,
         activity_type: str,
         action: str,
         restaurant_id: int,
+        user_id: Optional[int] = None,
+        actor_uuid: Optional[str] = None,
+        actor_type: str = "user",
         order_id: Optional[int] = None,
         reservation_id: Optional[int] = None,
         previous_value: Optional[Dict[str, Any]] = None,
@@ -31,10 +45,12 @@ class MySQLActivityHistoryRepository(MySQLBaseRepository):
         Create a new activity history entry.
 
         Args:
-            user_id: User ID of who performed the action
             activity_type: Type of activity ('order' or 'reservation')
             action: Action performed (created, updated, cancelled, status_changed, etc.)
             restaurant_id: Restaurant ID for RBAC
+            user_id: User ID (for customer users from Users table), None for admin actions
+            actor_uuid: UUID of admin/staff user who performed the action (stored in change_summary if no column)
+            actor_type: Type of actor ('user', 'admin', 'restaurant_admin', 'system')
             order_id: Associated order ID (if applicable)
             reservation_id: Associated reservation ID (if applicable)
             previous_value: Previous state before change (as dict)
@@ -46,6 +62,15 @@ class MySQLActivityHistoryRepository(MySQLBaseRepository):
         Returns:
             Created history entry ID
         """
+        # Include actor info in change_summary if actor_uuid is provided
+        final_change_summary = change_summary or ""
+        if actor_uuid or actor_type != "user":
+            actor_info = f" [by: {actor_type}"
+            if actor_uuid:
+                actor_info += f"/{actor_uuid[:8]}..."
+            actor_info += "]"
+            final_change_summary = (final_change_summary + actor_info)[:500]
+        
         query = """
             INSERT INTO User_Activity_History
             (user_id, activity_type, order_id, reservation_id, action,
@@ -61,9 +86,9 @@ class MySQLActivityHistoryRepository(MySQLBaseRepository):
                 order_id,
                 reservation_id,
                 action,
-                json.dumps(previous_value) if previous_value else None,
-                json.dumps(new_value) if new_value else None,
-                change_summary,
+                json.dumps(previous_value, cls=DecimalEncoder) if previous_value else None,
+                json.dumps(new_value, cls=DecimalEncoder) if new_value else None,
+                final_change_summary,
                 restaurant_id,
                 ip_address,
                 user_agent,

@@ -14,6 +14,7 @@ from app.repositories.mysql_user_repo import MySQLUserRepository
 from app.repositories.mysql_user_restaurant_metadata_repo import (
     MySQLUserRestaurantMetadataRepository,
 )
+from app.services.activity_history_service import ActivityHistoryService
 
 
 class OrderItem(BaseModel):
@@ -68,6 +69,7 @@ _order_repo = MySQLOrderRepository()
 _user_repo = MySQLUserRepository()
 _menu_repo = MySQLMenuRepository()
 _metadata_repo = MySQLUserRestaurantMetadataRepository()
+_history_service = ActivityHistoryService()
 
 
 async def _run_service_call(func, *args, **kwargs):
@@ -150,6 +152,34 @@ async def create_order(**kwargs) -> Dict[str, Any]:
         return order_id, user_id
 
     order_id, user_id = await _run_service_call(_create)
+    
+    # Log activity history for voice agent order creation (run in thread since it's a DB operation)
+    def _log_history():
+        try:
+            if args.restaurant_id:
+                print(f"[DEBUG] Logging order creation history: order_id={order_id}, restaurant_id={args.restaurant_id}")
+                total_amount = _calculate_total(args.items)
+                history_id = _history_service.log_order_created(
+                    order_id=order_id,
+                    restaurant_id=int(args.restaurant_id),
+                    order_data={
+                        "status": "pending",
+                        "total_amount": total_amount,
+                        "customer_name": args.customer_name,
+                        "order_details": _summarize_items(args.items),
+                    },
+                    actor_type="system",  # Voice agent is a system actor
+                )
+                print(f"[INFO] Activity history logged for order creation: history_id={history_id}")
+            else:
+                print(f"[WARN] Cannot log history - restaurant_id is None for order {order_id}")
+        except Exception as history_error:
+            print(f"[ERROR] Failed to log history for voice agent order creation: {history_error}")
+            import traceback
+            traceback.print_exc()
+    
+    await _run_service_call(_log_history)
+    
     return {
         "status": "CREATED",
         "message": "Order created",
@@ -231,20 +261,57 @@ async def update_order_details(**kwargs) -> Dict[str, Any]:
     def _update():
         user_id = _user_repo.get_user_id_by_phone_or_email(args.customer_contact, None)
         if not user_id:
-            return None
+            return None, None, None
         order = _order_repo.get_latest_order_by_user(user_id)
         if not order:
-            return None
+            return None, None, None
         order_id = order.get("id")
         if not order_id:
-            return None
+            return None, None, None
+        
+        # Capture previous state for activity history
+        previous_data = {
+            "order_details": order.get("order_details"),
+            "customization": order.get("customization"),
+            "total_amount": order.get("total_amount"),
+        }
+        
         order_details = [item.model_dump() for item in args.items]
         total_amount = _calculate_total(args.items)
         _order_repo.update_order_details(order_id, order_details, args.customization, total_amount)
         updated = _order_repo.get_order_by_id(order_id)
-        return updated
+        
+        return updated, previous_data, order.get("restaurant_id")
 
-    updated_order = await _run_service_call(_update)
+    updated_order, previous_data, restaurant_id = await _run_service_call(_update)
     if not updated_order:
         return {"status": "NOT_FOUND"}
+    
+    # Log activity history for voice agent order update (run in thread since it's a DB operation)
+    def _log_history():
+        try:
+            if restaurant_id:
+                print(f"[DEBUG] Logging order update history: order_id={updated_order.get('id')}, restaurant_id={restaurant_id}")
+                new_data = {
+                    "order_details": updated_order.get("order_details"),
+                    "customization": updated_order.get("customization"),
+                    "total_amount": updated_order.get("total_amount"),
+                }
+                history_id = _history_service.log_order_updated(
+                    order_id=updated_order.get("id"),
+                    restaurant_id=int(restaurant_id),
+                    previous_data=previous_data or {},
+                    new_data=new_data,
+                    actor_type="system",  # Voice agent is a system actor
+                )
+                print(f"[INFO] Activity history logged for order update: history_id={history_id}")
+            else:
+                print(f"[WARN] Cannot log history - restaurant_id is None for order {updated_order.get('id')}")
+        except Exception as history_error:
+            print(f"[ERROR] Failed to log history for voice agent order update: {history_error}")
+            import traceback
+            traceback.print_exc()
+    
+    await _run_service_call(_log_history)
+    
     return {"status": "UPDATED", "order": updated_order}

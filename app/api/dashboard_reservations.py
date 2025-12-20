@@ -4,7 +4,7 @@ Includes RBAC: admins can access all, managers can only access their restaurant'
 """
 
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from fastapi.security import HTTPBearer
@@ -151,6 +151,17 @@ class UpdateReservationRequest(BaseModel):
         description="URL for managing reservation",
         json_schema_extra={"example": "https://example.com/manage/abc123"},
     )
+
+
+class HistoryEntryResponse(BaseModel):
+    """Response model for a history entry in reservation detail."""
+
+    id: int = Field(..., description="History entry ID")
+    action: str = Field(..., description="Action performed (created, updated, cancelled, etc.)")
+    previous_value: Optional[Dict[str, Any]] = Field(None, description="Previous state")
+    new_value: Optional[Dict[str, Any]] = Field(None, description="New state")
+    change_summary: Optional[str] = Field(None, description="Human-readable summary")
+    created_at: str = Field(..., description="Timestamp of the action")
 
 
 # ---------- Helper functions for RBAC ----------
@@ -312,21 +323,23 @@ async def create_reservation_direct(
 
         # Log activity history for reservation creation
         try:
-            user_id = current_user.get("user_id") or current_user.get("sub")
-            if user_id:
+            actor_uuid = current_user.get("uuid") or current_user.get("sub")
+            actor_type = "admin" if current_user.get("user_type") == "admin" else "restaurant_admin"
+            if actor_uuid:
                 history_service.log_reservation_created(
-                    user_id=int(user_id),
                     reservation_id=result["reservation_id"],
-                    restaurant_id=restaurant_id,
+                    restaurant_id=int(restaurant_id),
                     reservation_data={
                         "status": result.get("status"),
                         "party_size": result.get("party_size"),
                         "date_time": result.get("date_time"),
                         "name": result.get("name"),
                     },
+                    actor_uuid=actor_uuid,
+                    actor_type=actor_type,
                 )
         except Exception as history_error:
-            print(f"[WARN] Failed to log history for reservation creation {result['reservation_id']}: {history_error}")
+            logger.warning(f"Failed to log history for reservation creation {result['reservation_id']}: {history_error}")
 
         # Emit SSE event for new reservation (background task, properly managed by FastAPI)
         background_tasks.add_task(
@@ -503,15 +516,19 @@ async def get_restaurant_reservations(
     "/reservations/{reservation_id}",
     summary="Get a reservation by ID (Dashboard)",
     description="""
-Retrieve detailed information about a specific reservation.
+Retrieve detailed information about a specific reservation, including its change history.
 
 **Authentication**: Required (admin or restaurant manager role)
 
 **Authorization**:
 - Admins can view any reservation
 - Restaurant managers can only view reservations for their own restaurant
+
+**History**: The `history` field contains an array of all changes made to this reservation,
+ordered from most recent to oldest. Each entry includes the action performed,
+previous and new values, and a human-readable summary.
 """,
-    response_description="Reservation details including customer information and notes",
+    response_description="Reservation details including customer information, notes, and change history",
     responses={
         200: {
             "description": "Reservation retrieved successfully",
@@ -534,6 +551,24 @@ Retrieve detailed information about a specific reservation.
                         "notes": "VIP customer, birthday celebration",
                         "created_at": "2025-12-13T10:00:00",
                         "updated_at": "2025-12-13T10:00:00",
+                        "history": [
+                            {
+                                "id": 1,
+                                "action": "status_changed",
+                                "previous_value": {"status": "pending"},
+                                "new_value": {"status": "confirmed"},
+                                "change_summary": "Reservation #123 status changed: pending → confirmed",
+                                "created_at": "2025-12-13T10:05:00",
+                            },
+                            {
+                                "id": 2,
+                                "action": "created",
+                                "previous_value": None,
+                                "new_value": {"status": "pending", "party_size": 4},
+                                "change_summary": "Reservation #123 created for 4 guests",
+                                "created_at": "2025-12-13T10:00:00",
+                            },
+                        ],
                     }
                 }
             },
@@ -546,8 +581,29 @@ async def get_reservation_dashboard(
     reservation_id: int,
     current_user: dict = Depends(require_role(["admin", "client"])),
 ):
-    """Get a reservation by ID with authorization check."""
+    """Get a reservation by ID with authorization check and history."""
     reservation = _check_reservation_access(current_user, reservation_id)
+    
+    # Fetch history entries for this reservation
+    try:
+        history_result = history_service.get_reservation_history(reservation_id, limit=100, offset=0)
+        history_entries = [
+            {
+                "id": entry.get("id"),
+                "action": entry.get("action"),
+                "previous_value": entry.get("previous_value"),
+                "new_value": entry.get("new_value"),
+                "change_summary": entry.get("change_summary"),
+                "created_at": str(entry.get("created_at")) if entry.get("created_at") else None,
+            }
+            for entry in history_result.get("entries", [])
+        ]
+    except Exception as e:
+        logger.warning(f"Failed to fetch history for reservation {reservation_id}: {e}")
+        history_entries = []
+    
+    # Add history to reservation response
+    reservation["history"] = history_entries
     return reservation
 
 
@@ -648,8 +704,9 @@ async def update_reservation(
 
         # Log activity history for reservation update
         try:
-            user_id = current_user.get("user_id") or current_user.get("sub")
-            if user_id and restaurant_id:
+            actor_uuid = current_user.get("uuid") or current_user.get("sub")
+            actor_type = "admin" if current_user.get("user_type") == "admin" else "restaurant_admin"
+            if actor_uuid and restaurant_id:
                 new_data = {
                     "status": result.get("status"),
                     "party_size": result.get("party_size"),
@@ -658,14 +715,15 @@ async def update_reservation(
                     "notes": result.get("notes"),
                 }
                 history_service.log_reservation_updated(
-                    user_id=int(user_id),
                     reservation_id=reservation_id,
-                    restaurant_id=restaurant_id,
+                    restaurant_id=int(restaurant_id),
                     previous_data=previous_data,
                     new_data=new_data,
+                    actor_uuid=actor_uuid,
+                    actor_type=actor_type,
                 )
         except Exception as history_error:
-            print(f"[WARN] Failed to log history for reservation update {reservation_id}: {history_error}")
+            logger.warning(f"Failed to log history for reservation update {reservation_id}: {history_error}")
 
         # Emit SSE event for reservation update
         if restaurant_id:
@@ -741,16 +799,18 @@ async def cancel_reservation_dashboard(
 
         # Log activity history for reservation cancellation
         try:
-            user_id = current_user.get("user_id") or current_user.get("sub")
-            if user_id and restaurant_id:
+            actor_uuid = current_user.get("uuid") or current_user.get("sub")
+            actor_type = "admin" if current_user.get("user_type") == "admin" else "restaurant_admin"
+            if actor_uuid and restaurant_id:
                 history_service.log_reservation_cancelled(
-                    user_id=int(user_id),
                     reservation_id=reservation_id,
-                    restaurant_id=restaurant_id,
+                    restaurant_id=int(restaurant_id),
                     previous_status=previous_status or "unknown",
+                    actor_uuid=actor_uuid,
+                    actor_type=actor_type,
                 )
         except Exception as history_error:
-            print(f"[WARN] Failed to log history for reservation cancellation {reservation_id}: {history_error}")
+            logger.warning(f"Failed to log history for reservation cancellation {reservation_id}: {history_error}")
 
         # Emit SSE event for reservation cancellation
         if restaurant_id:

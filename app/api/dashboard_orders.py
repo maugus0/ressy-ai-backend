@@ -212,6 +212,17 @@ class OrderItemResponse(BaseModel):
     instructions: Optional[str] = Field(None, description="Special instructions")
 
 
+class HistoryEntryResponse(BaseModel):
+    """Response model for a history entry in order/reservation detail."""
+
+    id: int = Field(..., description="History entry ID")
+    action: str = Field(..., description="Action performed (created, updated, cancelled, etc.)")
+    previous_value: Optional[Dict[str, Any]] = Field(None, description="Previous state")
+    new_value: Optional[Dict[str, Any]] = Field(None, description="New state")
+    change_summary: Optional[str] = Field(None, description="Human-readable summary")
+    created_at: str = Field(..., description="Timestamp of the action")
+
+
 class OrderResponse(BaseModel):
     """Response model for a single order."""
 
@@ -228,6 +239,25 @@ class OrderResponse(BaseModel):
     created_at: str = Field(..., description="Creation timestamp")
     updated_at: str = Field(..., description="Last update timestamp")
     deleted_at: Optional[str] = Field(None, description="Soft delete timestamp")
+
+
+class OrderWithHistoryResponse(BaseModel):
+    """Response model for a single order with history."""
+
+    id: int = Field(..., description="Order ID")
+    user_id: Optional[int] = Field(None, description="Associated user ID")
+    restaurant_id: int = Field(..., description="Restaurant ID")
+    status: str = Field(..., description="Order status")
+    total_amount: float = Field(..., description="Total order amount")
+    order_details: List[Dict[str, Any]] = Field(..., description="Order items")
+    customization: Optional[Dict[str, Any]] = Field(None, description="Customization options")
+    customer_name: Optional[str] = Field(None, description="Customer name")
+    customer_phone: Optional[str] = Field(None, description="Customer phone")
+    customer_email: Optional[str] = Field(None, description="Customer email")
+    created_at: str = Field(..., description="Creation timestamp")
+    updated_at: str = Field(..., description="Last update timestamp")
+    deleted_at: Optional[str] = Field(None, description="Soft delete timestamp")
+    history: List[HistoryEntryResponse] = Field(default=[], description="Change history for this order")
 
 
 class CreateOrderResponse(BaseModel):
@@ -541,18 +571,20 @@ async def create_order(
 
         # Log activity history for order creation
         try:
-            user_id = current_user.get("user_id") or current_user.get("sub")
-            if user_id:
+            actor_uuid = current_user.get("uuid") or current_user.get("sub")
+            actor_type = "admin" if current_user.get("user_type") == "admin" else "restaurant_admin"
+            if actor_uuid:
                 history_service.log_order_created(
-                    user_id=int(user_id),
                     order_id=result["order_id"],
-                    restaurant_id=restaurant_id,
+                    restaurant_id=int(restaurant_id),
                     order_data={
                         "status": result["status"],
                         "total_amount": result["total_amount"],
                         "customer_name": result.get("customer_name"),
                         "order_details": result.get("order_details"),
                     },
+                    actor_uuid=actor_uuid,
+                    actor_type=actor_type,
                 )
         except Exception as history_error:
             logger.error(f"Failed to log history for order creation {result['order_id']}: {history_error}")
@@ -703,19 +735,23 @@ async def get_restaurant_orders(
     "/orders/{order_id}",
     summary="Get an order by ID (Dashboard)",
     description="""
-Retrieve detailed information about a specific order.
+Retrieve detailed information about a specific order, including its change history.
 
 Returns the complete order with all items, customer information,
-and metadata including timestamps.
+metadata including timestamps, and an array of history entries showing all changes.
 
 **Authentication**: Required (admin or restaurant manager role)
 
 **Authorization**:
 - Admins can view any order
 - Restaurant managers can only view orders for their own restaurant
+
+**History**: The `history` field contains an array of all changes made to this order,
+ordered from most recent to oldest. Each entry includes the action performed,
+previous and new values, and a human-readable summary.
 """,
-    response_description="Complete order details with customer information",
-    response_model=OrderResponse,
+    response_description="Complete order details with customer information and change history",
+    response_model=OrderWithHistoryResponse,
     responses={
         200: {
             "description": "Order retrieved successfully",
@@ -738,6 +774,24 @@ and metadata including timestamps.
                         "created_at": "2025-12-14T10:30:00",
                         "updated_at": "2025-12-14T10:35:00",
                         "deleted_at": None,
+                        "history": [
+                            {
+                                "id": 1,
+                                "action": "status_changed",
+                                "previous_value": {"status": "pending"},
+                                "new_value": {"status": "preparing"},
+                                "change_summary": "Order #456 status changed: pending → preparing",
+                                "created_at": "2025-12-14T10:35:00",
+                            },
+                            {
+                                "id": 2,
+                                "action": "created",
+                                "previous_value": None,
+                                "new_value": {"status": "pending", "total_amount": 34.97},
+                                "change_summary": "Order #456 created with status: pending",
+                                "created_at": "2025-12-14T10:30:00",
+                            },
+                        ],
                     }
                 }
             },
@@ -760,8 +814,29 @@ async def get_order(
     order_id: int,
     current_user: dict = Depends(require_role(["admin", "client"])),
 ):
-    """Get an order by ID with authorization check."""
+    """Get an order by ID with authorization check and history."""
     order = _check_order_access(current_user, order_id)
+    
+    # Fetch history entries for this order
+    try:
+        history_result = history_service.get_order_history(order_id, limit=100, offset=0)
+        history_entries = [
+            {
+                "id": entry.get("id"),
+                "action": entry.get("action"),
+                "previous_value": entry.get("previous_value"),
+                "new_value": entry.get("new_value"),
+                "change_summary": entry.get("change_summary"),
+                "created_at": str(entry.get("created_at")) if entry.get("created_at") else None,
+            }
+            for entry in history_result.get("entries", [])
+        ]
+    except Exception as e:
+        logger.warning(f"Failed to fetch history for order {order_id}: {e}")
+        history_entries = []
+    
+    # Add history to order response
+    order["history"] = history_entries
     return order
 
 
@@ -866,8 +941,9 @@ async def update_order(
 
         # Log activity history for order update
         try:
-            user_id = current_user.get("user_id") or current_user.get("sub")
-            if user_id and restaurant_id:
+            actor_uuid = current_user.get("uuid") or current_user.get("sub")
+            actor_type = "admin" if current_user.get("user_type") == "admin" else "restaurant_admin"
+            if actor_uuid and restaurant_id:
                 new_data = {
                     "status": result.get("status"),
                     "total_amount": result.get("total_amount"),
@@ -875,11 +951,12 @@ async def update_order(
                     "customization": result.get("customization"),
                 }
                 history_service.log_order_updated(
-                    user_id=int(user_id),
                     order_id=order_id,
-                    restaurant_id=restaurant_id,
+                    restaurant_id=int(restaurant_id),
                     previous_data=previous_data,
                     new_data=new_data,
+                    actor_uuid=actor_uuid,
+                    actor_type=actor_type,
                 )
         except Exception as history_error:
             logger.error(f"Failed to log history for order update {order_id}: {history_error}")
@@ -985,14 +1062,16 @@ async def update_order_status(
 
         # Log activity history for status change
         try:
-            user_id = current_user.get("user_id") or current_user.get("sub")
-            if user_id and restaurant_id:
+            actor_uuid = current_user.get("uuid") or current_user.get("sub")
+            actor_type = "admin" if current_user.get("user_type") == "admin" else "restaurant_admin"
+            if actor_uuid and restaurant_id:
                 history_service.log_order_status_changed(
-                    user_id=int(user_id),
                     order_id=order_id,
-                    restaurant_id=restaurant_id,
+                    restaurant_id=int(restaurant_id),
                     old_status=old_status or "unknown",
                     new_status=request.status,
+                    actor_uuid=actor_uuid,
+                    actor_type=actor_type,
                 )
         except Exception as history_error:
             logger.error(f"Failed to log history for order status change {order_id}: {history_error}")
@@ -1095,13 +1174,15 @@ async def cancel_order(
 
         # Log activity history for order cancellation
         try:
-            user_id = current_user.get("user_id") or current_user.get("sub")
-            if user_id and restaurant_id:
+            actor_uuid = current_user.get("uuid") or current_user.get("sub")
+            actor_type = "admin" if current_user.get("user_type") == "admin" else "restaurant_admin"
+            if actor_uuid and restaurant_id:
                 history_service.log_order_cancelled(
-                    user_id=int(user_id),
                     order_id=order_id,
-                    restaurant_id=restaurant_id,
+                    restaurant_id=int(restaurant_id),
                     previous_status=previous_status or "unknown",
+                    actor_uuid=actor_uuid,
+                    actor_type=actor_type,
                 )
         except Exception as history_error:
             logger.error(f"Failed to log history for order cancellation {order_id}: {history_error}")

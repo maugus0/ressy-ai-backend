@@ -16,10 +16,12 @@ class ActivityHistoryService:
 
     def log_activity(
         self,
-        user_id: int,
         activity_type: str,
         action: str,
         restaurant_id: int,
+        user_id: Optional[int] = None,
+        actor_uuid: Optional[str] = None,
+        actor_type: str = "user",
         order_id: Optional[int] = None,
         reservation_id: Optional[int] = None,
         previous_value: Optional[Dict[str, Any]] = None,
@@ -32,10 +34,12 @@ class ActivityHistoryService:
         Log an activity entry.
 
         Args:
-            user_id: User performing the action
             activity_type: 'order' or 'reservation'
             action: Action type (created, updated, cancelled, status_changed)
             restaurant_id: Restaurant ID for RBAC
+            user_id: User ID (for customer users from Users table), None for admin actions
+            actor_uuid: UUID of admin/staff user who performed the action
+            actor_type: Type of actor ('user', 'admin', 'restaurant_admin', 'system')
             order_id: Order ID (if applicable)
             reservation_id: Reservation ID (if applicable)
             previous_value: Previous state
@@ -48,10 +52,12 @@ class ActivityHistoryService:
             Created history entry ID
         """
         return self.history_repo.create_history_entry(
-            user_id=user_id,
             activity_type=activity_type,
             action=action,
             restaurant_id=restaurant_id,
+            user_id=user_id,
+            actor_uuid=actor_uuid,
+            actor_type=actor_type,
             order_id=order_id,
             reservation_id=reservation_id,
             previous_value=previous_value,
@@ -63,19 +69,21 @@ class ActivityHistoryService:
 
     def log_order_created(
         self,
-        user_id: int,
         order_id: int,
         restaurant_id: int,
         order_data: Dict[str, Any],
+        actor_uuid: Optional[str] = None,
+        actor_type: str = "restaurant_admin",
         ip_address: Optional[str] = None,
         user_agent: Optional[str] = None,
     ) -> int:
         """Log order creation."""
         return self.log_activity(
-            user_id=user_id,
             activity_type="order",
             action="created",
             restaurant_id=restaurant_id,
+            actor_uuid=actor_uuid,
+            actor_type=actor_type,
             order_id=order_id,
             new_value=order_data,
             change_summary=f"Order #{order_id} created with status: {order_data.get('status', 'pending')}",
@@ -85,11 +93,12 @@ class ActivityHistoryService:
 
     def log_order_updated(
         self,
-        user_id: int,
         order_id: int,
         restaurant_id: int,
         previous_data: Dict[str, Any],
         new_data: Dict[str, Any],
+        actor_uuid: Optional[str] = None,
+        actor_type: str = "restaurant_admin",
         ip_address: Optional[str] = None,
         user_agent: Optional[str] = None,
     ) -> int:
@@ -103,10 +112,11 @@ class ActivityHistoryService:
         change_summary = f"Order #{order_id} updated: " + ", ".join(changes) if changes else f"Order #{order_id} updated"
 
         return self.log_activity(
-            user_id=user_id,
             activity_type="order",
             action="updated",
             restaurant_id=restaurant_id,
+            actor_uuid=actor_uuid,
+            actor_type=actor_type,
             order_id=order_id,
             previous_value=previous_data,
             new_value=new_data,
@@ -117,20 +127,22 @@ class ActivityHistoryService:
 
     def log_order_status_changed(
         self,
-        user_id: int,
         order_id: int,
         restaurant_id: int,
         old_status: str,
         new_status: str,
+        actor_uuid: Optional[str] = None,
+        actor_type: str = "restaurant_admin",
         ip_address: Optional[str] = None,
         user_agent: Optional[str] = None,
     ) -> int:
         """Log order status change."""
         return self.log_activity(
-            user_id=user_id,
             activity_type="order",
             action="status_changed",
             restaurant_id=restaurant_id,
+            actor_uuid=actor_uuid,
+            actor_type=actor_type,
             order_id=order_id,
             previous_value={"status": old_status},
             new_value={"status": new_status},
@@ -141,19 +153,21 @@ class ActivityHistoryService:
 
     def log_order_cancelled(
         self,
-        user_id: int,
         order_id: int,
         restaurant_id: int,
         previous_status: str,
+        actor_uuid: Optional[str] = None,
+        actor_type: str = "restaurant_admin",
         ip_address: Optional[str] = None,
         user_agent: Optional[str] = None,
     ) -> int:
         """Log order cancellation."""
         return self.log_activity(
-            user_id=user_id,
             activity_type="order",
             action="cancelled",
             restaurant_id=restaurant_id,
+            actor_uuid=actor_uuid,
+            actor_type=actor_type,
             order_id=order_id,
             previous_value={"status": previous_status},
             new_value={"status": "cancelled"},
@@ -164,19 +178,21 @@ class ActivityHistoryService:
 
     def log_reservation_created(
         self,
-        user_id: int,
         reservation_id: int,
         restaurant_id: int,
         reservation_data: Dict[str, Any],
+        actor_uuid: Optional[str] = None,
+        actor_type: str = "restaurant_admin",
         ip_address: Optional[str] = None,
         user_agent: Optional[str] = None,
     ) -> int:
         """Log reservation creation."""
         return self.log_activity(
-            user_id=user_id,
             activity_type="reservation",
             action="created",
             restaurant_id=restaurant_id,
+            actor_uuid=actor_uuid,
+            actor_type=actor_type,
             reservation_id=reservation_id,
             new_value=reservation_data,
             change_summary=f"Reservation #{reservation_id} created for {reservation_data.get('party_size', '?')} guests",
@@ -186,11 +202,12 @@ class ActivityHistoryService:
 
     def log_reservation_updated(
         self,
-        user_id: int,
         reservation_id: int,
         restaurant_id: int,
         previous_data: Dict[str, Any],
         new_data: Dict[str, Any],
+        actor_uuid: Optional[str] = None,
+        actor_type: str = "restaurant_admin",
         ip_address: Optional[str] = None,
         user_agent: Optional[str] = None,
     ) -> int:
@@ -208,10 +225,11 @@ class ActivityHistoryService:
         )
 
         return self.log_activity(
-            user_id=user_id,
             activity_type="reservation",
             action="updated",
             restaurant_id=restaurant_id,
+            actor_uuid=actor_uuid,
+            actor_type=actor_type,
             reservation_id=reservation_id,
             previous_value=previous_data,
             new_value=new_data,
@@ -222,20 +240,22 @@ class ActivityHistoryService:
 
     def log_reservation_status_changed(
         self,
-        user_id: int,
         reservation_id: int,
         restaurant_id: int,
         old_status: str,
         new_status: str,
+        actor_uuid: Optional[str] = None,
+        actor_type: str = "restaurant_admin",
         ip_address: Optional[str] = None,
         user_agent: Optional[str] = None,
     ) -> int:
         """Log reservation status change."""
         return self.log_activity(
-            user_id=user_id,
             activity_type="reservation",
             action="status_changed",
             restaurant_id=restaurant_id,
+            actor_uuid=actor_uuid,
+            actor_type=actor_type,
             reservation_id=reservation_id,
             previous_value={"status": old_status},
             new_value={"status": new_status},
@@ -246,19 +266,21 @@ class ActivityHistoryService:
 
     def log_reservation_cancelled(
         self,
-        user_id: int,
         reservation_id: int,
         restaurant_id: int,
         previous_status: str,
+        actor_uuid: Optional[str] = None,
+        actor_type: str = "restaurant_admin",
         ip_address: Optional[str] = None,
         user_agent: Optional[str] = None,
     ) -> int:
         """Log reservation cancellation."""
         return self.log_activity(
-            user_id=user_id,
             activity_type="reservation",
             action="cancelled",
             restaurant_id=restaurant_id,
+            actor_uuid=actor_uuid,
+            actor_type=actor_type,
             reservation_id=reservation_id,
             previous_value={"status": previous_status},
             new_value={"status": "cancelled"},

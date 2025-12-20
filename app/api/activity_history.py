@@ -30,7 +30,7 @@ class HistoryEntryResponse(BaseModel):
     """Response model for a history entry."""
 
     id: int = Field(..., description="History entry ID")
-    user_id: int = Field(..., description="User who performed the action")
+    user_id: Optional[int] = Field(None, description="User ID who performed the action")
     activity_type: str = Field(..., description="Type: 'order' or 'reservation'")
     order_id: Optional[int] = Field(None, description="Associated order ID")
     reservation_id: Optional[int] = Field(None, description="Associated reservation ID")
