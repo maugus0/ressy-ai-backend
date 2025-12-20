@@ -70,7 +70,7 @@ class MySQLActivityHistoryRepository(MySQLBaseRepository):
                 actor_info += f"/{actor_uuid[:8]}..."
             actor_info += "]"
             final_change_summary = (final_change_summary + actor_info)[:500]
-        
+
         query = """
             INSERT INTO User_Activity_History
             (user_id, activity_type, order_id, reservation_id, action,
@@ -339,4 +339,3 @@ class MySQLActivityHistoryRepository(MySQLBaseRepository):
                 row_copy["created_at"] = row_copy["created_at"].isoformat()
             parsed.append(row_copy)
         return parsed
-

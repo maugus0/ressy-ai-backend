@@ -109,7 +109,9 @@ class ActivityHistoryService:
             if key in previous_data and previous_data[key] != new_data[key]:
                 changes.append(f"{key}: {previous_data[key]} → {new_data[key]}")
 
-        change_summary = f"Order #{order_id} updated: " + ", ".join(changes) if changes else f"Order #{order_id} updated"
+        change_summary = (
+            f"Order #{order_id} updated: " + ", ".join(changes) if changes else f"Order #{order_id} updated"
+        )
 
         return self.log_activity(
             activity_type="order",
@@ -441,4 +443,3 @@ class ActivityHistoryService:
     def get_reservation_restaurant_id(self, reservation_id: int) -> Optional[int]:
         """Get restaurant_id for a reservation (for RBAC checks)."""
         return self.history_repo.get_reservation_restaurant_id(reservation_id)
-

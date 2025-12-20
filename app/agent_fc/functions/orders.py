@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.config import settings
 from app.repositories.mysql_menu_repo import MySQLMenuRepository
 from app.repositories.mysql_order_repo import MySQLOrderRepository
 from app.repositories.mysql_user_repo import MySQLUserRepository
@@ -152,12 +154,14 @@ async def create_order(**kwargs) -> Dict[str, Any]:
         return order_id, user_id
 
     order_id, user_id = await _run_service_call(_create)
-    
+
     # Log activity history for voice agent order creation (run in thread since it's a DB operation)
     def _log_history():
         try:
             if args.restaurant_id:
-                print(f"[DEBUG] Logging order creation history: order_id={order_id}, restaurant_id={args.restaurant_id}")
+                print(
+                    f"[DEBUG] Logging order creation history: order_id={order_id}, restaurant_id={args.restaurant_id}"
+                )
                 total_amount = _calculate_total(args.items)
                 history_id = _history_service.log_order_created(
                     order_id=order_id,
@@ -176,10 +180,11 @@ async def create_order(**kwargs) -> Dict[str, Any]:
         except Exception as history_error:
             print(f"[ERROR] Failed to log history for voice agent order creation: {history_error}")
             import traceback
+
             traceback.print_exc()
-    
+
     await _run_service_call(_log_history)
-    
+
     return {
         "status": "CREATED",
         "message": "Order created",
@@ -254,6 +259,39 @@ async def check_items_availability(**kwargs) -> Dict[str, Any]:
     }
 
 
+def _is_within_update_window(created_at: Any) -> bool:
+    """
+    Check if an order/reservation is within the allowed update window.
+
+    Args:
+        created_at: The created_at timestamp (datetime or string)
+
+    Returns:
+        True if the order/reservation can still be updated, False otherwise
+    """
+    if created_at is None:
+        return False
+
+    now = datetime.now(timezone.utc)
+    update_window_seconds = settings.AGENT_UPDATE_WINDOW_SECONDS
+
+    # Handle different formats of created_at
+    if isinstance(created_at, datetime):
+        # Make timezone-aware if naive
+        if created_at.tzinfo is None:
+            created_at = created_at.replace(tzinfo=timezone.utc)
+    elif isinstance(created_at, str):
+        try:
+            created_at = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+        except ValueError:
+            return False
+    else:
+        return False
+
+    elapsed_seconds = (now - created_at).total_seconds()
+    return elapsed_seconds <= update_window_seconds
+
+
 async def update_order_details(**kwargs) -> Dict[str, Any]:
     args = UpdateOrderDetailsArgs.model_validate(kwargs)
     print(f"[INFO] update_order_details invoked customer_contact={args.customer_contact}")
@@ -261,37 +299,59 @@ async def update_order_details(**kwargs) -> Dict[str, Any]:
     def _update():
         user_id = _user_repo.get_user_id_by_phone_or_email(args.customer_contact, None)
         if not user_id:
-            return None, None, None
+            return None, None, None, None
         order = _order_repo.get_latest_order_by_user(user_id)
         if not order:
-            return None, None, None
+            return None, None, None, None
         order_id = order.get("id")
         if not order_id:
-            return None, None, None
-        
+            return None, None, None, None
+
+        # Check if order is within the allowed update window
+        created_at = order.get("created_at")
+        if not _is_within_update_window(created_at):
+            return "UPDATE_WINDOW_EXPIRED", None, None, order
+
         # Capture previous state for activity history
         previous_data = {
             "order_details": order.get("order_details"),
             "customization": order.get("customization"),
             "total_amount": order.get("total_amount"),
         }
-        
+
         order_details = [item.model_dump() for item in args.items]
         total_amount = _calculate_total(args.items)
         _order_repo.update_order_details(order_id, order_details, args.customization, total_amount)
         updated = _order_repo.get_order_by_id(order_id)
-        
-        return updated, previous_data, order.get("restaurant_id")
 
-    updated_order, previous_data, restaurant_id = await _run_service_call(_update)
-    if not updated_order:
+        return updated, previous_data, order.get("restaurant_id"), order
+
+    result, previous_data, restaurant_id, original_order = await _run_service_call(_update)
+
+    # Handle update window expired
+    if result == "UPDATE_WINDOW_EXPIRED":
+        window_minutes = settings.AGENT_UPDATE_WINDOW_SECONDS // 60
+        return {
+            "status": "UPDATE_WINDOW_EXPIRED",
+            "message": (
+                f"This order was placed more than {window_minutes} minutes ago "
+                "and can no longer be modified. Please contact the restaurant directly "
+                "for any changes."
+            ),
+        }
+
+    if not result:
         return {"status": "NOT_FOUND"}
-    
+
+    updated_order = result
+
     # Log activity history for voice agent order update (run in thread since it's a DB operation)
     def _log_history():
         try:
             if restaurant_id:
-                print(f"[DEBUG] Logging order update history: order_id={updated_order.get('id')}, restaurant_id={restaurant_id}")
+                print(
+                    f"[DEBUG] Logging order update history: order_id={updated_order.get('id')}, restaurant_id={restaurant_id}"
+                )
                 new_data = {
                     "order_details": updated_order.get("order_details"),
                     "customization": updated_order.get("customization"),
@@ -310,8 +370,9 @@ async def update_order_details(**kwargs) -> Dict[str, Any]:
         except Exception as history_error:
             print(f"[ERROR] Failed to log history for voice agent order update: {history_error}")
             import traceback
+
             traceback.print_exc()
-    
+
     await _run_service_call(_log_history)
-    
+
     return {"status": "UPDATED", "order": updated_order}

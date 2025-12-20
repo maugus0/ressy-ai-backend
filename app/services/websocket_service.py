@@ -252,6 +252,101 @@ class WebSocketService:
         except Exception as exc:
             print(f"[Close] Failed to close Deepgram websocket: {exc}")
 
+    async def _handle_unregistered_twilio_call(
+        self,
+        twilio_ws,
+        streamsid_queue: asyncio.Queue,
+        shutdown_event: asyncio.Event,
+        audio_queue: asyncio.Queue,
+    ) -> None:
+        """
+        Handle calls to Twilio numbers not registered with any restaurant.
+        Plays an error message to the caller before disconnecting.
+        """
+        error_message = settings.UNREGISTERED_TWILIO_MESSAGE
+        print(f"[INFO] Playing unregistered number message: {error_message}")
+
+        try:
+            # Wait for streamSid from Twilio start event
+            try:
+                streamsid = await asyncio.wait_for(streamsid_queue.get(), timeout=5.0)
+            except asyncio.TimeoutError:
+                print("[WARN] Timeout waiting for Twilio streamSid, closing connection")
+                return
+
+            # Connect to Deepgram with default API key to play the message
+            async with self.deepgram_service.sts_connect() as sts_ws:
+                async with self._connections_lock:
+                    self._active_deepgram.add(sts_ws)
+
+                try:
+                    # Send minimal config to Deepgram
+                    config_message = self.deepgram_service.load_config(
+                        think_prompt="You are a helpful assistant. Simply say the message provided.",
+                        key_terms=None,
+                        restaurant_name="the restaurant",
+                    )
+                    await sts_ws.send(json.dumps(config_message))
+
+                    # Inject the error message for Deepgram to speak
+                    inject_message = {
+                        "type": "InjectAgentMessage",
+                        "message": error_message,
+                    }
+                    await sts_ws.send(json.dumps(inject_message))
+                    print("[INFO] Sent error message to Deepgram for TTS")
+
+                    # Create a stream state for audio handling
+                    state = self._create_stream_state()
+
+                    # Listen for Deepgram responses and forward audio to Twilio
+                    audio_done = False
+                    start_time = asyncio.get_event_loop().time()
+                    timeout_seconds = 15.0  # Max time to wait for message to play
+
+                    async for message in sts_ws:
+                        elapsed = asyncio.get_event_loop().time() - start_time
+                        if elapsed > timeout_seconds:
+                            print("[WARN] Timeout waiting for error message audio")
+                            break
+
+                        if isinstance(message, str):
+                            decoded = json.loads(message)
+                            msg_type = decoded.get("type")
+
+                            if msg_type == "AgentAudioDone":
+                                # Flush remaining audio and mark as done
+                                await self._flush_audio_buffer(state, twilio_ws, streamsid)
+                                audio_done = True
+                                # Give time for audio to play
+                                await asyncio.sleep(2.0)
+                                break
+                            elif msg_type == "ConversationAudio":
+                                # Forward audio to Twilio
+                                await self._handle_audio_payload(decoded, state, twilio_ws, streamsid)
+
+                        elif isinstance(message, (bytes, bytearray, memoryview)):
+                            await self._handle_binary_audio(message, state, twilio_ws, streamsid)
+
+                    if not audio_done:
+                        await self._flush_audio_buffer(state, twilio_ws, streamsid)
+
+                finally:
+                    async with self._connections_lock:
+                        self._active_deepgram.discard(sts_ws)
+
+        except Exception as exc:
+            print(f"[ERROR] Failed to play unregistered number message: {exc}")
+
+        finally:
+            # Signal shutdown and close connections
+            shutdown_event.set()
+            try:
+                audio_queue.put_nowait(None)
+            except asyncio.QueueFull:
+                pass
+            print("[INFO] Closing connection for unregistered Twilio number")
+
     async def _prepare_call_resources(
         self,
         restaurant_phone: Optional[str],
@@ -841,7 +936,9 @@ class WebSocketService:
             restaurant_record = self.restaurant_service.get_restaurant_by_twilio(restaurant_twilio_number)
             if not restaurant_record:
                 print(f"[FATAL ERROR] No restaurant found with twilio number: {restaurant_twilio_number}")
-                raise Exception(f"Twilio number {restaurant_twilio_number} not registered with any restaurant.")
+                # Play an error message to the caller before disconnecting
+                await self._handle_unregistered_twilio_call(twilio_ws, streamsid_queue, shutdown_event, audio_queue)
+                return
             else:
                 print(f"Serving call for restaurant: {restaurant_record.get('name')}")
 

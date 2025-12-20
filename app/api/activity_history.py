@@ -404,4 +404,3 @@ async def get_restaurant_history(
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error fetching restaurant history: {str(e)}")
-

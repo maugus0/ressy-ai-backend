@@ -54,30 +54,6 @@ async def _emit_order_sse_event(
         logger.error(f"Failed to emit SSE event for order {order_id} ({subtype.value}): {sse_error}")
 
 
-# ---------- Background task helpers ----------
-
-
-async def _emit_order_sse_event(
-    restaurant_id: int,
-    order_id: int,
-    subtype: OrderEventSubtype,
-    data: Dict[str, Any],
-) -> None:
-    """
-    Background task to emit SSE order events.
-    Logs errors but does not raise exceptions to avoid affecting other operations.
-    """
-    try:
-        await sse_service.emit_order_event(
-            restaurant_id=restaurant_id,
-            order_id=order_id,
-            subtype=subtype,
-            data=data,
-        )
-    except Exception as sse_error:
-        logger.error(f"Failed to emit SSE event for order {order_id} ({subtype.value}): {sse_error}")
-
-
 # ---------- Pydantic models for request validation ----------
 
 
@@ -840,7 +816,7 @@ async def get_order(
 ):
     """Get an order by ID with authorization check and history."""
     order = _check_order_access(current_user, order_id)
-    
+
     # Fetch history entries for this order
     try:
         history_result = history_service.get_order_history(order_id, limit=100, offset=0)
@@ -858,7 +834,7 @@ async def get_order(
     except Exception as e:
         logger.warning(f"Failed to fetch history for order {order_id}: {e}")
         history_entries = []
-    
+
     # Add history to order response
     order["history"] = history_entries
     return order

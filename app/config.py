@@ -43,6 +43,17 @@ class Settings:
     )
     RESTAURANT_TIMEZONE = os.getenv("RESTAURANT_TIMEZONE", "America/Vancouver")
 
+    # Message played when an incoming call is for a Twilio number not registered to any restaurant
+    UNREGISTERED_TWILIO_MESSAGE = os.getenv(
+        "UNREGISTERED_TWILIO_MESSAGE",
+        "We are unable to connect to the restaurant at the moment. "
+        "Please use an alternate number or try again later.",
+    )
+
+    # Maximum time window (in seconds) for allowing updates to orders/reservations via voice agent
+    # Orders/reservations created more than this many seconds ago cannot be updated
+    AGENT_UPDATE_WINDOW_SECONDS = int(os.getenv("AGENT_UPDATE_WINDOW_SECONDS", "300"))  # 5 minutes
+
     # Barge-in behavior
     # Minimum gap in seconds after last agent audio chunk before clearing Twilio buffer when user starts speaking
     BARGE_IN_CLEAR_SECONDS = float(os.getenv("BARGE_IN_CLEAR_SECONDS", "0.5"))

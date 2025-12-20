@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, ConfigDict
 
+from app.config import settings
 from app.repositories.mysql_reservation_repo import MySQLReservationRepository
 from app.repositories.mysql_user_repo import MySQLUserRepository
 from app.repositories.mysql_user_restaurant_metadata_repo import (
@@ -165,11 +166,13 @@ async def create_reservation(**kwargs) -> Dict[str, Any]:
 
     try:
         reservation = await _run_service_call(_create)
-        
+
         # Log activity history for voice agent reservation creation (run in thread since it's a DB operation)
         def _log_history():
             try:
-                print(f"[DEBUG] Logging reservation creation history: reservation_id={reservation['reservation_id']}, restaurant_id={args.restaurant_id}")
+                print(
+                    f"[DEBUG] Logging reservation creation history: reservation_id={reservation['reservation_id']}, restaurant_id={args.restaurant_id}"
+                )
                 history_id = _history_service.log_reservation_created(
                     reservation_id=reservation["reservation_id"],
                     restaurant_id=int(args.restaurant_id),
@@ -185,10 +188,11 @@ async def create_reservation(**kwargs) -> Dict[str, Any]:
             except Exception as history_error:
                 print(f"[ERROR] Failed to log history for voice agent reservation creation: {history_error}")
                 import traceback
+
                 traceback.print_exc()
-        
+
         await _run_service_call(_log_history)
-        
+
         return {
             "status": "SUBMITTED",
             "message": "Reservation request submitted. The restaurant will confirm shortly.",
@@ -227,6 +231,39 @@ async def lookup_reservation(**kwargs) -> Dict[str, Any]:
     return {"status": "FOUND", "reservation": reservation}
 
 
+def _is_within_update_window(created_at: Any) -> bool:
+    """
+    Check if a reservation is within the allowed update window.
+
+    Args:
+        created_at: The created_at timestamp (datetime or string)
+
+    Returns:
+        True if the reservation can still be updated, False otherwise
+    """
+    if created_at is None:
+        return False
+
+    now = datetime.now(timezone.utc)
+    update_window_seconds = settings.AGENT_UPDATE_WINDOW_SECONDS
+
+    # Handle different formats of created_at
+    if isinstance(created_at, datetime):
+        # Make timezone-aware if naive
+        if created_at.tzinfo is None:
+            created_at = created_at.replace(tzinfo=timezone.utc)
+    elif isinstance(created_at, str):
+        try:
+            created_at = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+        except ValueError:
+            return False
+    else:
+        return False
+
+    elapsed_seconds = (now - created_at).total_seconds()
+    return elapsed_seconds <= update_window_seconds
+
+
 async def update_reservation(**kwargs) -> Dict[str, Any]:
     """
     Update the latest reservation for a caller using their phone number.
@@ -245,6 +282,11 @@ async def update_reservation(**kwargs) -> Dict[str, Any]:
         reservation_id = reservation.get("id")
         if not reservation_id:
             return None, None, None
+
+        # Check if reservation is within the allowed update window
+        created_at = reservation.get("created_at")
+        if not _is_within_update_window(created_at):
+            return "UPDATE_WINDOW_EXPIRED", None, reservation
 
         # Capture previous state for activity history
         previous_data = {
@@ -284,15 +326,33 @@ async def update_reservation(**kwargs) -> Dict[str, Any]:
         updated_reservation = _reservation_repo.get_reservation_by_id(reservation_id)
         return updated_reservation, previous_data, reservation.get("restaurant_id")
 
-    updated, previous_data, restaurant_id = await _run_service_call(_update)
-    if not updated:
+    result, previous_data, extra = await _run_service_call(_update)
+
+    # Handle update window expired
+    if result == "UPDATE_WINDOW_EXPIRED":
+        window_minutes = settings.AGENT_UPDATE_WINDOW_SECONDS // 60
+        return {
+            "status": "UPDATE_WINDOW_EXPIRED",
+            "message": (
+                f"This reservation was made more than {window_minutes} minutes ago "
+                "and can no longer be modified. Please contact the restaurant directly "
+                "for any changes."
+            ),
+        }
+
+    if not result:
         return {"status": "NOT_FOUND", "message": "No reservation found to update."}
-    
+
+    updated = result
+    restaurant_id = extra
+
     # Log activity history for voice agent reservation update (run in thread since it's a DB operation)
     def _log_history():
         try:
             if restaurant_id:
-                print(f"[DEBUG] Logging reservation update history: reservation_id={updated.get('id')}, restaurant_id={restaurant_id}")
+                print(
+                    f"[DEBUG] Logging reservation update history: reservation_id={updated.get('id')}, restaurant_id={restaurant_id}"
+                )
                 new_data = {
                     "status": updated.get("status"),
                     "party_size": updated.get("party_size"),
@@ -313,10 +373,11 @@ async def update_reservation(**kwargs) -> Dict[str, Any]:
         except Exception as history_error:
             print(f"[ERROR] Failed to log history for voice agent reservation update: {history_error}")
             import traceback
+
             traceback.print_exc()
-    
+
     await _run_service_call(_log_history)
-    
+
     return {"status": "UPDATED", "reservation": updated}
 
 

@@ -54,30 +54,6 @@ async def _emit_reservation_sse_event(
         logger.error(f"Failed to emit SSE event for reservation {reservation_id} ({subtype.value}): {sse_error}")
 
 
-# ---------- Background task helpers ----------
-
-
-async def _emit_reservation_sse_event(
-    restaurant_id: int,
-    reservation_id: int,
-    subtype: ReservationEventSubtype,
-    data: Dict[str, Any],
-) -> None:
-    """
-    Background task to emit SSE reservation events.
-    Logs errors but does not raise exceptions to avoid affecting other operations.
-    """
-    try:
-        await sse_service.emit_reservation_event(
-            restaurant_id=restaurant_id,
-            reservation_id=reservation_id,
-            subtype=subtype,
-            data=data,
-        )
-    except Exception as sse_error:
-        logger.error(f"Failed to emit SSE event for reservation {reservation_id} ({subtype.value}): {sse_error}")
-
-
 # ---------- Pydantic models for request validation ----------
 
 
@@ -363,7 +339,9 @@ async def create_reservation_direct(
                     actor_type=actor_type,
                 )
         except Exception as history_error:
-            logger.warning(f"Failed to log history for reservation creation {result['reservation_id']}: {history_error}")
+            logger.warning(
+                f"Failed to log history for reservation creation {result['reservation_id']}: {history_error}"
+            )
 
         # Emit SSE event for new reservation (background task, properly managed by FastAPI)
         background_tasks.add_task(
@@ -607,7 +585,7 @@ async def get_reservation_dashboard(
 ):
     """Get a reservation by ID with authorization check and history."""
     reservation = _check_reservation_access(current_user, reservation_id)
-    
+
     # Fetch history entries for this reservation
     try:
         history_result = history_service.get_reservation_history(reservation_id, limit=100, offset=0)
@@ -625,7 +603,7 @@ async def get_reservation_dashboard(
     except Exception as e:
         logger.warning(f"Failed to fetch history for reservation {reservation_id}: {e}")
         history_entries = []
-    
+
     # Add history to reservation response
     reservation["history"] = history_entries
     return reservation
