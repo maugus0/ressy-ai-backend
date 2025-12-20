@@ -6,6 +6,7 @@ import json
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
+from app.repositories.mysql_menu_repo import MySQLMenuRepository
 from app.repositories.mysql_order_repo import MySQLOrderRepository
 from app.repositories.mysql_restaurant_repo import MySQLRestaurantRepository
 from app.repositories.mysql_user_repo import MySQLUserRepository
@@ -61,6 +62,7 @@ class DashboardOrderService:
         self.order_repo = MySQLOrderRepository()
         self.restaurant_repo = MySQLRestaurantRepository()
         self.user_repo = MySQLUserRepository()
+        self.menu_repo = MySQLMenuRepository()
 
     def create_order(
         self,
@@ -100,6 +102,31 @@ class DashboardOrderService:
         # Validate status
         if status not in self.VALID_STATUSES:
             raise ValueError(f"Invalid status '{status}'. " f"Must be one of: {', '.join(self.VALID_STATUSES)}")
+
+        # Validate order items belong to the restaurant's menu (single batch query)
+        item_ids = [item.get("item_id") for item in order_details if item.get("item_id") is not None]
+        if item_ids:
+            # Fetch all menu items in a single query to avoid N+1 pattern
+            menu_items_by_id = self.menu_repo.get_by_ids(item_ids)
+
+            # Check for invalid items (missing or wrong restaurant)
+            invalid_items = []
+            for item_id in item_ids:
+                menu_item = menu_items_by_id.get(item_id)
+                if not menu_item:
+                    invalid_items.append(f"item_id {item_id} (not found)")
+                elif menu_item.get("restaurant_id") != restaurant_id:
+                    item_restaurant_id = menu_item.get("restaurant_id")
+                    item_name = menu_item.get("item_name", "Unknown")
+                    invalid_items.append(
+                        f"'{item_name}' (item_id {item_id}) belongs to restaurant {item_restaurant_id}"
+                    )
+
+            if invalid_items:
+                raise ValueError(
+                    f"Order contains items that don't belong to restaurant {restaurant_id}: "
+                    f"{', '.join(invalid_items)}"
+                )
 
         # Create or get user
         user_id = None
