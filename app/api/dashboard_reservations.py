@@ -4,7 +4,7 @@ Includes RBAC: admins can access all, managers can only access their restaurant'
 """
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from fastapi.security import HTTPBearer
