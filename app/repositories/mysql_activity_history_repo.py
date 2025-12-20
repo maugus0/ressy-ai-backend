@@ -332,6 +332,7 @@ class MySQLActivityHistoryRepository(MySQLBaseRepository):
                     try:
                         row_copy[field] = json.loads(row_copy[field])
                     except (json.JSONDecodeError, TypeError):
+                        # If JSON is invalid or of the wrong type, leave the original string value unchanged.
                         pass
             # Convert datetime to ISO format string
             if isinstance(row_copy.get("created_at"), datetime):
