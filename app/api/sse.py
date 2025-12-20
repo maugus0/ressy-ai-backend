@@ -22,8 +22,8 @@ from app.services.sse_service import (
 from app.utils.jwt_util import JWTUtil
 
 security = HTTPBearer(
-    scheme_name="BearerAuth",
-    description="Enter your JWT access token obtained from login endpoints",
+    scheme_name="HTTPBearer",
+    description="Enter your JWT access token obtained from login endpoints. Just paste the token without 'Bearer ' prefix.",
 )
 
 router = APIRouter()
