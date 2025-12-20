@@ -45,6 +45,7 @@ ressy-ai-backend/
 │   ├── api/                   # FastAPI route handlers
 │   │   ├── auth.py            # Authentication endpoints
 │   │   ├── calls.py           # Admin CRM call endpoints
+│   │   ├── client_analytics.py  # Client CRM analytics endpoints
 │   │   ├── client_calls.py    # Client CRM call endpoints
 │   │   ├── client_client_users.py  # Client CRM user management (manager-scoped)
 │   │   ├── client_faqs.py     # Client CRM FAQ endpoints
@@ -96,9 +97,11 @@ ressy-ai-backend/
 │   │   │   ├── call_filler.py
 │   │   │   ├── call_latency.py
 │   │   │   └── call_state.py
-│   │   ├── admin_service.py
+│   │   ├── admin_user_common.py
 │   │   ├── auth_service.py
 │   │   ├── call_service.py
+│   │   ├── client_analytics_service.py
+│   │   ├── dashboard_order_service.py
 │   │   ├── deepgram_service.py
 │   │   ├── faq_service.py
 │   │   ├── menu_service.py
@@ -108,6 +111,7 @@ ressy-ai-backend/
 │   │   ├── ressy_admin_service.py
 │   │   ├── restaurant_service.py
 │   │   ├── restaurant_admin_service.py
+│   │   ├── sse_service.py
 │   │   ├── transcript_service.py
 │   │   ├── twilio_service.py
 │   │   ├── user_service.py
@@ -191,6 +195,14 @@ Create a `.env` file in the repository root:
 # Deepgram Configuration
 DEEPGRAM_API_KEY=your_deepgram_api_key
 
+# Deepgram Agent Configuration (Optional - defaults provided)
+DEEPGRAM_AUDIO_INPUT_ENCODING=mulaw
+DEEPGRAM_AUDIO_INPUT_SAMPLE_RATE=8000
+DEEPGRAM_AGENT_LANGUAGE=en
+DEEPGRAM_LISTEN_MODEL=nova-3
+DEEPGRAM_THINK_MODEL=gpt-4o-mini
+DEEPGRAM_SPEAK_MODEL=aura-2-amalthea-en
+
 # Outbound Calls (Developer Testing)
 # Public base URL reachable by Twilio/ngrok (used for WS streaming and status callbacks)
 PUBLIC_BASE_URL=https://your-ngrok-domain.ngrok-free.dev
@@ -229,6 +241,9 @@ JWT_AUTH_AUDIENCE=ressy-auth
 # Application Settings
 USE_MOCK_DATA=false
 ALLOW_DB_FAILURE=false  # Set to 'true' for testing without database
+
+# Timezone Configuration
+RESTAURANT_TIMEZONE=America/Vancouver
 
 # Call Cost Settings (USD)
 # Admin call detail returns a cost breakdown: twilio_cost, deepgram_cost, ressy_cost.
@@ -309,10 +324,10 @@ docker-compose down -v
 ```
 
 **What happens on startup:**
-1. MySQL container starts and waits for health check
+1. MySQL container starts and waits for health check (exposed on port 3307 by default, configurable via `DOCKER_MYSQL_PORT`)
 2. Backend container waits for MySQL to be ready
 3. Database migrations run automatically (all SQL files in `migrations/`)
-4. Sample data is seeded (admin users, restaurant, menu items, FAQs)
+4. Startup scripts run if enabled (sample data seeding: admin users, restaurant, menu items, FAQs)
 5. Application starts on port 5001
 
 **Default credentials after seeding:**
@@ -330,12 +345,15 @@ cp .env.example .env
 
 Key variables:
 - `DB_PASSWORD` - MySQL root password (default: `rootpassword`)
+- `DOCKER_MYSQL_PORT` - MySQL port mapping on host (default: `3307`, container uses `3306`)
 - `SEED_DATABASE` - Legacy toggle; set to `false` to skip running startup scripts (default: `true`)
 - `RUN_STARTUP_SCRIPTS` - Preferred toggle; overrides `SEED_DATABASE` when set
-- `JWT_PRIVATE_KEY` / `JWT_PUBLIC_KEY` - RSA keys for authentication
+- `JWT_PRIVATE_KEY` / `JWT_PUBLIC_KEY` - RSA keys for authentication (RS256)
 - `DEEPGRAM_API_KEY` - Required for voice features
+- `DEEPGRAM_LISTEN_MODEL`, `DEEPGRAM_THINK_MODEL`, `DEEPGRAM_SPEAK_MODEL` - Deepgram Agent model configuration
 - `PUBLIC_BASE_URL` - Public URL (e.g. ngrok) reachable by Twilio for voice/WebSocket flows
 - `TWILIO_COST_PER_SECOND` / `DEEPGRAM_COST_PER_SECOND` + multipliers - Cost calculation settings
+- `RESTAURANT_TIMEZONE` - Timezone for restaurant operations (default: `America/Vancouver`)
 
 **Disabling database seeding:**
 
@@ -639,6 +657,7 @@ All endpoints are organized by tags in the Swagger documentation:
   - Menus: `GET/POST /api/v1/client/menu`, `GET/PUT/DELETE /api/v1/client/menu/{menu_id}`, `PATCH /api/v1/client/menu/{menu_id}/availability`, `PATCH /api/v1/client/menu/{menu_id}/special`, `PATCH /api/v1/client/menu/bulk-availability`, `GET /api/v1/client/menu/categories`
   - Restaurant self: `GET /api/v1/client/restaurant`, `PUT /api/v1/client/restaurant` (excludes sensitive integration fields)
   - Client users (manager role only except self reset): `GET/POST /api/v1/client/users`, `GET/PUT/DELETE /api/v1/client/users/{uuid}`, `POST /api/v1/client/users/{uuid}/reset-password`, `PUT /api/v1/client/users/{uuid}/role`, `POST /api/v1/client/users/bulk`, `POST /api/v1/client/me/reset-password` (self-service)
+  - Analytics: `GET /api/v1/client/analytics` - Comprehensive restaurant analytics (calls, reservations, orders, menu, FAQs, customers, recent activity, today's schedule, pending orders), `GET /api/v1/client/analytics/calls` - Detailed call analytics, `GET /api/v1/client/analytics/reservations` - Reservation analytics, `GET /api/v1/client/analytics/orders` - Order analytics, `GET /api/v1/client/analytics/menu` - Menu analytics
 
 - **Orders** (`/api/v1/orders/*`):
   - `POST /api/v1/orders/{restaurant_id}` - Create order
@@ -725,6 +744,11 @@ All endpoints are organized by tags in the Swagger documentation:
   - `DELETE /api/v1/admin/restaurants/{restaurant_id}/client-users/{uuid}` - Delete client user
   - `PATCH /api/v1/admin/restaurants/{restaurant_id}/client-users/{uuid}/role` - Update role assignment
   - `POST /api/v1/admin/restaurants/{restaurant_id}/client-users/{uuid}/reset-password` - Reset password (rate limited, revokes sessions)
+
+- **Server-Sent Events (SSE)** (`/api/v1/sse/*`) - Requires authentication (admin or client role), RBAC enforced:
+  - `GET /api/v1/sse/events/stream` - Subscribe to real-time event stream (supports header or query param auth)
+  - `POST /api/v1/sse/events/escalation/{restaurant_id}` - Trigger escalation event (user_requested, internal_server_error, suspected_spam)
+  - `GET /api/v1/sse/events/stats` - Get SSE connection statistics (admin only)
 
 ### API Documentation
 
@@ -1929,6 +1953,8 @@ DEEPGRAM_AGENT_LANGUAGE=en
 DEEPGRAM_LISTEN_MODEL=nova-3
 DEEPGRAM_THINK_MODEL=gpt-4o-mini
 DEEPGRAM_SPEAK_MODEL=aura-2-amalthea-en
+
+# Timezone Configuration
 RESTAURANT_TIMEZONE=America/Vancouver
 
 # Application Settings
