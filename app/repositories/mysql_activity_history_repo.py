@@ -49,7 +49,7 @@ class MySQLActivityHistoryRepository(MySQLBaseRepository):
             action: Action performed (created, updated, cancelled, status_changed, etc.)
             restaurant_id: Restaurant ID for RBAC
             user_id: User ID (for customer users from Users table), None for admin actions
-            actor_uuid: UUID of admin/staff user who performed the action (stored in change_summary if no column)
+            actor_uuid: UUID of the actor (admin/staff/system user) who performed the action
             actor_type: Type of actor ('user', 'admin', 'restaurant_admin', 'system')
             order_id: Associated order ID (if applicable)
             reservation_id: Associated reservation ID (if applicable)
@@ -332,6 +332,7 @@ class MySQLActivityHistoryRepository(MySQLBaseRepository):
                     try:
                         row_copy[field] = json.loads(row_copy[field])
                     except (json.JSONDecodeError, TypeError):
+                        # If JSON is invalid or of the wrong type, leave the original string value unchanged.
                         pass
             # Convert datetime to ISO format string
             if isinstance(row_copy.get("created_at"), datetime):

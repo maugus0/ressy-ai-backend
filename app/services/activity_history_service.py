@@ -3,7 +3,7 @@ Activity History Service for order and reservation audit logging.
 """
 
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from app.repositories.mysql_activity_history_repo import MySQLActivityHistoryRepository
 

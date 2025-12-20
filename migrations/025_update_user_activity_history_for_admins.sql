@@ -11,13 +11,13 @@ DROP FOREIGN KEY user_activity_history_ibfk_1;
 ALTER TABLE User_Activity_History
 MODIFY COLUMN user_id INT NULL COMMENT 'User ID for customer users (from Users table), NULL for admin actions';
 
--- Step 3: Add actor_uuid column to store admin user UUIDs
+-- Step 3: Ensure actor_uuid column definition is correct for storing admin user UUIDs
 ALTER TABLE User_Activity_History
-ADD COLUMN actor_uuid VARCHAR(36) NULL COMMENT 'UUID of admin/staff user who performed the action' AFTER user_id;
+MODIFY COLUMN actor_uuid VARCHAR(36) NULL COMMENT 'UUID of admin/staff user who performed the action' AFTER user_id;
 
--- Step 4: Add actor_type column to distinguish between different actor types
+-- Step 4: Ensure actor_type column definition is correct to distinguish between different actor types
 ALTER TABLE User_Activity_History
-ADD COLUMN actor_type ENUM('user', 'admin', 'restaurant_admin', 'system') DEFAULT 'user' COMMENT 'Type of actor who performed the action' AFTER actor_uuid;
+MODIFY COLUMN actor_type ENUM('user', 'admin', 'restaurant_admin', 'system') DEFAULT 'user' COMMENT 'Type of actor who performed the action' AFTER actor_uuid;
 
 -- Step 5: Add index on actor_uuid for efficient lookups
 ALTER TABLE User_Activity_History
