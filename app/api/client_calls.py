@@ -301,13 +301,13 @@ async def export_client_calls(
     writer = csv.writer(output)
     writer.writerow(["timestamp", "caller_phone", "duration_seconds", "status", "summary"])
     for item in items:
-        # Format phone number with tab prefix to force Excel to treat it as text
-        # This prevents scientific notation display (e.g., 9.18709E+11) when opened in Excel
-        # The tab character is invisible in Excel cells but forces text interpretation
+        # Format phone number so Excel treats it as text and does not use scientific notation
+        # Using ="phone_number" forces Excel to interpret the value as text while preserving the content
+        # e.g., a value like ="+1234567890" will be displayed as +1234567890 without scientific notation
         phone_number = item.caller_phone or ""
         if phone_number:
-            # Prefix with tab character - standard method to force Excel text interpretation
-            phone_number = f"\t{phone_number}"
+            # Wrap in an Excel text formula to reliably preserve formatting when opened in Excel
+            phone_number = f'="{phone_number}"'
         writer.writerow(
             [
                 item.started_at,

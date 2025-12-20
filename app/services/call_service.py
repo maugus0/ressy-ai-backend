@@ -57,7 +57,12 @@ class CallService:
         normalized_id = self._safe_int(call_id)
         if normalized_id is None:
             return
-        self.call_repo.update_call_cost(normalized_id, duration_seconds)
+
+        # Calculate cost using centralized method to ensure consistency
+        costs = self.calculate_call_costs(duration_seconds)
+        ressy_cost = costs["ressy_cost"]
+
+        self.call_repo.update_call_cost(normalized_id, duration_seconds, ressy_cost)
 
     def store_transcript_message(
         self, call_id: int, message_sequence: int, speaker: str, message: str, timestamp: str

@@ -5,7 +5,6 @@ MySQL Call Repository for call session operations.
 import json
 from typing import Dict, List, Optional
 
-from app.config import settings
 from app.repositories.mysql_base import MySQLBaseRepository
 
 
@@ -30,11 +29,12 @@ class MySQLCallRepository(MySQLBaseRepository):
         print(f"[MySQL] Created call session: call_id={call_id}, user_id={user_id}, restaurant_id={restaurant_id}")
         return call_id
 
-    def update_call_cost(self, call_id: int, duration_seconds: int) -> None:
+    def update_call_cost(self, call_id: int, duration_seconds: int, ressy_cost: float) -> None:
         """
         Update call cost and duration, mark as completed.
 
-        Note: This calculates and stores ressy_cost in the database for historical reference.
+        Note: The ressy_cost parameter should be calculated using CallService.calculate_call_costs()
+        to ensure consistency. This stores ressy_cost in the database for historical reference.
         However, API endpoints (admin and client) calculate costs dynamically from current
         settings, so stored costs may become outdated if settings change.
 
@@ -44,13 +44,12 @@ class MySQLCallRepository(MySQLBaseRepository):
 
         API endpoints (get_call_detail, get_admin_call_detail) calculate costs dynamically
         and do NOT rely on stored costs.
-        """
-        # Calculate costs using the same logic as CallService.calculate_call_costs()
-        # This ensures consistency between stored and calculated costs
-        twilio_cost = duration_seconds * settings.TWILIO_COST_PER_SECOND * settings.TWILIO_MULTIPLIER
-        deepgram_cost = duration_seconds * settings.DEEPGRAM_COST_PER_SECOND * settings.DEEPGRAM_MULTIPLIER
-        ressy_cost = (twilio_cost + deepgram_cost) * settings.RESSY_MULTIPLIER
 
+        Args:
+            call_id: Call ID to update
+            duration_seconds: Call duration in seconds
+            ressy_cost: Calculated Ressy cost (should come from CallService.calculate_call_costs())
+        """
         query = """
             UPDATE Calls
             SET call_duration = %s,
@@ -61,11 +60,7 @@ class MySQLCallRepository(MySQLBaseRepository):
             WHERE id = %s
         """
         self._execute_update(query, (duration_seconds, ressy_cost, call_id))
-        print(
-            "[MySQL] Updated call: "
-            f"call_id={call_id}, duration={duration_seconds}s, "
-            f"twilio_cost=${twilio_cost:.6f}, deepgram_cost=${deepgram_cost:.6f}, ressy_cost=${ressy_cost:.6f}"
-        )
+        print("[MySQL] Updated call: " f"call_id={call_id}, duration={duration_seconds}s, ressy_cost=${ressy_cost:.6f}")
 
     def update_call_transcript(self, call_id: int, conversation: List[Dict]) -> None:
         """
