@@ -135,7 +135,7 @@ class CreateOrderRequest(BaseModel):
         None,
         max_length=255,
         description="Customer's email address",
-        json_schema_extra={"example": "ahanjaiswal12@gmail.com"},
+        json_schema_extra={"example": "john.smith@example.com"},
     )
     customization: Optional[Dict[str, Any]] = Field(
         None,
