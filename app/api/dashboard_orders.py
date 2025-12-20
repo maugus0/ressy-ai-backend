@@ -54,6 +54,30 @@ async def _emit_order_sse_event(
         logger.error(f"Failed to emit SSE event for order {order_id} ({subtype.value}): {sse_error}")
 
 
+# ---------- Background task helpers ----------
+
+
+async def _emit_order_sse_event(
+    restaurant_id: int,
+    order_id: int,
+    subtype: OrderEventSubtype,
+    data: Dict[str, Any],
+) -> None:
+    """
+    Background task to emit SSE order events.
+    Logs errors but does not raise exceptions to avoid affecting other operations.
+    """
+    try:
+        await sse_service.emit_order_event(
+            restaurant_id=restaurant_id,
+            order_id=order_id,
+            subtype=subtype,
+            data=data,
+        )
+    except Exception as sse_error:
+        logger.error(f"Failed to emit SSE event for order {order_id} ({subtype.value}): {sse_error}")
+
+
 # ---------- Pydantic models for request validation ----------
 
 
@@ -135,7 +159,7 @@ class CreateOrderRequest(BaseModel):
         None,
         max_length=255,
         description="Customer's email address",
-        json_schema_extra={"example": "john.smith@example.com"},
+        json_schema_extra={"example": "ahanjaiswal12@gmail.com"},
     )
     customization: Optional[Dict[str, Any]] = Field(
         None,
