@@ -836,16 +836,23 @@ async def update_order(
             customization=request.customization,
         )
 
-        # Emit SSE event for order update (background task, properly managed by FastAPI)
+        # Emit SSE event for order update/cancellation (background task, properly managed by FastAPI)
+        # Use ORDER_CANCELLED subtype when status is "cancelled", otherwise ORDER_UPDATED
         if restaurant_id:
+            new_status = result.get("status", "")
+            event_subtype = (
+                OrderEventSubtype.ORDER_CANCELLED
+                if new_status.lower() == "cancelled"
+                else OrderEventSubtype.ORDER_UPDATED
+            )
             background_tasks.add_task(
                 _emit_order_sse_event,
                 restaurant_id=restaurant_id,
                 order_id=order_id,
-                subtype=OrderEventSubtype.ORDER_UPDATED,
+                subtype=event_subtype,
                 data={
                     "order_id": order_id,
-                    "status": result.get("status"),
+                    "status": new_status,
                     "total_amount": result.get("total_amount"),
                 },
             )
@@ -934,13 +941,19 @@ async def update_order_status(
     try:
         result = order_service.update_order_status(order_id=order_id, status=request.status)
 
-        # Emit SSE event for order update (background task, properly managed by FastAPI)
+        # Emit SSE event for order update/cancellation (background task, properly managed by FastAPI)
+        # Use ORDER_CANCELLED subtype when status is "cancelled", otherwise ORDER_UPDATED
         if restaurant_id:
+            event_subtype = (
+                OrderEventSubtype.ORDER_CANCELLED
+                if request.status.lower() == "cancelled"
+                else OrderEventSubtype.ORDER_UPDATED
+            )
             background_tasks.add_task(
                 _emit_order_sse_event,
                 restaurant_id=restaurant_id,
                 order_id=order_id,
-                subtype=OrderEventSubtype.ORDER_UPDATED,
+                subtype=event_subtype,
                 data={
                     "order_id": order_id,
                     "status": request.status,

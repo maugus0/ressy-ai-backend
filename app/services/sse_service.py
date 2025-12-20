@@ -11,13 +11,40 @@ import asyncio
 import json
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import date, datetime, time, timezone
+from decimal import Decimal
 from enum import Enum
 from typing import Any, AsyncGenerator, Dict, List, Optional, Set
 
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
+
+
+class SSEJSONEncoder(json.JSONEncoder):
+    """
+    Custom JSON encoder for SSE events.
+
+    Handles serialization of non-JSON-native types:
+    - datetime objects -> ISO format string
+    - date objects -> ISO format string
+    - time objects -> ISO format string
+    - Decimal objects -> float
+    - Enum objects -> value
+    """
+
+    def default(self, obj: Any) -> Any:
+        if isinstance(obj, datetime):
+            return obj.isoformat()
+        if isinstance(obj, date):
+            return obj.isoformat()
+        if isinstance(obj, time):
+            return obj.isoformat()
+        if isinstance(obj, Decimal):
+            return float(obj)
+        if isinstance(obj, Enum):
+            return obj.value
+        return super().default(obj)
 
 
 class SSEEventType(str, Enum):
@@ -64,7 +91,12 @@ class SSEEvent(BaseModel):
     data: Dict[str, Any] = Field(default_factory=dict)
 
     def to_sse_format(self) -> str:
-        """Convert event to SSE format string."""
+        """
+        Convert event to SSE format string.
+
+        Uses SSEJSONEncoder to handle non-JSON-native types like datetime,
+        date, time, Decimal, and Enum objects.
+        """
         event_data = {
             "id": self.id,
             "event_type": self.event_type.value,
@@ -73,7 +105,7 @@ class SSEEvent(BaseModel):
             "timestamp": self.timestamp,
             "data": self.data,
         }
-        return f"id: {self.id}\nevent: {self.event_type.value}\ndata: {json.dumps(event_data)}\n\n"
+        return f"id: {self.id}\nevent: {self.event_type.value}\ndata: {json.dumps(event_data, cls=SSEJSONEncoder)}\n\n"
 
 
 class SSEConnection:
