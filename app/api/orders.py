@@ -1,3 +1,10 @@
+"""
+Legacy Order API endpoints.
+
+⚠️ DEPRECATED: These endpoints are deprecated and will be removed in a future version.
+Please use the Dashboard Order API endpoints at /api/v1/dashboard/orders/ instead.
+"""
+
 from fastapi import APIRouter, Depends
 
 from app.middleware.auth_middleware import get_current_active_user, require_role
@@ -11,13 +18,21 @@ order_service = OrderService()
 @router.post(
     "/{restaurant_id}",
     dependencies=[Depends(require_role(["admin", "client"]))],
-    summary="Create Order",
-    description="Create a new order for a restaurant. Can be used by admin or restaurant staff. Typically created through the voice agent when customers place orders.",
+    summary="[DEPRECATED] Create Order",
+    description="""
+⚠️ **DEPRECATED**: This endpoint is deprecated. Please use `/api/v1/dashboard/restaurants/{restaurant_id}/orders` instead.
+
+Create a new order for a restaurant. Can be used by admin or restaurant staff.
+Typically created through the voice agent when customers place orders.
+""",
     response_description="Returns the created order with assigned order ID and details.",
+    deprecated=True,
 )
 async def create_order(restaurant_id: str, data: dict, current_user: dict = Depends(get_current_active_user)):
     """
-    Create a new order for a restaurant.
+    [DEPRECATED] Create a new order for a restaurant.
+
+    ⚠️ Please use POST /api/v1/dashboard/restaurants/{restaurant_id}/orders instead.
 
     **Authentication**: Required (admin or restaurant client role)
 
@@ -39,13 +54,20 @@ async def create_order(restaurant_id: str, data: dict, current_user: dict = Depe
 @router.get(
     "/{restaurant_id}",
     dependencies=[Depends(require_role(["admin", "client"]))],
-    summary="List Orders",
-    description="Retrieve all orders for a specific restaurant. Restaurant users can only see orders for their restaurant.",
+    summary="[DEPRECATED] List Orders",
+    description="""
+⚠️ **DEPRECATED**: This endpoint is deprecated. Please use `/api/v1/dashboard/restaurants/{restaurant_id}/orders` instead.
+
+Retrieve all orders for a specific restaurant. Restaurant users can only see orders for their restaurant.
+""",
     response_description="List of orders with order details, items, and status.",
+    deprecated=True,
 )
 async def list_orders(restaurant_id: str, current_user: dict = Depends(get_current_active_user)):
     """
-    Get all orders for a restaurant.
+    [DEPRECATED] Get all orders for a restaurant.
+
+    ⚠️ Please use GET /api/v1/dashboard/restaurants/{restaurant_id}/orders instead.
 
     **Authentication**: Required (admin or restaurant client role)
 
@@ -61,13 +83,21 @@ async def list_orders(restaurant_id: str, current_user: dict = Depends(get_curre
 @router.get(
     "/details/{order_id}",
     dependencies=[Depends(require_role(["admin", "client"]))],
-    summary="Get Order Details",
-    description="Retrieve detailed information for a specific order by ID. Includes order items, customer information, and status.",
+    summary="[DEPRECATED] Get Order Details",
+    description="""
+⚠️ **DEPRECATED**: This endpoint is deprecated. Please use `/api/v1/dashboard/orders/{order_id}` instead.
+
+Retrieve detailed information for a specific order by ID.
+Includes order items, customer information, and status.
+""",
     response_description="Complete order object with all details including items and status.",
+    deprecated=True,
 )
 async def get_order(order_id: str, current_user: dict = Depends(get_current_active_user)):
     """
-    Get detailed information for a specific order.
+    [DEPRECATED] Get detailed information for a specific order.
+
+    ⚠️ Please use GET /api/v1/dashboard/orders/{order_id} instead.
 
     **Authentication**: Required (admin or restaurant client role)
 
@@ -83,13 +113,20 @@ async def get_order(order_id: str, current_user: dict = Depends(get_current_acti
 @router.put(
     "/{order_id}",
     dependencies=[Depends(require_role(["admin", "client"]))],
-    summary="Update Order",
-    description="Update order information such as status, items, or customer details. Partial updates are supported.",
+    summary="[DEPRECATED] Update Order",
+    description="""
+⚠️ **DEPRECATED**: This endpoint is deprecated. Please use `/api/v1/dashboard/orders/{order_id}` instead.
+
+Update order information such as status, items, or customer details. Partial updates are supported.
+""",
     response_description="Updated order object with modified fields.",
+    deprecated=True,
 )
 async def update_order(order_id: str, data: dict, current_user: dict = Depends(get_current_active_user)):
     """
-    Update order information.
+    [DEPRECATED] Update order information.
+
+    ⚠️ Please use PUT /api/v1/dashboard/orders/{order_id} instead.
 
     **Authentication**: Required (admin or restaurant client role)
 
@@ -107,13 +144,20 @@ async def update_order(order_id: str, data: dict, current_user: dict = Depends(g
 @router.delete(
     "/{order_id}",
     dependencies=[Depends(require_role(["admin"]))],
-    summary="Delete Order",
-    description="Permanently delete an order from the system. Admin access only. This action cannot be undone.",
+    summary="[DEPRECATED] Delete Order",
+    description="""
+⚠️ **DEPRECATED**: This endpoint is deprecated. Please use DELETE `/api/v1/dashboard/orders/{order_id}` instead.
+
+Permanently delete an order from the system. Admin access only. This action cannot be undone.
+""",
     response_description="Confirmation message or deleted order details.",
+    deprecated=True,
 )
 async def delete_order(order_id: str, current_user: dict = Depends(get_current_active_user)):
     """
-    Delete an order from the system.
+    [DEPRECATED] Delete an order from the system.
+
+    ⚠️ Please use DELETE /api/v1/dashboard/orders/{order_id} instead.
 
     **Authentication**: Required (admin role only)
 

@@ -235,7 +235,18 @@ class InMemoryCallRepository:
 
     def get_calls_by_restaurant(self, restaurant_id: str, limit: int = 10) -> List[Dict[str, Any]]:
         """Get calls for a restaurant."""
-        calls = [c for c in self._calls.values() if str(c.get("restaurant_id")) == str(restaurant_id)]
+
+        def _normalize_id(val: Any) -> Optional[int]:
+            """Convert restaurant_id to int for consistent comparison."""
+            if val is None:
+                return None
+            try:
+                return int(val)
+            except (TypeError, ValueError):
+                return None
+
+        target_id = _normalize_id(restaurant_id)
+        calls = [c for c in self._calls.values() if _normalize_id(c.get("restaurant_id")) == target_id]
         calls.sort(key=lambda c: c.get("started_at") or "", reverse=True)
         return [copy.deepcopy(c) for c in calls[:limit]]
 

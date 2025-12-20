@@ -1,3 +1,10 @@
+"""
+Legacy Order History API endpoint.
+
+⚠️ DEPRECATED: This endpoint is deprecated and will be removed in a future version.
+Please use the Activity History API endpoints at /api/v1/dashboard/orders/{order_id}/history instead.
+"""
+
 from fastapi import APIRouter, Depends
 
 from app.middleware.auth_middleware import get_current_active_user, require_role
@@ -10,13 +17,23 @@ order_service = OrderService()
 @router.get(
     "/{order_id}/history",
     dependencies=[Depends(require_role(["admin", "client"]))],
-    summary="Get Order History",
-    description="Retrieve the complete history and status changes for a specific order. Includes all state transitions and updates.",
+    summary="[DEPRECATED] Get Order History",
+    description="""
+⚠️ **DEPRECATED**: This endpoint is deprecated. Please use `/api/v1/dashboard/orders/{order_id}/history` instead.
+
+Retrieve the complete history and status changes for a specific order.
+Includes all state transitions and updates.
+
+**Note**: The new endpoint provides more detailed history with user information and change summaries.
+""",
     response_description="Order history with all status changes and updates in chronological order.",
+    deprecated=True,
 )
 async def get_order_history(order_id: str, current_user: dict = Depends(get_current_active_user)):
     """
-    Get the complete history for a specific order.
+    [DEPRECATED] Get the complete history for a specific order.
+
+    ⚠️ Please use GET /api/v1/dashboard/orders/{order_id}/history instead.
 
     **Authentication**: Required (admin or restaurant client role)
 

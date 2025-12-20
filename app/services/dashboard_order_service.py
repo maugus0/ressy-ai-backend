@@ -10,6 +10,9 @@ from app.repositories.mysql_menu_repo import MySQLMenuRepository
 from app.repositories.mysql_order_repo import MySQLOrderRepository
 from app.repositories.mysql_restaurant_repo import MySQLRestaurantRepository
 from app.repositories.mysql_user_repo import MySQLUserRepository
+from app.repositories.mysql_user_restaurant_metadata_repo import (
+    MySQLUserRestaurantMetadataRepository,
+)
 
 
 def _transform_order(order: Dict[str, Any]) -> Dict[str, Any]:
@@ -62,6 +65,7 @@ class DashboardOrderService:
         self.order_repo = MySQLOrderRepository()
         self.restaurant_repo = MySQLRestaurantRepository()
         self.user_repo = MySQLUserRepository()
+        self.metadata_repo = MySQLUserRestaurantMetadataRepository()
         self.menu_repo = MySQLMenuRepository()
 
     def create_order(
@@ -137,6 +141,18 @@ class DashboardOrderService:
             if customer_email:
                 user_data["email"] = customer_email
             user_id = self.user_repo.create_or_update_user(user_data)
+
+            # Create user-restaurant metadata mapping (for dashboard user visibility)
+            try:
+                self.metadata_repo.create_mapping(
+                    user_id=user_id,
+                    restaurant_id=restaurant_id,
+                    source="order",
+                    notes="Created via dashboard order",
+                )
+            except Exception as meta_err:
+                # Log but don't fail order creation if metadata mapping fails
+                print(f"[WARN] Failed to create user-restaurant metadata: {meta_err}")
 
         # Create order
         order_data = {

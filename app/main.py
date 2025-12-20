@@ -11,6 +11,7 @@ from starlette.requests import Request
 from starlette.responses import Response
 
 from app.api import (
+    activity_history,
     admin_users,
     auth,
     calls,
@@ -71,7 +72,7 @@ app = FastAPI(
         },
         {
             "name": "Users",
-            "description": "User management endpoints. Create, read, update, and delete user accounts for restaurants.",
+            "description": "⚠️ DEPRECATED: Legacy user management endpoints. Please use Dashboard Users API instead (/api/v1/dashboard/users/).",
         },
         {
             "name": "Menus",
@@ -83,11 +84,11 @@ app = FastAPI(
         },
         {
             "name": "Orders",
-            "description": "Order management endpoints. Create, track, and manage customer orders placed through the voice agent.",
+            "description": "⚠️ DEPRECATED: Legacy order management endpoints. Please use Dashboard Orders API instead (/api/v1/dashboard/orders/).",
         },
         {
             "name": "Order History",
-            "description": "Order history and tracking endpoints. Retrieve detailed order history and status information.",
+            "description": "⚠️ DEPRECATED: Legacy order history endpoint. Please use Activity History API instead (/api/v1/dashboard/orders/{order_id}/history).",
         },
         {
             "name": "FAQs",
@@ -124,6 +125,10 @@ app = FastAPI(
         {
             "name": "Dashboard Orders",
             "description": "Dashboard-specific order management with RBAC. Create, view, update, cancel, and soft-delete orders. Admins can access all restaurants; restaurant managers can only access their own restaurant's orders.",
+        },
+        {
+            "name": "Activity History",
+            "description": "Activity history and audit logs for orders and reservations. Track all changes including creation, updates, status changes, and cancellations. Supports RBAC: admins can access all restaurants; managers can only access their own restaurant's history.",
         },
         {
             "name": "Server-Sent Events",
@@ -166,6 +171,7 @@ app.include_router(reservations.router, prefix="/api/v1/reservations", tags=["Re
 app.include_router(dashboard_reservations.router, prefix="/api/v1/dashboard", tags=["Dashboard Reservations"])
 app.include_router(dashboard_orders.router, prefix="/api/v1/dashboard", tags=["Dashboard Orders"])
 app.include_router(dashboard_users.router, prefix="/api/v1/dashboard", tags=["Dashboard Users"])
+app.include_router(activity_history.router, prefix="/api/v1/dashboard", tags=["Activity History"])
 app.include_router(sse.router, prefix="/api/v1/sse", tags=["Server-Sent Events"])
 app.include_router(admin_users.router, tags=["Admin Users"])
 app.include_router(client_users.router, tags=["Client Users"])
