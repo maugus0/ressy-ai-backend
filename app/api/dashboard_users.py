@@ -13,8 +13,8 @@ from app.middleware.auth_middleware import require_role
 from app.services.user_service import UserService
 
 security = HTTPBearer(
-    scheme_name="BearerAuth",
-    description="Enter your JWT access token obtained from login endpoints",
+    scheme_name="HTTPBearer",
+    description="Enter your JWT access token obtained from login endpoints. Just paste the token without 'Bearer ' prefix.",
 )
 
 router = APIRouter(
