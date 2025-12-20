@@ -301,12 +301,29 @@ async def export_client_calls(
     writer = csv.writer(output)
     writer.writerow(["timestamp", "caller_phone", "duration_seconds", "status", "summary"])
     for item in items:
-        writer.writerow([item.started_at, item.caller_phone, item.duration_seconds, item.status, item.summary or ""])
+        # Format phone number so Excel treats it as text and does not use scientific notation
+        # Using ="phone_number" forces Excel to interpret the value as text while preserving the content
+        # e.g., a value like ="+1234567890" will be displayed as +1234567890 without scientific notation
+        phone_number = item.caller_phone or ""
+        if phone_number:
+            # Wrap in an Excel text formula to reliably preserve formatting when opened in Excel
+            phone_number = f'="{phone_number}"'
+        writer.writerow(
+            [
+                item.started_at,
+                phone_number,
+                item.duration_seconds,
+                item.status,
+                item.summary or "",
+            ]
+        )
     output.seek(0)
 
+    # Add UTF-8 BOM to help Excel properly interpret the file and preserve formatting
+    csv_content = output.getvalue()
     return StreamingResponse(
-        iter([output.getvalue().encode("utf-8")]),
-        media_type="text/csv",
+        iter(["\ufeff".encode("utf-8") + csv_content.encode("utf-8")]),
+        media_type="text/csv; charset=utf-8",
         headers={"Content-Disposition": 'attachment; filename="calls.csv"'},
     )
 
