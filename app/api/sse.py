@@ -29,7 +29,7 @@ security = HTTPBearer(
 # Separate security scheme for SSE stream endpoint that allows optional header auth
 # This enables query param authentication for browser EventSource API which cannot send headers
 security_optional = HTTPBearer(
-    scheme_name="HTTPBearer",
+    scheme_name="HTTPBearerSSE",
     description="JWT access token via header (optional - can also use 'token' query parameter)",
     auto_error=False,  # Don't raise 403 when header is missing - allows query param fallback
 )
