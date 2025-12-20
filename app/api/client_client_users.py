@@ -36,7 +36,12 @@ router = APIRouter(
     openapi_extra={
         "requestBody": {
             "required": True,
-            "content": {"application/json": {"schema": ClientUserCreateRequest.model_json_schema()}},
+            "content": {
+                "application/json": {
+                    "schema": ClientUserCreateRequest.model_json_schema(),
+                    "example": {"email": "staff@example.com", "password": "StrongPass1", "role_id": 2},
+                }
+            },
         },
         "responses": {
             201: {
@@ -159,7 +164,12 @@ async def get_client_user(
     openapi_extra={
         "requestBody": {
             "required": True,
-            "content": {"application/json": {"schema": ClientUserUpdateRequest.model_json_schema()}},
+            "content": {
+                "application/json": {
+                    "schema": ClientUserUpdateRequest.model_json_schema(),
+                    "example": {"email": "updated@example.com", "role_id": 3},
+                }
+            },
         },
         "responses": {
             200: {
@@ -225,7 +235,12 @@ async def delete_client_user(
     openapi_extra={
         "requestBody": {
             "required": True,
-            "content": {"application/json": {"schema": ClientPasswordResetRequest.model_json_schema()}},
+            "content": {
+                "application/json": {
+                    "schema": ClientPasswordResetRequest.model_json_schema(),
+                    "example": {"new_password": "NewStrongPass1"},
+                }
+            },
         },
         "responses": {
             200: {
@@ -254,7 +269,12 @@ async def reset_client_user_password(
     openapi_extra={
         "requestBody": {
             "required": True,
-            "content": {"application/json": {"schema": ClientRoleUpdateRequest.model_json_schema()}},
+            "content": {
+                "application/json": {
+                    "schema": ClientRoleUpdateRequest.model_json_schema(),
+                    "example": {"role_id": 2},
+                }
+            },
         },
         "responses": {
             200: {
@@ -295,7 +315,17 @@ async def update_client_user_role(
     openapi_extra={
         "requestBody": {
             "required": True,
-            "content": {"application/json": {"schema": ClientBulkCreateRequest.model_json_schema()}},
+            "content": {
+                "application/json": {
+                    "schema": ClientBulkCreateRequest.model_json_schema(),
+                    "example": {
+                        "users": [
+                            {"email": "staff1@example.com", "password": "StrongPass1", "role_id": 2},
+                            {"email": "staff2@example.com", "password": "StrongPass2", "role_id": 3},
+                        ]
+                    },
+                }
+            },
         },
         "responses": {
             201: {
@@ -333,7 +363,12 @@ async def bulk_create_client_users(
     openapi_extra={
         "requestBody": {
             "required": True,
-            "content": {"application/json": {"schema": ClientPasswordResetRequest.model_json_schema()}},
+            "content": {
+                "application/json": {
+                    "schema": ClientPasswordResetRequest.model_json_schema(),
+                    "example": {"new_password": "NewStrongPass1"},
+                }
+            },
         },
         "responses": {
             200: {

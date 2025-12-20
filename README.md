@@ -46,17 +46,25 @@ ressy-ai-backend/
 │   │   ├── auth.py            # Authentication endpoints
 │   │   ├── calls.py           # Admin CRM call endpoints
 │   │   ├── client_calls.py    # Client CRM call endpoints
-│   │   ├── dashboard_reservations.py  # Dashboard reservation management
-│   │   ├── faqs.py            # FAQ management endpoints
-│   │   ├── menus.py           # Menu endpoints
+│   │   ├── client_client_users.py  # Client CRM user management (manager-scoped)
+│   │   ├── client_faqs.py     # Client CRM FAQ endpoints
+│   │   ├── client_menus.py    # Client CRM menu endpoints
+│   │   ├── client_restaurant.py  # Client CRM restaurant endpoints (self-scoped)
+│   │   ├── dashboard_orders.py  # Dashboard order management (RBAC)
+│   │   ├── dashboard_reservations.py  # Dashboard reservation management (RBAC)
+│   │   ├── dashboard_users.py  # Dashboard user management (RBAC)
+│   │   ├── faqs.py            # FAQ management endpoints (Admin CRM)
+│   │   ├── menus.py           # Menu endpoints (Admin CRM)
 │   │   ├── opentable.py       # OpenTable integration endpoints
 │   │   ├── order_history.py   # Order history endpoints
 │   │   ├── orders.py          # Order endpoints
 │   │   ├── reservations.py    # In-house reservation endpoints
 │   │   ├── admin_users.py     # Ressy platform admin management endpoints
-│   │   ├── client_users.py    # Client CRM user management endpoints
+│   │   ├── client_users.py    # Client CRM user management endpoints (Admin CRM)
 │   │   ├── restaurants.py     # Restaurant endpoints (Admin CRM)
 │   │   ├── users.py           # User management endpoints
+│   │   ├── sse.py             # Server-Sent Events endpoints
+│   │   ├── testing.py         # Testing/outbound call endpoints
 │   │   └── websocket.py       # WebSocket handler
 │   ├── integrations/          # Third-party integrations
 │   │   ├── deepgram_client.py
@@ -168,8 +176,6 @@ git clone https://github.com/maugus0/ressy-ai-backend/
 cd ressy-ai-backend
 ```
 
-### 2. Install Dependencies
-
 ```bash
 # Install production dependencies
 pip install -r requirements.txt
@@ -177,8 +183,6 @@ pip install -r requirements.txt
 # Install development dependencies
 pip install -r requirements-dev.txt
 ```
-
-**Virtualenv folder name:** we recommend using `.venv/` at the repo root (supported: `.venv/`, `venv/`, `env/`).
 
 ### 3. Environment Configuration
 
@@ -631,11 +635,11 @@ All endpoints are organized by tags in the Swagger documentation:
   - `PATCH /api/v1/admin/restaurants/{restaurant_id}/menu/bulk-availability` - Bulk update availability
   - `GET /api/v1/admin/restaurants/{restaurant_id}/menu/categories` - Get menu categories
 
-- **Client CRM (scoped, `/api/v1/client/*`)** – restaurant_id is taken from the authenticated restaurant token (`claims["restaurant_id"]`), and user UUID is `claims["sub"]`:
-  - FAQs: `GET/POST /client/faqs`, `GET/PUT/DELETE /client/faqs/{faq_id}`, `POST /client/faqs/bulk`
-  - Menus: `GET/POST /client/menu`, `GET/PUT/DELETE /client/menu/{menu_id}`, `PATCH /client/menu/{menu_id}/availability`, `PATCH /client/menu/{menu_id}/special`, `PATCH /client/menu/bulk-availability`, `GET /client/menu/categories`
-  - Restaurant self: `GET /client/restaurant`, `PUT /client/restaurant`
-  - Client users (manager role only except self reset): `GET/POST /client/users`, `GET/PUT/DELETE /client/users/{uuid}`, `POST /client/users/{uuid}/reset-password`, `PUT /client/users/{uuid}/role`, `POST /client/users/bulk`, `POST /client/me/reset-password` (self-service)
+- **Client CRM (scoped, `/api/v1/client/*`)** – restaurant_id is taken from the authenticated restaurant token (`claims["restaurant_id"]`), and user UUID is `claims["sub"]`. **Note**: Sensitive integration details (`twilio_details`, `deepgram_details`, `open_table_details`) are excluded from client endpoints for security:
+  - FAQs: `GET/POST /api/v1/client/faqs`, `GET/PUT/DELETE /api/v1/client/faqs/{faq_id}`, `POST /api/v1/client/faqs/bulk`
+  - Menus: `GET/POST /api/v1/client/menu`, `GET/PUT/DELETE /api/v1/client/menu/{menu_id}`, `PATCH /api/v1/client/menu/{menu_id}/availability`, `PATCH /api/v1/client/menu/{menu_id}/special`, `PATCH /api/v1/client/menu/bulk-availability`, `GET /api/v1/client/menu/categories`
+  - Restaurant self: `GET /api/v1/client/restaurant`, `PUT /api/v1/client/restaurant` (excludes sensitive integration fields)
+  - Client users (manager role only except self reset): `GET/POST /api/v1/client/users`, `GET/PUT/DELETE /api/v1/client/users/{uuid}`, `POST /api/v1/client/users/{uuid}/reset-password`, `PUT /api/v1/client/users/{uuid}/role`, `POST /api/v1/client/users/bulk`, `POST /api/v1/client/me/reset-password` (self-service)
 
 - **Orders** (`/api/v1/orders/*`):
   - `POST /api/v1/orders/{restaurant_id}` - Create order
@@ -672,11 +676,29 @@ All endpoints are organized by tags in the Swagger documentation:
   - `GET /api/v1/reservations/{reservation_id}` - Get reservation details
   - `PUT /api/v1/reservations/{reservation_id}/cancel` - Cancel reservation
 
-- **Dashboard Reservations** (`/api/v1/dashboard/*`):
-  - `PUT /api/v1/dashboard/reservations/{reservation_id}/finalize` - Finalize reservation
-  - `GET /api/v1/dashboard/restaurants/{restaurant_id}/reservations` - Get restaurant reservations
+- **Dashboard Reservations** (`/api/v1/dashboard/*`) - Requires authentication (admin or client role), RBAC enforced:
+  - `POST /api/v1/dashboard/restaurants/{restaurant_id}/reservations` - Create confirmed reservation (Dashboard only)
+  - `PUT /api/v1/dashboard/reservations/{reservation_id}/finalize` - Finalize pending reservation
+  - `GET /api/v1/dashboard/restaurants/{restaurant_id}/reservations` - Get restaurant reservations with filters
   - `GET /api/v1/dashboard/reservations/{reservation_id}` - Get reservation details
+  - `PUT /api/v1/dashboard/reservations/{reservation_id}` - Update reservation
   - `PUT /api/v1/dashboard/reservations/{reservation_id}/cancel` - Cancel reservation
+
+- **Dashboard Orders** (`/api/v1/dashboard/*`) - Requires authentication (admin or client role), RBAC enforced:
+  - `POST /api/v1/dashboard/restaurants/{restaurant_id}/orders` - Create order
+  - `GET /api/v1/dashboard/restaurants/{restaurant_id}/orders` - Get orders with filters
+  - `GET /api/v1/dashboard/orders/{order_id}` - Get order details
+  - `PUT /api/v1/dashboard/orders/{order_id}` - Update order
+  - `PUT /api/v1/dashboard/orders/{order_id}/status` - Update order status only
+  - `PUT /api/v1/dashboard/orders/{order_id}/cancel` - Cancel order
+  - `DELETE /api/v1/dashboard/orders/{order_id}` - Soft delete order
+  - `PUT /api/v1/dashboard/orders/{order_id}/restore` - Restore deleted order
+
+- **Dashboard Users** (`/api/v1/dashboard/*`) - Requires authentication (admin or client role), RBAC enforced:
+  - `POST /api/v1/dashboard/restaurants/{restaurant_id}/users` - Create or add user
+  - `GET /api/v1/dashboard/restaurants/{restaurant_id}/users` - Get users with statistics
+  - `GET /api/v1/dashboard/users/{user_id}` - Get user details
+  - `PUT /api/v1/dashboard/users/{user_id}` - Update user
 
 - **OpenTable** (`/api/v1/opentable/*`):
   - `GET /api/v1/opentable/availability/{restaurant_id}/{rid}` - Get OpenTable availability
@@ -710,6 +732,8 @@ All endpoints are organized by tags in the Swagger documentation:
 When running locally, visit:
 - Swagger UI: `http://localhost:5001/docs`
 - ReDoc: `http://localhost:5001/redoc`
+
+**Security Note**: Client CRM endpoints (`/api/v1/client/*`) exclude sensitive integration details (`twilio_details`, `deepgram_details`, `open_table_details`) from responses. These fields are only accessible through Admin CRM endpoints for security purposes.
 
 ### Password Policy
 
@@ -963,7 +987,10 @@ Migrations should be run in numerical order (001, 002, 003, etc.) as they have d
 19. **018_add_reservation_type_flag.sql** - Adds reservation type flag
 20. **019_add_restaurant_opening_closing_times.sql** - Adds restaurant opening/closing times
 21. **020_add_party_size_and_special_request.sql** - Adds party size and special request fields
-22. **022_add_call_transcript_to_calls.sql** - Adds `call_transcript` JSON column and indexes to `Calls`
+22. **021_add_notes_to_reservations.sql** - Adds notes field to reservations
+23. **022_add_call_transcript_to_calls.sql** - Adds `call_transcript` JSON column and indexes to `Calls`
+24. **022_create_user_restaurant_metadata.sql** - Creates User_Restaurant_Metadata table for associating users with restaurants
+25. **023_add_restaurant_id_deleted_at_to_orders.sql** - Adds restaurant_id and deleted_at columns to Orders table
 
 ### Database Schema Overview
 
@@ -1289,13 +1316,17 @@ curl -X PUT "http://localhost:5001/api/v1/reservations/456/cancel" \
 
 ### Dashboard APIs
 
-All dashboard APIs are publicly accessible.
+All dashboard APIs require JWT authentication. They support RBAC:
+- **Admins** can access all restaurants' data
+- **Restaurant managers/staff** can only access their own restaurant's data
 
 #### 6. Finalize Reservation (Dashboard Only)
 
 Finalize a pending reservation by changing status to confirmed.
 
-**Endpoint:** `PUT /dashboard/reservations/{reservation_id}/finalize`
+**Note**: This endpoint requires JWT authentication (admin or client role).
+
+**Endpoint:** `PUT /api/v1/dashboard/reservations/{reservation_id}/finalize`
 
 **cURL:**
 ```bash
@@ -1327,7 +1358,9 @@ curl -X PUT "http://localhost:5001/api/v1/dashboard/reservations/456/finalize" \
 
 Get all reservations for a restaurant with filtering options.
 
-**Endpoint:** `GET /dashboard/restaurants/{restaurant_id}/reservations`
+**Note**: This endpoint requires JWT authentication (admin or client role). Restaurant managers can only access their own restaurant's reservations.
+
+**Endpoint:** `GET /api/v1/dashboard/restaurants/{restaurant_id}/reservations`
 
 **cURL:**
 ```bash
@@ -1374,7 +1407,9 @@ curl -X GET "http://localhost:5001/api/v1/dashboard/restaurants/1/reservations?s
 
 Get details of a specific reservation (dashboard version).
 
-**Endpoint:** `GET /dashboard/reservations/{reservation_id}`
+**Note**: This endpoint requires JWT authentication (admin or client role).
+
+**Endpoint:** `GET /api/v1/dashboard/reservations/{reservation_id}`
 
 **cURL:**
 ```bash
@@ -1386,7 +1421,9 @@ curl -X GET "http://localhost:5001/api/v1/dashboard/reservations/456" \
 
 Cancel a reservation (dashboard version).
 
-**Endpoint:** `PUT /dashboard/reservations/{reservation_id}/cancel`
+**Note**: This endpoint requires JWT authentication (admin or client role).
+
+**Endpoint:** `PUT /api/v1/dashboard/reservations/{reservation_id}/cancel`
 
 **cURL:**
 ```bash
@@ -1422,9 +1459,10 @@ curl -X POST "http://localhost:5001/api/v1/reservations/booking/1/reservations" 
     "special_request": "Window seat preferred"
   }'
 
-# Step 4: Finalize Reservation
+# Step 4: Finalize Reservation (requires JWT authentication)
 curl -X PUT "http://localhost:5001/api/v1/dashboard/reservations/RESERVATION_ID_FROM_STEP_3/finalize" \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer {your_jwt_token}" \
   -d '{}'
 ```
 
@@ -1441,9 +1479,9 @@ curl -X PUT "http://localhost:5001/api/v1/dashboard/reservations/RESERVATION_ID_
 
 3. **Slot Expiration**: Slots expire after 15 minutes if not used to create a reservation.
 
-4. **Finalization**: Only pending reservations can be finalized. Finalization can only be done through the dashboard API.
+4. **Finalization**: Only pending reservations can be finalized. Finalization can only be done through the dashboard API (requires authentication).
 
-5. **Authentication**: All endpoints are publicly accessible and do not require authentication.
+5. **Authentication**: Public reservation endpoints (`/api/v1/reservations/*`) are publicly accessible. Dashboard endpoints (`/api/v1/dashboard/*`) require JWT authentication with admin or client role.
 
 6. **Error Responses**: All endpoints may return standard HTTP error responses (400 Bad Request, 404 Not Found, 500 Internal Server Error).
 
@@ -1943,7 +1981,6 @@ mysql -u root -p ressy < migrations/006_create_orders.sql
 mysql -u root -p ressy < migrations/007_create_order_details.sql
 mysql -u root -p ressy < migrations/008_create_faqs.sql
 mysql -u root -p ressy < migrations/009_create_notifications.sql
-mysql -u root -p ressy < migrations/010_create_transcripts.sql
 mysql -u root -p ressy < migrations/011_create_table_availability_requests.sql
 mysql -u root -p ressy < migrations/012_create_slot_bookings.sql
 mysql -u root -p ressy < migrations/013_create_reservations.sql
@@ -1954,6 +1991,11 @@ mysql -u root -p ressy < migrations/017_create_auth_sessions.sql
 mysql -u root -p ressy < migrations/017_create_opentable_api_logs.sql
 mysql -u root -p ressy < migrations/018_add_reservation_type_flag.sql
 mysql -u root -p ressy < migrations/019_add_restaurant_opening_closing_times.sql
+mysql -u root -p ressy < migrations/020_add_party_size_and_special_request.sql
+mysql -u root -p ressy < migrations/021_add_notes_to_reservations.sql
+mysql -u root -p ressy < migrations/022_add_call_transcript_to_calls.sql
+mysql -u root -p ressy < migrations/022_create_user_restaurant_metadata.sql
+mysql -u root -p ressy < migrations/023_add_restaurant_id_deleted_at_to_orders.sql
 ```
 
 ### Step 6: Verify Database Connection
