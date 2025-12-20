@@ -135,7 +135,6 @@ ressy-ai-backend/
 ├── migrations/                # Database migration scripts
 │   ├── 001-016_create_*.sql  # Initial schema migrations
 │   ├── 017_create_auth_sessions.sql
-│   ├── 017_create_opentable_api_logs.sql
 │   ├── 018_add_reservation_type_flag.sql
 │   ├── 019_add_restaurant_opening_closing_times.sql
 │   └── README.md             # Migration documentation
@@ -983,14 +982,14 @@ Migrations should be run in numerical order (001, 002, 003, etc.) as they have d
 15. **015_create_restaurant_administrators.sql** - Creates the Restaurant_Administrators table (depends on Restaurants and Crm_roles)
 16. **016_create_calls.sql** - Creates the Calls table (stores call session information)
 17. **017_create_auth_sessions.sql** - Adds last_login/last_active columns to administrators and creates Auth_Sessions for JWT refresh flows
-18. **017_create_opentable_api_logs.sql** - Creates OpenTable API logs table
-19. **018_add_reservation_type_flag.sql** - Adds reservation type flag
-20. **019_add_restaurant_opening_closing_times.sql** - Adds restaurant opening/closing times
-21. **020_add_party_size_and_special_request.sql** - Adds party size and special request fields
-22. **021_add_notes_to_reservations.sql** - Adds notes field to reservations
-23. **022_add_call_transcript_to_calls.sql** - Adds `call_transcript` JSON column and indexes to `Calls`
-24. **022_create_user_restaurant_metadata.sql** - Creates User_Restaurant_Metadata table for associating users with restaurants
-25. **023_add_restaurant_id_deleted_at_to_orders.sql** - Adds restaurant_id and deleted_at columns to Orders table
+18. **018_add_reservation_type_flag.sql** - Adds reservation type flag
+19. **019_add_restaurant_opening_closing_times.sql** - Adds restaurant opening/closing times
+20. **020_add_party_size_and_special_request.sql** - Adds party size and special request fields
+21. **021_add_notes_to_reservations.sql** - Adds notes field to reservations
+22. **022_add_call_transcript_to_calls.sql** - Adds `call_transcript` JSON column and indexes to `Calls`
+23. **023_create_user_restaurant_metadata.sql** - Creates User_Restaurant_Metadata table for associating users with restaurants
+24. **024_add_restaurant_id_deleted_at_to_orders.sql** - Adds restaurant_id and deleted_at columns to Orders table
+25. **025_create_opentable_api_logs.sql** - Creates OpenTable API logs table
 
 ### Database Schema Overview
 
@@ -1988,14 +1987,14 @@ mysql -u root -p ressy < migrations/014_create_ressy_administrator.sql
 mysql -u root -p ressy < migrations/015_create_restaurant_administrators.sql
 mysql -u root -p ressy < migrations/016_create_calls.sql
 mysql -u root -p ressy < migrations/017_create_auth_sessions.sql
-mysql -u root -p ressy < migrations/017_create_opentable_api_logs.sql
 mysql -u root -p ressy < migrations/018_add_reservation_type_flag.sql
 mysql -u root -p ressy < migrations/019_add_restaurant_opening_closing_times.sql
 mysql -u root -p ressy < migrations/020_add_party_size_and_special_request.sql
 mysql -u root -p ressy < migrations/021_add_notes_to_reservations.sql
 mysql -u root -p ressy < migrations/022_add_call_transcript_to_calls.sql
-mysql -u root -p ressy < migrations/022_create_user_restaurant_metadata.sql
-mysql -u root -p ressy < migrations/023_add_restaurant_id_deleted_at_to_orders.sql
+mysql -u root -p ressy < migrations/023_create_user_restaurant_metadata.sql
+mysql -u root -p ressy < migrations/024_add_restaurant_id_deleted_at_to_orders.sql
+mysql -u root -p ressy < migrations/025_create_opentable_api_logs.sql
 ```
 
 ### Step 6: Verify Database Connection

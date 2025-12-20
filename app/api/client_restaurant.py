@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Any
 
 from fastapi import APIRouter, Body, Depends, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -65,7 +66,7 @@ class ClientUpdateRestaurantRequest(BaseModel):
 
     @field_validator("address", "phone_number", mode="before")
     @classmethod
-    def trim_optional_strings(cls, value) -> str | None:
+    def trim_optional_strings(cls, value: Any) -> Any:  # noqa: ANN401 - pydantic hook allows Any
         if isinstance(value, str):
             return _strip_or_none(value)
         return value
