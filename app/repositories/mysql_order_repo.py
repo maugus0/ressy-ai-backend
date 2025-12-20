@@ -330,3 +330,74 @@ class MySQLOrderRepository(MySQLBaseRepository):
         if results and results[0].get("restaurant_id"):
             return int(results[0]["restaurant_id"])
         return None
+
+    def calculate_revenue_by_restaurant(
+        self,
+        restaurant_id: int,
+        status: Optional[str] = None,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None,
+    ) -> float:
+        """
+        Calculate total revenue for a restaurant using SQL SUM aggregation.
+
+        Args:
+            restaurant_id: Restaurant ID
+            status: Filter by order status (e.g., 'completed')
+            start_date: Start date filter
+            end_date: End date filter
+
+        Returns:
+            Total revenue as float
+        """
+        query = """
+            SELECT COALESCE(SUM(total_amount), 0) as total_revenue
+            FROM Orders
+            WHERE restaurant_id = %s AND deleted_at IS NULL
+        """
+        params: List[Any] = [restaurant_id]
+
+        if status:
+            query += " AND status = %s"
+            params.append(status)
+
+        if start_date:
+            query += " AND created_at >= %s"
+            params.append(start_date)
+
+        if end_date:
+            query += " AND created_at <= %s"
+            params.append(end_date)
+
+        results = self._execute_query(query, tuple(params))
+        return float(results[0]["total_revenue"]) if results else 0.0
+
+    def get_order_counts_by_status(
+        self,
+        restaurant_id: int,
+        include_deleted: bool = False,
+    ) -> Dict[str, int]:
+        """
+        Get order counts grouped by status in a single query.
+
+        Args:
+            restaurant_id: Restaurant ID
+            include_deleted: Whether to include soft-deleted orders
+
+        Returns:
+            Dictionary mapping status to count
+        """
+        query = """
+            SELECT status, COUNT(*) as count
+            FROM Orders
+            WHERE restaurant_id = %s
+        """
+        params: List[Any] = [restaurant_id]
+
+        if not include_deleted:
+            query += " AND deleted_at IS NULL"
+
+        query += " GROUP BY status"
+
+        results = self._execute_query(query, tuple(params))
+        return {row["status"]: row["count"] for row in results}

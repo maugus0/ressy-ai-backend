@@ -233,6 +233,12 @@ class InMemoryCallRepository:
             "calls_by_day_of_week": [],
         }
 
+    def get_calls_by_restaurant(self, restaurant_id: str, limit: int = 10) -> List[Dict[str, Any]]:
+        """Get calls for a restaurant."""
+        calls = [c for c in self._calls.values() if str(c.get("restaurant_id")) == str(restaurant_id)]
+        calls.sort(key=lambda c: c.get("started_at") or "", reverse=True)
+        return [copy.deepcopy(c) for c in calls[:limit]]
+
 
 class InMemoryFAQRepository:
     """In-memory FAQ repository with basic search and pagination for tests."""
@@ -414,6 +420,10 @@ class InMemoryMenuRepository:
         if not item or item.get("restaurant_id") != restaurant_id:
             return {}
         return self._clone(item)
+
+    def get_menus_by_restaurant(self, restaurant_id: int) -> List[Dict[str, Any]]:
+        """Get all menu items for a restaurant."""
+        return [self._clone(m) for m in self._menus.values() if m.get("restaurant_id") == restaurant_id]
 
     def item_name_exists(self, restaurant_id: int, item_name: str, exclude_menu_id: Optional[int] = None) -> bool:
         for menu in self._menus.values():
@@ -749,3 +759,223 @@ class InMemoryRessyAdminRepository:
     def revoke_sessions_for_user(self, user_uuid: str) -> int:
         self.revoked_sessions.append(user_uuid)
         return 1
+
+
+class InMemoryOrderRepository:
+    """In-memory order repository for analytics tests."""
+
+    def __init__(self):
+        self._orders: Dict[int, Dict[str, Any]] = {}
+        self._counter = 0
+
+    def _now(self):
+        return datetime.now(timezone.utc)
+
+    def _clone(self, item: Dict[str, Any]) -> Dict[str, Any]:
+        return copy.deepcopy(item)
+
+    def add_order(
+        self,
+        restaurant_id: int,
+        status: str = "pending",
+        total_amount: float = 0.0,
+        customer_name: str = "Guest",
+    ) -> Dict[str, Any]:
+        """Add an order for testing."""
+        self._counter += 1
+        order = {
+            "id": self._counter,
+            "restaurant_id": restaurant_id,
+            "status": status,
+            "total_amount": total_amount,
+            "customer_name": customer_name,
+            "created_at": self._now(),
+            "updated_at": self._now(),
+            "deleted_at": None,
+        }
+        self._orders[self._counter] = order
+        return self._clone(order)
+
+    def get_orders_by_restaurant(
+        self,
+        restaurant_id: int,
+        status: Optional[str] = None,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> List[Dict[str, Any]]:
+        orders = [
+            self._clone(o)
+            for o in self._orders.values()
+            if o["restaurant_id"] == restaurant_id and o["deleted_at"] is None
+        ]
+        if status:
+            orders = [o for o in orders if o["status"] == status]
+        if start_date:
+            orders = [o for o in orders if o["created_at"] >= start_date]
+        if end_date:
+            orders = [o for o in orders if o["created_at"] <= end_date]
+        orders.sort(key=lambda o: o["created_at"], reverse=True)
+        return orders[offset : offset + limit]
+
+    def count_orders_by_restaurant(
+        self,
+        restaurant_id: int,
+        status: Optional[str] = None,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None,
+        include_deleted: bool = False,
+    ) -> int:
+        orders = [o for o in self._orders.values() if o["restaurant_id"] == restaurant_id]
+        if not include_deleted:
+            orders = [o for o in orders if o["deleted_at"] is None]
+        if status:
+            orders = [o for o in orders if o["status"] == status]
+        if start_date:
+            orders = [o for o in orders if o["created_at"] >= start_date]
+        if end_date:
+            orders = [o for o in orders if o["created_at"] <= end_date]
+        return len(orders)
+
+    def calculate_revenue_by_restaurant(
+        self,
+        restaurant_id: int,
+        status: Optional[str] = None,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None,
+    ) -> float:
+        orders = [o for o in self._orders.values() if o["restaurant_id"] == restaurant_id and o["deleted_at"] is None]
+        if status:
+            orders = [o for o in orders if o["status"] == status]
+        if start_date:
+            orders = [o for o in orders if o["created_at"] >= start_date]
+        if end_date:
+            orders = [o for o in orders if o["created_at"] <= end_date]
+        return sum(o.get("total_amount", 0) for o in orders)
+
+    def get_order_counts_by_status(self, restaurant_id: int, include_deleted: bool = False) -> Dict[str, int]:
+        orders = [o for o in self._orders.values() if o["restaurant_id"] == restaurant_id]
+        if not include_deleted:
+            orders = [o for o in orders if o["deleted_at"] is None]
+        counts: Dict[str, int] = {}
+        for o in orders:
+            status = o.get("status", "unknown")
+            counts[status] = counts.get(status, 0) + 1
+        return counts
+
+
+class InMemoryReservationRepository:
+    """In-memory reservation repository for analytics tests."""
+
+    def __init__(self):
+        self._reservations: Dict[int, Dict[str, Any]] = {}
+        self._counter = 0
+
+    def _now(self):
+        return datetime.now(timezone.utc)
+
+    def _clone(self, item: Dict[str, Any]) -> Dict[str, Any]:
+        return copy.deepcopy(item)
+
+    def add_reservation(
+        self,
+        restaurant_id: int,
+        status: str = "confirmed",
+        party_size: int = 2,
+        name: str = "Guest",
+        date_time: Optional[datetime] = None,
+    ) -> Dict[str, Any]:
+        """Add a reservation for testing."""
+        self._counter += 1
+        reservation = {
+            "id": self._counter,
+            "restaurant_id": restaurant_id,
+            "status": status,
+            "party_size": party_size,
+            "name": name,
+            "date_time": date_time or self._now(),
+            "special_request": None,
+            "created_at": self._now(),
+            "updated_at": self._now(),
+        }
+        self._reservations[self._counter] = reservation
+        return self._clone(reservation)
+
+    def get_reservations_by_restaurant(
+        self,
+        restaurant_id: int,
+        reservation_type: Optional[str] = None,
+        status: Optional[str] = None,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> List[Dict[str, Any]]:
+        reservations = [self._clone(r) for r in self._reservations.values() if r["restaurant_id"] == restaurant_id]
+        if status:
+            reservations = [r for r in reservations if r["status"].lower() == status.lower()]
+        if start_date:
+            reservations = [r for r in reservations if r["date_time"] >= start_date]
+        if end_date:
+            reservations = [r for r in reservations if r["date_time"] <= end_date]
+        reservations.sort(key=lambda r: r["date_time"], reverse=True)
+        return reservations[offset : offset + limit]
+
+    def get_reservation_counts_by_status(self, restaurant_id: int) -> Dict[str, int]:
+        reservations = [r for r in self._reservations.values() if r["restaurant_id"] == restaurant_id]
+        counts: Dict[str, int] = {}
+        for r in reservations:
+            status = r.get("status", "unknown").lower()
+            counts[status] = counts.get(status, 0) + 1
+        return counts
+
+    def count_reservations_by_restaurant(
+        self,
+        restaurant_id: int,
+        status: Optional[str] = None,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None,
+    ) -> int:
+        reservations = [r for r in self._reservations.values() if r["restaurant_id"] == restaurant_id]
+        if status:
+            reservations = [r for r in reservations if r["status"].lower() == status.lower()]
+        if start_date:
+            reservations = [r for r in reservations if r["date_time"] >= start_date]
+        if end_date:
+            reservations = [r for r in reservations if r["date_time"] <= end_date]
+        return len(reservations)
+
+
+class InMemoryUserRepository:
+    """In-memory user repository for analytics tests."""
+
+    def __init__(self):
+        self._users: Dict[int, Dict[str, Any]] = {}
+        self._user_restaurants: Dict[int, set] = {}  # user_id -> set of restaurant_ids
+        self._counter = 0
+
+    def _now(self):
+        return datetime.now(timezone.utc)
+
+    def add_user(self, restaurant_id: int, name: str = "Test User", phone: str = "+1234567890") -> Dict[str, Any]:
+        """Add a user for testing."""
+        self._counter += 1
+        user = {
+            "id": self._counter,
+            "name": name,
+            "phone_number": phone,
+            "created_at": self._now(),
+        }
+        self._users[self._counter] = user
+        if self._counter not in self._user_restaurants:
+            self._user_restaurants[self._counter] = set()
+        self._user_restaurants[self._counter].add(restaurant_id)
+        return copy.deepcopy(user)
+
+    def count_users_by_restaurant(self, restaurant_id: int) -> int:
+        count = 0
+        for user_id, restaurants in self._user_restaurants.items():
+            if restaurant_id in restaurants:
+                count += 1
+        return count
