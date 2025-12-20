@@ -3,6 +3,7 @@ Dashboard API routes for order management.
 Includes RBAC: admins can access all, managers can only access their restaurant's orders.
 """
 
+import asyncio
 import logging
 from typing import Any, Dict, List, Optional
 
@@ -17,8 +18,8 @@ from app.services.sse_service import OrderEventSubtype, SSEService
 logger = logging.getLogger(__name__)
 
 security = HTTPBearer(
-    scheme_name="BearerAuth",
-    description="Enter your JWT access token obtained from login endpoints",
+    scheme_name="HTTPBearer",
+    description="Enter your JWT access token obtained from login endpoints. Just paste the token without 'Bearer ' prefix.",
 )
 
 router = APIRouter(
@@ -73,10 +74,10 @@ class CreateOrderRequest(BaseModel):
     order_details: List[OrderItemRequest] = Field(
         ...,
         min_length=1,
-        description="List of order items (at least one required)",
+        description="List of order items (at least one required). Each item must have a name and quantity.",
         json_schema_extra={
             "example": [
-                {"item_id": 101, "name": "Margherita Pizza", "quantity": 2, "price": 12.99},
+                {"item_id": 444, "name": "Ahan Item", "quantity": 1, "price": 5},
                 {
                     "item_id": 102,
                     "name": "Caesar Salad",
@@ -90,37 +91,52 @@ class CreateOrderRequest(BaseModel):
     total_amount: float = Field(
         ...,
         ge=0,
-        description="Total order amount including tax and fees",
-        json_schema_extra={"example": 34.97},
+        description="Total order amount including tax and fees (must be >= 0)",
+        json_schema_extra={"example": 5.0},
     )
     customer_name: Optional[str] = Field(
         None,
         max_length=200,
         description="Customer's full name",
-        json_schema_extra={"example": "John Smith"},
+        json_schema_extra={"example": "Ahan Jaiswal"},
     )
     customer_phone: Optional[str] = Field(
         None,
         max_length=20,
-        description="Customer's phone number",
-        json_schema_extra={"example": "+1234567890"},
+        description="Customer's phone number in E.164 format (e.g., +6588292920)",
+        json_schema_extra={"example": "+6588292920"},
     )
     customer_email: Optional[str] = Field(
         None,
         max_length=255,
         description="Customer's email address",
-        json_schema_extra={"example": "john.smith@example.com"},
+        json_schema_extra={"example": "ahanjaiswal12@gmail.com"},
     )
     customization: Optional[Dict[str, Any]] = Field(
         None,
-        description="Additional customization options (delivery info, notes, etc.)",
+        description="Additional customization options as JSON object (e.g., delivery info, table number, notes)",
         json_schema_extra={"example": {"delivery": True, "notes": "Ring doorbell twice", "table_number": 5}},
     )
     status: Optional[str] = Field(
         "pending",
-        description="Initial order status (pending, confirmed, preparing, ready, completed, cancelled)",
+        description="Initial order status. Valid values: pending, confirmed, preparing, ready, completed, cancelled",
         json_schema_extra={"example": "pending"},
     )
+
+    model_config = {
+        "json_schema_extra": {
+            "examples": [
+                {
+                    "order_details": [{"item_id": 444, "name": "Ahan Item", "quantity": 1, "price": 5}],
+                    "total_amount": 5,
+                    "customer_name": "Ahan Jaiswal",
+                    "customer_phone": "+6588292920",
+                    "customer_email": "ahanjaiswal12@gmail.com",
+                    "status": "pending",
+                }
+            ]
+        }
+    }
 
 
 class UpdateOrderRequest(BaseModel):
@@ -194,15 +210,37 @@ class CreateOrderResponse(BaseModel):
 
     order_id: int = Field(..., description="Created order ID")
     restaurant_id: int = Field(..., description="Restaurant ID")
-    user_id: Optional[int] = Field(None, description="Associated user ID")
-    status: str = Field(..., description="Order status")
-    total_amount: float = Field(..., description="Total amount")
-    order_details: List[Dict[str, Any]] = Field(..., description="Order items")
-    customization: Optional[Dict[str, Any]] = Field(None, description="Customization")
+    user_id: Optional[int] = Field(None, description="Associated user ID (created or linked if customer info provided)")
+    status: str = Field(..., description="Order status (pending, confirmed, preparing, ready, completed, cancelled)")
+    total_amount: float = Field(..., description="Total order amount")
+    order_details: List[Dict[str, Any]] = Field(..., description="List of order items with details")
+    customization: Optional[Dict[str, Any]] = Field(
+        None, description="Customization options (delivery info, notes, etc.)"
+    )
     customer_name: Optional[str] = Field(None, description="Customer name")
-    customer_phone: Optional[str] = Field(None, description="Customer phone")
-    customer_email: Optional[str] = Field(None, description="Customer email")
-    message: str = Field(..., description="Success message")
+    customer_phone: Optional[str] = Field(None, description="Customer phone number")
+    customer_email: Optional[str] = Field(None, description="Customer email address")
+    message: str = Field(..., description="Success message confirming order creation")
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "order_id": 2,
+                "restaurant_id": 1,
+                "user_id": 5,
+                "status": "pending",
+                "total_amount": 5.0,
+                "order_details": [
+                    {"item_id": 444, "name": "Ahan Item", "quantity": 1, "price": 5.0, "instructions": None}
+                ],
+                "customization": {},
+                "customer_name": "Ahan Jaiswal",
+                "customer_phone": "+6588292920",
+                "customer_email": "ahanjaiswal12@gmail.com",
+                "message": "Order created successfully",
+            }
+        }
+    }
 
 
 class OrderListResponse(BaseModel):
@@ -329,39 +367,67 @@ phone orders, or to create orders on behalf of customers.
 - Restaurant managers can only create orders for their own restaurant
 
 **Request Body**:
-- `order_details`: List of order items with name, quantity, price, and optional instructions
-- `total_amount`: Total order amount (should match sum of items plus tax/fees)
-- `customer_name`: Customer's name (optional but recommended)
-- `customer_phone`: Customer's phone number (optional)
-- `customer_email`: Customer's email (optional)
-- `customization`: Additional options like delivery info, table number, notes
-- `status`: Initial status (defaults to 'pending')
+- `order_details` (required): List of order items. Each item must have:
+  - `name` (required): Item name
+  - `quantity` (required): Quantity ordered (1-100)
+  - `item_id` (optional): Menu item ID for linking to menu. **If provided, the item must exist in this restaurant's menu.**
+  - `price` (optional): Unit price of the item
+  - `instructions` (optional): Special instructions for this item
+- `total_amount` (required): Total order amount including tax and fees (must be >= 0)
+- `customer_name` (optional): Customer's full name
+- `customer_phone` (optional): Customer's phone number (e.g., "+6588292920")
+- `customer_email` (optional): Customer's email address
+- `customization` (optional): Additional customization options as JSON object (e.g., delivery info, table number, notes)
+- `status` (optional): Initial order status (defaults to 'pending')
 
-**Valid Statuses**: pending, confirmed, preparing, ready, completed, cancelled
+**Valid Statuses**: `pending`, `confirmed`, `preparing`, `ready`, `completed`, `cancelled`
 
-**SSE Event**: Emits `order.new_order` event on successful creation
+**Menu Item Validation**: If `item_id` is provided in order items, the system validates that each item belongs to the specified restaurant's menu. Orders with items from other restaurants will be rejected with a 400 error.
+
+**Response**: Returns the created order with assigned order ID, all order details, customer information, and a success message.
+
+**SSE Event**: Emits `order.new_order` event on successful creation (non-blocking)
+
+**Example Request**:
+```json
+{
+  "order_details": [
+    {
+      "item_id": 444,
+      "name": "Ahan Item",
+      "quantity": 1,
+      "price": 5
+    }
+  ],
+  "total_amount": 5,
+  "customer_name": "Ahan Jaiswal",
+  "customer_phone": "+6588292920",
+  "customer_email": "ahanjaiswal12@gmail.com",
+  "status": "pending"
+}
+```
 """,
-    response_description="Created order with all details",
+    response_description="Created order with all details including order_id, restaurant_id, user_id, status, total_amount, order_details, customization, customer information, and success message",
     response_model=CreateOrderResponse,
+    status_code=200,
     responses={
         200: {
             "description": "Order created successfully",
             "content": {
                 "application/json": {
                     "example": {
-                        "order_id": 456,
+                        "order_id": 2,
                         "restaurant_id": 1,
-                        "user_id": 789,
+                        "user_id": 5,
                         "status": "pending",
-                        "total_amount": 34.97,
+                        "total_amount": 5.0,
                         "order_details": [
-                            {"item_id": 101, "name": "Margherita Pizza", "quantity": 2, "price": 12.99},
-                            {"item_id": 102, "name": "Caesar Salad", "quantity": 1, "price": 8.99},
+                            {"item_id": 444, "name": "Ahan Item", "quantity": 1, "price": 5.0, "instructions": None}
                         ],
-                        "customization": {"delivery": True, "notes": "Ring doorbell"},
-                        "customer_name": "John Smith",
-                        "customer_phone": "+1234567890",
-                        "customer_email": "john@example.com",
+                        "customization": {},
+                        "customer_name": "Ahan Jaiswal",
+                        "customer_phone": "+6588292920",
+                        "customer_email": "ahanjaiswal12@gmail.com",
                         "message": "Order created successfully",
                     }
                 }
@@ -371,12 +437,43 @@ phone orders, or to create orders on behalf of customers.
             "description": "Invalid request data",
             "content": {
                 "application/json": {
-                    "example": {"detail": "Invalid status 'unknown'. Must be one of: pending, confirmed, ..."}
+                    "examples": {
+                        "invalid_status": {
+                            "summary": "Invalid order status",
+                            "value": {
+                                "detail": "Invalid status 'unknown'. Must be one of: pending, confirmed, preparing, ready, completed, cancelled"
+                            },
+                        },
+                        "invalid_restaurant": {
+                            "summary": "Restaurant not found",
+                            "value": {"detail": "Restaurant with ID 999 not found"},
+                        },
+                        "missing_required_field": {
+                            "summary": "Missing required field",
+                            "value": {"detail": "order_details field required"},
+                        },
+                        "invalid_menu_items": {
+                            "summary": "Menu items don't belong to restaurant",
+                            "value": {
+                                "detail": "Order contains items that don't belong to restaurant 1: 'Margherita Pizza' (item_id 444) belongs to restaurant 2"
+                            },
+                        },
+                        "menu_item_not_found": {
+                            "summary": "Menu item ID not found",
+                            "value": {
+                                "detail": "Order contains items that don't belong to restaurant 1: item_id 999 (not found)"
+                            },
+                        },
+                    }
                 }
             },
         },
+        401: {
+            "description": "Authentication required",
+            "content": {"application/json": {"example": {"detail": "Not authenticated"}}},
+        },
         403: {
-            "description": "Access denied",
+            "description": "Access denied - insufficient permissions",
             "content": {
                 "application/json": {
                     "example": {"detail": "You can only access orders for your own restaurant (ID: 1)"}
@@ -386,6 +483,10 @@ phone orders, or to create orders on behalf of customers.
         404: {
             "description": "Restaurant not found",
             "content": {"application/json": {"example": {"detail": "Restaurant with ID 999 not found"}}},
+        },
+        500: {
+            "description": "Internal server error",
+            "content": {"application/json": {"example": {"detail": "Error creating order: <error message>"}}},
         },
     },
 )
@@ -412,21 +513,25 @@ async def create_order(
             status=request.status or "pending",
         )
 
-        # Emit SSE event for new order (non-blocking, log errors)
-        try:
-            await sse_service.emit_order_event(
-                restaurant_id=restaurant_id,
-                order_id=result["order_id"],
-                subtype=OrderEventSubtype.NEW_ORDER,
-                data={
-                    "order_id": result["order_id"],
-                    "status": result["status"],
-                    "total_amount": result["total_amount"],
-                    "customer_name": result.get("customer_name"),
-                },
-            )
-        except Exception as sse_error:
-            logger.error(f"Failed to emit SSE event for new order {result['order_id']}: {sse_error}")
+        # Emit SSE event for new order (fire-and-forget, non-blocking)
+        async def emit_sse_event():
+            try:
+                await sse_service.emit_order_event(
+                    restaurant_id=restaurant_id,
+                    order_id=result["order_id"],
+                    subtype=OrderEventSubtype.NEW_ORDER,
+                    data={
+                        "order_id": result["order_id"],
+                        "status": result["status"],
+                        "total_amount": result["total_amount"],
+                        "customer_name": result.get("customer_name"),
+                    },
+                )
+            except Exception as sse_error:
+                logger.error(f"Failed to emit SSE event for new order {result['order_id']}: {sse_error}")
+
+        # Fire and forget - don't await to avoid blocking the response
+        asyncio.create_task(emit_sse_event())
 
         return result
     except ValueError as e:
