@@ -617,16 +617,23 @@ async def update_reservation(
             manage_reservation_url=request.manage_reservation_url,
         )
 
-        # Emit SSE event for reservation update (background task, properly managed by FastAPI)
+        # Emit SSE event for reservation update/cancellation (background task, properly managed by FastAPI)
+        # Use RESERVATION_CANCELLED subtype when status is "cancelled", otherwise RESERVATION_UPDATED
         if restaurant_id:
+            new_status = result.get("status", "")
+            event_subtype = (
+                ReservationEventSubtype.RESERVATION_CANCELLED
+                if new_status.lower() == "cancelled"
+                else ReservationEventSubtype.RESERVATION_UPDATED
+            )
             background_tasks.add_task(
                 _emit_reservation_sse_event,
                 restaurant_id=restaurant_id,
                 reservation_id=reservation_id,
-                subtype=ReservationEventSubtype.RESERVATION_UPDATED,
+                subtype=event_subtype,
                 data={
                     "reservation_id": reservation_id,
-                    "status": result.get("status"),
+                    "status": new_status,
                     "date_time": result.get("date_time"),
                     "party_size": result.get("party_size"),
                 },
