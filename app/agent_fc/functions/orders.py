@@ -11,6 +11,9 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.repositories.mysql_menu_repo import MySQLMenuRepository
 from app.repositories.mysql_order_repo import MySQLOrderRepository
 from app.repositories.mysql_user_repo import MySQLUserRepository
+from app.repositories.mysql_user_restaurant_metadata_repo import (
+    MySQLUserRestaurantMetadataRepository,
+)
 
 
 class OrderItem(BaseModel):
@@ -64,6 +67,7 @@ class UpdateOrderDetailsArgs(BaseModel):
 _order_repo = MySQLOrderRepository()
 _user_repo = MySQLUserRepository()
 _menu_repo = MySQLMenuRepository()
+_metadata_repo = MySQLUserRestaurantMetadataRepository()
 
 
 async def _run_service_call(func, *args, **kwargs):
@@ -114,8 +118,23 @@ async def create_order(**kwargs) -> Dict[str, Any]:
                 "credit_card": None,
             }
         )
+
+        # Create user-restaurant metadata mapping (for dashboard user visibility)
+        if args.restaurant_id:
+            try:
+                _metadata_repo.create_mapping(
+                    user_id=user_id,
+                    restaurant_id=int(args.restaurant_id),
+                    source="order",
+                    notes="Created via voice agent order",
+                )
+            except Exception as meta_err:
+                # Log but don't fail order creation if metadata mapping fails
+                print(f"[WARN] Failed to create user-restaurant metadata: {meta_err}")
+
         total_amount = _calculate_total(args.items)
         order_payload = {
+            "restaurant_id": int(args.restaurant_id) if args.restaurant_id else None,
             "status": "pending",
             "total_amount": total_amount,
             "order_details": [item.model_dump() for item in args.items],

@@ -11,9 +11,13 @@ from pydantic import BaseModel, ConfigDict
 
 from app.repositories.mysql_reservation_repo import MySQLReservationRepository
 from app.repositories.mysql_user_repo import MySQLUserRepository
+from app.repositories.mysql_user_restaurant_metadata_repo import (
+    MySQLUserRestaurantMetadataRepository,
+)
 
 _reservation_repo = MySQLReservationRepository()
 _user_repo = MySQLUserRepository()
+_metadata_repo = MySQLUserRestaurantMetadataRepository()
 
 
 class CreateReservationArgs(BaseModel):
@@ -85,6 +89,18 @@ async def create_reservation(**kwargs) -> Dict[str, Any]:
                 "credit_card": None,
             }
         )
+
+        # 1.5. Create user-restaurant metadata mapping (for dashboard user visibility)
+        try:
+            _metadata_repo.create_mapping(
+                user_id=user_id,
+                restaurant_id=int(args.restaurant_id),
+                source="reservation",
+                notes="Created via voice agent reservation",
+            )
+        except Exception as meta_err:
+            # Log but don't fail reservation creation if metadata mapping fails
+            print(f"[WARN] Failed to create user-restaurant metadata: {meta_err}")
 
         # 2. Parse the datetime
         try:

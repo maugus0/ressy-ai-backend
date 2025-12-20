@@ -9,6 +9,9 @@ from typing import Any, Dict, Optional
 from app.repositories.mysql_reservation_repo import MySQLReservationRepository
 from app.repositories.mysql_restaurant_repo import MySQLRestaurantRepository
 from app.repositories.mysql_user_repo import MySQLUserRepository
+from app.repositories.mysql_user_restaurant_metadata_repo import (
+    MySQLUserRestaurantMetadataRepository,
+)
 
 
 class ReservationService:
@@ -23,6 +26,7 @@ class ReservationService:
         self.reservation_repo = MySQLReservationRepository()
         self.restaurant_repo = MySQLRestaurantRepository()
         self.user_repo = MySQLUserRepository()
+        self.metadata_repo = MySQLUserRestaurantMetadataRepository()
 
     def get_availability(
         self,
@@ -317,6 +321,18 @@ class ReservationService:
             user_data["email"] = email_address
         user_id = self.user_repo.create_or_update_user(user_data)
 
+        # Create user-restaurant metadata mapping (for dashboard user visibility)
+        try:
+            self.metadata_repo.create_mapping(
+                user_id=user_id,
+                restaurant_id=restaurant_id,
+                source="reservation",
+                notes="Created via API reservation",
+            )
+        except Exception as meta_err:
+            # Log but don't fail reservation creation if metadata mapping fails
+            print(f"[WARN] Failed to create user-restaurant metadata: {meta_err}")
+
         # Generate confirmation number
         confirmation_number = f"INH-{restaurant_id}-{uuid.uuid4().hex[:8].upper()}"
 
@@ -546,6 +562,18 @@ class ReservationService:
         if email_address:
             user_data["email"] = email_address
         user_id = self.user_repo.create_or_update_user(user_data)
+
+        # Create user-restaurant metadata mapping (for dashboard user visibility)
+        try:
+            self.metadata_repo.create_mapping(
+                user_id=user_id,
+                restaurant_id=restaurant_id,
+                source="reservation",
+                notes="Created via dashboard direct reservation",
+            )
+        except Exception as meta_err:
+            # Log but don't fail reservation creation if metadata mapping fails
+            print(f"[WARN] Failed to create user-restaurant metadata: {meta_err}")
 
         # Generate confirmation number
         confirmation_number = f"INH-{restaurant_id}-{uuid.uuid4().hex[:8].upper()}"

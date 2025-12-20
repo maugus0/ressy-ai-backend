@@ -96,7 +96,7 @@ if [ "${RUN_STARTUP_SCRIPTS_EFFECTIVE}" = "true" ]; then
     echo "=========================================="
     echo "Running startup scripts in ./scripts ..."
     echo "=========================================="
-
+    
     # Safer globbing (no-match -> empty)
     shopt -s nullglob
 

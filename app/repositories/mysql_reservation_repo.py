@@ -683,3 +683,68 @@ class MySQLReservationRepository(MySQLBaseRepository):
         query += " ORDER BY r.created_at DESC LIMIT 1"
         results = self._execute_query(query, tuple(params))
         return results[0] if results else None
+
+    def get_reservation_counts_by_status(
+        self,
+        restaurant_id: int,
+    ) -> Dict[str, int]:
+        """
+        Get reservation counts grouped by status in a single query.
+
+        Args:
+            restaurant_id: Restaurant ID
+
+        Returns:
+            Dictionary mapping status to count (lowercase keys)
+        """
+        query = """
+            SELECT LOWER(r.status) as status, COUNT(*) as count
+            FROM Reservations r
+            INNER JOIN Slot_Bookings sb ON r.slot_booking_id = sb.id
+            WHERE sb.restaurant_id = %s
+            GROUP BY LOWER(r.status)
+        """
+        results = self._execute_query(query, (restaurant_id,))
+        return {row["status"]: row["count"] for row in results}
+
+    def count_reservations_by_restaurant(
+        self,
+        restaurant_id: int,
+        status: Optional[str] = None,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None,
+    ) -> int:
+        """
+        Count reservations for a restaurant with optional filters.
+
+        Args:
+            restaurant_id: Restaurant ID
+            status: Filter by status
+            start_date: Filter by start date (date_time >= start_date)
+            end_date: Filter by end date (date_time <= end_date)
+
+        Returns:
+            Count of matching reservations
+        """
+        query = """
+            SELECT COUNT(*) as total
+            FROM Reservations r
+            INNER JOIN Slot_Bookings sb ON r.slot_booking_id = sb.id
+            WHERE sb.restaurant_id = %s
+        """
+        params: List[Any] = [restaurant_id]
+
+        if status:
+            query += " AND LOWER(r.status) = LOWER(%s)"
+            params.append(status)
+
+        if start_date:
+            query += " AND sb.date_time >= %s"
+            params.append(start_date)
+
+        if end_date:
+            query += " AND sb.date_time <= %s"
+            params.append(end_date)
+
+        results = self._execute_query(query, tuple(params))
+        return results[0]["total"] if results else 0

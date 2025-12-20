@@ -156,6 +156,39 @@ class MySQLMenuRepository(MySQLBaseRepository):
         results = self._execute_query(query, (menu_id,))
         return self._parse_suggested_items(results[0]) if results else None
 
+    def get_by_ids(self, menu_ids: List[int]) -> Dict[int, Dict]:
+        """
+        Get multiple menu items by their IDs in a single query.
+
+        Args:
+            menu_ids: List of menu item IDs to fetch
+
+        Returns:
+            Dictionary mapping item_id to menu item data.
+            Missing items will not be present in the dictionary.
+        """
+        if not menu_ids:
+            return {}
+
+        placeholders = ", ".join(["%s"] * len(menu_ids))
+        query = f"""
+            SELECT
+                m.*,
+                r.name as restaurant_name
+            FROM Menus m
+            LEFT JOIN Restaurants r ON m.restaurant_id = r.id
+            WHERE m.id IN ({placeholders})
+        """
+        results = self._execute_query(query, tuple(menu_ids))
+
+        # Build a dictionary keyed by item ID for O(1) lookup
+        items_by_id: Dict[int, Dict] = {}
+        for item in results:
+            parsed_item = self._parse_suggested_items(item)
+            items_by_id[parsed_item["id"]] = parsed_item
+
+        return items_by_id
+
     def get_paginated_by_restaurant(  # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
         self,
         restaurant_id: int,

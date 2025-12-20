@@ -54,7 +54,12 @@ class ClientFAQListResponse(BaseModel):
     openapi_extra={
         "requestBody": {
             "required": True,
-            "content": {"application/json": {"schema": FAQ_CREATE_SCHEMA}},
+            "content": {
+                "application/json": {
+                    "schema": FAQ_CREATE_SCHEMA,
+                    "example": {"question": "Do you offer delivery?", "answer": "Yes, within 5 miles."},
+                }
+            },
         },
         "responses": {
             201: {
@@ -172,7 +177,12 @@ async def get_faq(
     openapi_extra={
         "requestBody": {
             "required": True,
-            "content": {"application/json": {"schema": FAQ_UPDATE_SCHEMA}},
+            "content": {
+                "application/json": {
+                    "schema": FAQ_UPDATE_SCHEMA,
+                    "example": {"question": "Updated question?", "answer": "Updated answer."},
+                }
+            },
         },
         "responses": {
             200: {
@@ -234,7 +244,17 @@ async def delete_faq(
     openapi_extra={
         "requestBody": {
             "required": True,
-            "content": {"application/json": {"schema": FAQ_BULK_SCHEMA}},
+            "content": {
+                "application/json": {
+                    "schema": FAQ_BULK_SCHEMA,
+                    "example": {
+                        "faqs": [
+                            {"question": "What are your hours?", "answer": "Mon-Fri 9am-9pm"},
+                            {"question": "Do you take reservations?", "answer": "Yes, via phone or online"},
+                        ]
+                    },
+                }
+            },
         },
         "responses": {
             201: {

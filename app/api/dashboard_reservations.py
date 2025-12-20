@@ -3,15 +3,19 @@ Dashboard API routes for in-house reservation management.
 Includes RBAC: admins can access all, managers can only access their restaurant's reservations.
 """
 
-from typing import Optional
+import logging
+from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from fastapi.security import HTTPBearer
 from pydantic import BaseModel, Field
 
 from app.middleware.auth_middleware import require_role
+from app.services.activity_history_service import ActivityHistoryService
 from app.services.reservation_service import ReservationService
 from app.services.sse_service import ReservationEventSubtype, SSEService
+
+logger = logging.getLogger(__name__)
 
 security = HTTPBearer(
     scheme_name="HTTPBearer",  # Standardized security scheme name
@@ -23,6 +27,31 @@ router = APIRouter(
 )
 reservation_service = ReservationService()
 sse_service = SSEService()
+history_service = ActivityHistoryService()
+
+
+# ---------- Background task helpers ----------
+
+
+async def _emit_reservation_sse_event(
+    restaurant_id: int,
+    reservation_id: int,
+    subtype: ReservationEventSubtype,
+    data: Dict[str, Any],
+) -> None:
+    """
+    Background task to emit SSE reservation events.
+    Logs errors but does not raise exceptions to avoid affecting other operations.
+    """
+    try:
+        await sse_service.emit_reservation_event(
+            restaurant_id=restaurant_id,
+            reservation_id=reservation_id,
+            subtype=subtype,
+            data=data,
+        )
+    except Exception as sse_error:
+        logger.error(f"Failed to emit SSE event for reservation {reservation_id} ({subtype.value}): {sse_error}")
 
 
 # ---------- Pydantic models for request validation ----------
@@ -263,6 +292,7 @@ making it ideal for walk-in customers or phone reservations managed by staff.
 async def create_reservation_direct(
     restaurant_id: int,
     request: CreateReservationDirectRequest,
+    background_tasks: BackgroundTasks,
     current_user: dict = Depends(require_role(["admin", "client"])),
 ):
     """Create a confirmed reservation directly from the dashboard."""
@@ -280,8 +310,27 @@ async def create_reservation_direct(
             notes=request.notes,
         )
 
-        # Emit SSE event for new reservation
-        await sse_service.emit_reservation_event(
+        # Log activity history for reservation creation
+        try:
+            user_id = current_user.get("user_id") or current_user.get("sub")
+            if user_id:
+                history_service.log_reservation_created(
+                    user_id=int(user_id),
+                    reservation_id=result["reservation_id"],
+                    restaurant_id=restaurant_id,
+                    reservation_data={
+                        "status": result.get("status"),
+                        "party_size": result.get("party_size"),
+                        "date_time": result.get("date_time"),
+                        "name": result.get("name"),
+                    },
+                )
+        except Exception as history_error:
+            print(f"[WARN] Failed to log history for reservation creation {result['reservation_id']}: {history_error}")
+
+        # Emit SSE event for new reservation (background task, properly managed by FastAPI)
+        background_tasks.add_task(
+            _emit_reservation_sse_event,
             restaurant_id=restaurant_id,
             reservation_id=result["reservation_id"],
             subtype=ReservationEventSubtype.NEW_RESERVATION,
@@ -568,11 +617,21 @@ Update reservation details including slot timing.
 async def update_reservation(
     reservation_id: int,
     request: UpdateReservationRequest,
+    background_tasks: BackgroundTasks,
     current_user: dict = Depends(require_role(["admin", "client"])),
 ):
     """Update reservation and slot booking details."""
     reservation = _check_reservation_access(current_user, reservation_id)
     restaurant_id = reservation.get("restaurant_id")
+
+    # Store previous state for history logging
+    previous_data = {
+        "status": reservation.get("status"),
+        "party_size": reservation.get("party_size"),
+        "date_time": str(reservation.get("date_time")) if reservation.get("date_time") else None,
+        "special_request": reservation.get("special_request"),
+        "notes": reservation.get("notes"),
+    }
 
     try:
         result = reservation_service.update_reservation(
@@ -587,9 +646,31 @@ async def update_reservation(
             manage_reservation_url=request.manage_reservation_url,
         )
 
+        # Log activity history for reservation update
+        try:
+            user_id = current_user.get("user_id") or current_user.get("sub")
+            if user_id and restaurant_id:
+                new_data = {
+                    "status": result.get("status"),
+                    "party_size": result.get("party_size"),
+                    "date_time": str(result.get("date_time")) if result.get("date_time") else None,
+                    "special_request": result.get("special_request"),
+                    "notes": result.get("notes"),
+                }
+                history_service.log_reservation_updated(
+                    user_id=int(user_id),
+                    reservation_id=reservation_id,
+                    restaurant_id=restaurant_id,
+                    previous_data=previous_data,
+                    new_data=new_data,
+                )
+        except Exception as history_error:
+            print(f"[WARN] Failed to log history for reservation update {reservation_id}: {history_error}")
+
         # Emit SSE event for reservation update
         if restaurant_id:
-            await sse_service.emit_reservation_event(
+            background_tasks.add_task(
+                _emit_reservation_sse_event,
                 restaurant_id=restaurant_id,
                 reservation_id=reservation_id,
                 subtype=ReservationEventSubtype.RESERVATION_UPDATED,
@@ -647,18 +728,34 @@ for new bookings.
 )
 async def cancel_reservation_dashboard(
     reservation_id: int,
+    background_tasks: BackgroundTasks,
     current_user: dict = Depends(require_role(["admin", "client"])),
 ):
     """Cancel a reservation."""
     reservation = _check_reservation_access(current_user, reservation_id)
     restaurant_id = reservation.get("restaurant_id")
+    previous_status = reservation.get("status")
 
     try:
         result = reservation_service.cancel_reservation(reservation_id=reservation_id)
 
+        # Log activity history for reservation cancellation
+        try:
+            user_id = current_user.get("user_id") or current_user.get("sub")
+            if user_id and restaurant_id:
+                history_service.log_reservation_cancelled(
+                    user_id=int(user_id),
+                    reservation_id=reservation_id,
+                    restaurant_id=restaurant_id,
+                    previous_status=previous_status or "unknown",
+                )
+        except Exception as history_error:
+            print(f"[WARN] Failed to log history for reservation cancellation {reservation_id}: {history_error}")
+
         # Emit SSE event for reservation cancellation
         if restaurant_id:
-            await sse_service.emit_reservation_event(
+            background_tasks.add_task(
+                _emit_reservation_sse_event,
                 restaurant_id=restaurant_id,
                 reservation_id=reservation_id,
                 subtype=ReservationEventSubtype.RESERVATION_CANCELLED,
