@@ -729,14 +729,20 @@ async def update_reservation(
 
         # Emit SSE event for reservation update
         if restaurant_id:
+            new_status = result.get("status", "")
+            event_subtype = (
+                ReservationEventSubtype.RESERVATION_CANCELLED
+                if new_status.lower() == "cancelled"
+                else ReservationEventSubtype.RESERVATION_UPDATED
+            )
             background_tasks.add_task(
                 _emit_reservation_sse_event,
                 restaurant_id=restaurant_id,
                 reservation_id=reservation_id,
-                subtype=ReservationEventSubtype.RESERVATION_UPDATED,
+                subtype=event_subtype,
                 data={
                     "reservation_id": reservation_id,
-                    "status": result.get("status"),
+                    "status": new_status,
                     "date_time": result.get("date_time"),
                     "party_size": result.get("party_size"),
                 },
