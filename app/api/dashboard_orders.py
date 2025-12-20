@@ -102,7 +102,7 @@ class CreateOrderRequest(BaseModel):
         description="List of order items (at least one required). Each item must have a name and quantity.",
         json_schema_extra={
             "example": [
-                {"item_id": 444, "name": "Ahan Item", "quantity": 1, "price": 5},
+                {"item_id": 444, "name": "Sample Item", "quantity": 1, "price": 5},
                 {
                     "item_id": 102,
                     "name": "Caesar Salad",
