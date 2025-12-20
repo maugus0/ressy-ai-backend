@@ -26,6 +26,14 @@ security = HTTPBearer(
     description="Enter your JWT access token obtained from login endpoints. Just paste the token without 'Bearer ' prefix.",
 )
 
+# Separate security scheme for SSE stream endpoint that allows optional header auth
+# This enables query param authentication for browser EventSource API which cannot send headers
+security_optional = HTTPBearer(
+    scheme_name="HTTPBearer",
+    description="JWT access token via header (optional - can also use 'token' query parameter)",
+    auto_error=False,  # Don't raise 403 when header is missing - allows query param fallback
+)
+
 router = APIRouter()
 sse_service = SSEService()
 jwt_util = JWTUtil()
@@ -284,7 +292,7 @@ async def subscribe_to_events(
         None,
         description="JWT access token (alternative to Authorization header for browser EventSource)",
     ),
-    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security_optional),
 ):
     """
     Subscribe to SSE event stream.
