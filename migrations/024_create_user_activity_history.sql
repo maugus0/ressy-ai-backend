@@ -1,4 +1,4 @@
--- Migration: Create User_Activity_History table
+-- Migration 025: Create User_Activity_History table
 -- Description: Stores audit logs for order and reservation changes
 -- This table tracks all updates to orders and reservations for history/audit purposes
 
