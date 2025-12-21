@@ -581,6 +581,7 @@ async def create_order(
                     "order_details": result.get("order_details"),
                 },
                 user_id=result.get("user_id"),
+                performed_by=current_user,
             )
         except Exception as history_error:
             logger.error(f"Failed to log history for order creation {result['order_id']}: {history_error}")
@@ -950,6 +951,7 @@ async def update_order(
                     previous_data=previous_data,
                     new_data=new_data,
                     user_id=result.get("user_id"),
+                    performed_by=current_user,
                 )
         except Exception as history_error:
             logger.error(f"Failed to log history for order update {order_id}: {history_error}")
@@ -1068,6 +1070,7 @@ async def update_order_status(
                     old_status=old_status or "unknown",
                     new_status=request.status,
                     user_id=order.get("user_id"),
+                    performed_by=current_user,
                 )
         except Exception as history_error:
             logger.error(f"Failed to log history for order status change {order_id}: {history_error}")
@@ -1181,6 +1184,7 @@ async def cancel_order(
                     restaurant_id=int(restaurant_id),
                     previous_status=previous_status or "unknown",
                     user_id=order.get("user_id"),
+                    performed_by=current_user,
                 )
         except Exception as history_error:
             logger.error(f"Failed to log history for order cancellation {order_id}: {history_error}")

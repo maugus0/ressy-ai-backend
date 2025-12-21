@@ -333,6 +333,7 @@ async def create_reservation_direct(
                     "name": result.get("name"),
                 },
                 user_id=result.get("user_id"),
+                performed_by=current_user,
             )
         except Exception as history_error:
             logger.warning(
@@ -716,6 +717,7 @@ async def update_reservation(
                     previous_data=previous_data,
                     new_data=new_data,
                     user_id=result.get("user_id"),
+                    performed_by=current_user,
                 )
         except Exception as history_error:
             logger.warning(f"Failed to log history for reservation update {reservation_id}: {history_error}")
@@ -806,6 +808,7 @@ async def cancel_reservation_dashboard(
                     restaurant_id=int(restaurant_id),
                     previous_status=previous_status or "unknown",
                     user_id=reservation.get("user_id"),
+                    performed_by=current_user,
                 )
         except Exception as history_error:
             logger.warning(f"Failed to log history for reservation cancellation {reservation_id}: {history_error}")
