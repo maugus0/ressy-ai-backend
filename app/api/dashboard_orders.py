@@ -25,9 +25,24 @@ security = HTTPBearer(
 router = APIRouter(
     dependencies=[Depends(security)],
 )
-order_service = DashboardOrderService()
-sse_service = SSEService()
-history_service = ActivityHistoryService()
+
+
+# ---------- Service dependencies ----------
+
+
+def get_order_service() -> DashboardOrderService:
+    """Dependency to get a fresh order service instance per request."""
+    return DashboardOrderService()
+
+
+def get_sse_service() -> SSEService:
+    """Dependency to get SSE service instance."""
+    return SSEService()
+
+
+def get_history_service() -> ActivityHistoryService:
+    """Dependency to get activity history service instance."""
+    return ActivityHistoryService()
 
 
 # ---------- Background task helpers ----------
@@ -42,9 +57,11 @@ async def _emit_order_sse_event(
     """
     Background task to emit SSE order events.
     Logs errors but does not raise exceptions to avoid affecting other operations.
+    Creates its own SSE service instance since background tasks run outside request context.
     """
     try:
-        await sse_service.emit_order_event(
+        sse_svc = SSEService()
+        await sse_svc.emit_order_event(
             restaurant_id=restaurant_id,
             order_id=order_id,
             subtype=subtype,
@@ -372,7 +389,7 @@ def _check_restaurant_access(current_user: dict, restaurant_id: int):
     raise HTTPException(status_code=403, detail="Access denied - unknown user type")
 
 
-def _check_order_access(current_user: dict, order_id: int):
+def _check_order_access(current_user: dict, order_id: int, order_service: DashboardOrderService):
     """
     Check if the current user has access to the specified order.
     Fetches the order and validates restaurant access.
@@ -380,6 +397,7 @@ def _check_order_access(current_user: dict, order_id: int):
     Args:
         current_user: JWT claims dict
         order_id: The order ID to check access for
+        order_service: The order service instance to use
 
     Returns:
         The order dict if access is granted
@@ -550,6 +568,8 @@ async def create_order(
     request: CreateOrderRequest,
     background_tasks: BackgroundTasks,
     current_user: dict = Depends(require_role(["admin", "client"])),
+    order_service: DashboardOrderService = Depends(get_order_service),
+    history_service: ActivityHistoryService = Depends(get_history_service),
 ):
     """Create a new order from the dashboard."""
     _check_restaurant_access(current_user, restaurant_id)
@@ -706,6 +726,7 @@ async def get_restaurant_orders(
     limit: int = Query(100, ge=1, le=1000, description="Maximum number of results to return"),
     offset: int = Query(0, ge=0, description="Number of results to skip for pagination"),
     current_user: dict = Depends(require_role(["admin", "client"])),
+    order_service: DashboardOrderService = Depends(get_order_service),
 ):
     """Get orders for a restaurant with optional filters."""
     _check_restaurant_access(current_user, restaurant_id)
@@ -810,9 +831,11 @@ previous and new values, and a human-readable summary.
 async def get_order(
     order_id: int,
     current_user: dict = Depends(require_role(["admin", "client"])),
+    order_service: DashboardOrderService = Depends(get_order_service),
+    history_service: ActivityHistoryService = Depends(get_history_service),
 ):
     """Get an order by ID with authorization check and history."""
-    order = _check_order_access(current_user, order_id)
+    order = _check_order_access(current_user, order_id, order_service)
 
     # Fetch history entries for this order
     try:
@@ -909,9 +932,11 @@ async def update_order(
     request: UpdateOrderRequest,
     background_tasks: BackgroundTasks,
     current_user: dict = Depends(require_role(["admin", "client"])),
+    order_service: DashboardOrderService = Depends(get_order_service),
+    history_service: ActivityHistoryService = Depends(get_history_service),
 ):
     """Update order details."""
-    order = _check_order_access(current_user, order_id)
+    order = _check_order_access(current_user, order_id, order_service)
     restaurant_id = order.get("restaurant_id")
 
     # Store previous state for history logging
@@ -1052,9 +1077,11 @@ async def update_order_status(
     request: UpdateOrderStatusRequest,
     background_tasks: BackgroundTasks,
     current_user: dict = Depends(require_role(["admin", "client"])),
+    order_service: DashboardOrderService = Depends(get_order_service),
+    history_service: ActivityHistoryService = Depends(get_history_service),
 ):
     """Update order status."""
-    order = _check_order_access(current_user, order_id)
+    order = _check_order_access(current_user, order_id, order_service)
     restaurant_id = order.get("restaurant_id")
     old_status = order.get("status")
 
@@ -1167,9 +1194,11 @@ async def cancel_order(
     order_id: int,
     background_tasks: BackgroundTasks,
     current_user: dict = Depends(require_role(["admin", "client"])),
+    order_service: DashboardOrderService = Depends(get_order_service),
+    history_service: ActivityHistoryService = Depends(get_history_service),
 ):
     """Cancel an order."""
-    order = _check_order_access(current_user, order_id)
+    order = _check_order_access(current_user, order_id, order_service)
     restaurant_id = order.get("restaurant_id")
     previous_status = order.get("status")
 
@@ -1265,9 +1294,10 @@ Deleted orders can be restored using the restore endpoint.
 async def delete_order(
     order_id: int,
     current_user: dict = Depends(require_role(["admin", "client"])),
+    order_service: DashboardOrderService = Depends(get_order_service),
 ):
     """Soft delete an order."""
-    _check_order_access(current_user, order_id)
+    _check_order_access(current_user, order_id, order_service)
 
     try:
         result = order_service.soft_delete_order(order_id=order_id)
@@ -1331,6 +1361,7 @@ updated or cancelled as normal.
 async def restore_order(
     order_id: int,
     current_user: dict = Depends(require_role(["admin", "client"])),
+    order_service: DashboardOrderService = Depends(get_order_service),
 ):
     """Restore a soft-deleted order."""
     try:

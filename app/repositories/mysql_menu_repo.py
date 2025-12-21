@@ -179,13 +179,31 @@ class MySQLMenuRepository(MySQLBaseRepository):
             LEFT JOIN Restaurants r ON m.restaurant_id = r.id
             WHERE m.id IN ({placeholders})
         """
-        results = self._execute_query(query, tuple(menu_ids))
+        # Ensure menu_ids are integers for consistent query with error handling
+        menu_ids_int: List[int] = []
+        for mid in menu_ids:
+            try:
+                menu_ids_int.append(int(mid))
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"Invalid menu ID '{mid}' in menu_ids; expected an integer.") from exc
+
+        results = self._execute_query(query, tuple(menu_ids_int))
 
         # Build a dictionary keyed by item ID for O(1) lookup
         items_by_id: Dict[int, Dict] = {}
         for item in results:
             parsed_item = self._parse_suggested_items(item)
-            items_by_id[parsed_item["id"]] = parsed_item
+            # Ensure the ID key is an integer for consistent lookup with error handling
+            try:
+                item_id_from_db = int(parsed_item["id"])
+            except (TypeError, ValueError, KeyError) as exc:
+                # Log the error but don't fail the entire query - skip this item
+                print(
+                    f"[WARN] Skipping menu item with invalid ID: {parsed_item.get('id', 'missing')} "
+                    f"(type: {type(parsed_item.get('id')).__name__}). Error: {exc}"
+                )
+                continue
+            items_by_id[item_id_from_db] = parsed_item
 
         return items_by_id
 
