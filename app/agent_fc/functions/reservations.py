@@ -66,6 +66,7 @@ class UpdateReservationArgs(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     customer_contact: str
+    restaurant_id: int
     party_size: Optional[int] = None
     datetime_iso: Optional[str] = None
     special_request: Optional[str] = None
@@ -77,7 +78,7 @@ class LookupReservationArgs(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     customer_contact: str
-    restaurant_id: Optional[int] = None
+    restaurant_id: int
 
 
 class CheckAvailabilityArgs(BaseModel):
@@ -269,12 +270,15 @@ async def lookup_reservation(**kwargs) -> Dict[str, Any]:
             return None
 
         # Get the latest reservation for this user
-        reservation = _reservation_repo.get_latest_by_user(user_id)
+        reservation = _reservation_repo.get_latest_by_user(user_id, restaurant_id=args.restaurant_id)
         return reservation
 
     reservation = await _run_service_call(_lookup)
     if not reservation:
-        return {"status": "NOT_FOUND", "message": "No reservation found for this contact."}
+        return {
+            "status": "NOT_FOUND",
+            "message": "No reservation found for this contact at this restaurant.",
+        }
     return {"status": "FOUND", "reservation": reservation}
 
 
@@ -322,7 +326,7 @@ async def update_reservation(**kwargs) -> Dict[str, Any]:
         user_id = _user_repo.get_user_id_by_phone_or_email(args.customer_contact, None)
         if not user_id:
             return None, None, None
-        reservation = _reservation_repo.get_latest_by_user(user_id)
+        reservation = _reservation_repo.get_latest_by_user(user_id, restaurant_id=args.restaurant_id)
         if not reservation:
             return None, None, None
 
@@ -382,10 +386,13 @@ async def update_reservation(**kwargs) -> Dict[str, Any]:
         }
 
     if not result:
-        return {"status": "NOT_FOUND", "message": "No reservation found to update."}
+        return {
+            "status": "NOT_FOUND",
+            "message": "No reservation found to update for this restaurant.",
+        }
 
     updated = result
-    restaurant_id = extra
+    restaurant_id = extra or args.restaurant_id
 
     # Log activity history for voice agent reservation update (run in thread since it's a DB operation)
     def _log_history():
