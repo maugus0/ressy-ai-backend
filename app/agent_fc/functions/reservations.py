@@ -26,7 +26,7 @@ _history_service = ActivityHistoryService()
 class CreateReservationArgs(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    restaurant_id: str
+    restaurant_id: int
     party_size: int
     datetime_iso: str
     customer_name: Optional[str] = None
@@ -44,19 +44,20 @@ class UpdateReservationArgs(BaseModel):
     datetime_iso: Optional[str] = None
     special_request: Optional[str] = None
     notes: Optional[str] = None
+    status: Optional[str] = None  # Allow status changes (e.g., "cancelled") within update window
 
 
 class LookupReservationArgs(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     customer_contact: str
-    restaurant_id: Optional[str] = None
+    restaurant_id: Optional[int] = None
 
 
 class CheckAvailabilityArgs(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    restaurant_id: str
+    restaurant_id: int
     party_size: int
     date_start_iso: str
     date_end_iso: str
@@ -301,12 +302,13 @@ async def update_reservation(**kwargs) -> Dict[str, Any]:
         }
 
         # Update the reservation with provided fields
+        # Status changes (e.g., cancellation) are allowed within the update window
         _reservation_repo.update_reservation(
             reservation_id=reservation_id,
             party_size=args.party_size,
             special_request=args.special_request,
             notes=args.notes,
-            status=None,  # Status changes only via dashboard
+            status=args.status,
         )
 
         # If datetime is being changed, update the slot booking

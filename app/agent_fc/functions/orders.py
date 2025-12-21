@@ -33,9 +33,9 @@ class OrderItem(BaseModel):
 class CreateOrderArgs(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    restaurant_id: str = None
+    restaurant_id: Optional[int] = None
     customer_name: Optional[str] = None
-    customer_contact: str = None
+    customer_contact: Optional[str] = None
     pickup_time_iso: Optional[str] = None
     items: List[OrderItem]
     notes: Optional[str] = None
@@ -46,13 +46,13 @@ class LookupOrderArgs(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     customer_contact: str
-    restaurant_id: Optional[str] = None
+    restaurant_id: Optional[int] = None
 
 
 class CheckItemsAvailabilityArgs(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    restaurant_id: str
+    restaurant_id: int
     items: List[OrderItem]
     location: Optional[str] = None
 
@@ -65,6 +65,7 @@ class UpdateOrderDetailsArgs(BaseModel):
     customization: Dict[str, Any] = Field(default_factory=dict)
     total_amount: Optional[float] = None
     notes: Optional[str] = None
+    status: Optional[str] = None  # Allow status changes (e.g., "cancelled") within update window
 
 
 _order_repo = MySQLOrderRepository()
@@ -314,6 +315,7 @@ async def update_order_details(**kwargs) -> Dict[str, Any]:
 
         # Capture previous state for activity history
         previous_data = {
+            "status": order.get("status"),
             "order_details": order.get("order_details"),
             "customization": order.get("customization"),
             "total_amount": order.get("total_amount"),
@@ -322,6 +324,11 @@ async def update_order_details(**kwargs) -> Dict[str, Any]:
         order_details = [item.model_dump() for item in args.items]
         total_amount = _calculate_total(args.items)
         _order_repo.update_order_details(order_id, order_details, args.customization, total_amount)
+
+        # Update status if provided (e.g., cancellation within update window)
+        if args.status:
+            _order_repo.update_order_status(order_id, args.status)
+
         updated = _order_repo.get_order_by_id(order_id)
 
         return updated, previous_data, order.get("restaurant_id"), order
@@ -353,6 +360,7 @@ async def update_order_details(**kwargs) -> Dict[str, Any]:
                     f"[DEBUG] Logging order update history: order_id={updated_order.get('id')}, restaurant_id={restaurant_id}"
                 )
                 new_data = {
+                    "status": updated_order.get("status"),
                     "order_details": updated_order.get("order_details"),
                     "customization": updated_order.get("customization"),
                     "total_amount": updated_order.get("total_amount"),
