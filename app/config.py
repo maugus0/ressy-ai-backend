@@ -57,6 +57,9 @@ class Settings:
     # Barge-in behavior
     # Minimum gap in seconds after last agent audio chunk before clearing Twilio buffer when user starts speaking
     BARGE_IN_CLEAR_SECONDS = float(os.getenv("BARGE_IN_CLEAR_SECONDS", "0.5"))
+    # Grace period (seconds) at start of outbound calls where barge-in is disabled
+    # This allows the greeting to play even if the callee says "Hello?" when answering
+    OUTBOUND_GREETING_GRACE_SECONDS = float(os.getenv("OUTBOUND_GREETING_GRACE_SECONDS", "4.0"))
 
     # Cost settings (USD)
     #

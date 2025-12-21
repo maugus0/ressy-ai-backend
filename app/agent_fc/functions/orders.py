@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
@@ -17,6 +18,9 @@ from app.repositories.mysql_user_restaurant_metadata_repo import (
     MySQLUserRestaurantMetadataRepository,
 )
 from app.services.activity_history_service import ActivityHistoryService
+from app.services.sse_service import OrderEventSubtype, SSEService
+
+logger = logging.getLogger(__name__)
 
 
 class OrderItem(BaseModel):
@@ -73,6 +77,28 @@ _user_repo = MySQLUserRepository()
 _menu_repo = MySQLMenuRepository()
 _metadata_repo = MySQLUserRestaurantMetadataRepository()
 _history_service = ActivityHistoryService()
+_sse_service = SSEService()
+
+
+async def _emit_order_sse_event(
+    restaurant_id: int,
+    order_id: int,
+    subtype: OrderEventSubtype,
+    data: Dict[str, Any],
+) -> None:
+    """
+    Background task to emit SSE order events.
+    Logs errors but does not raise exceptions to avoid affecting other operations.
+    """
+    try:
+        await _sse_service.emit_order_event(
+            restaurant_id=restaurant_id,
+            order_id=order_id,
+            subtype=subtype,
+            data=data,
+        )
+    except Exception as sse_error:
+        logger.error(f"Failed to emit SSE event for order {order_id} ({subtype.value}): {sse_error}")
 
 
 async def _run_service_call(func, *args, **kwargs):
@@ -185,6 +211,22 @@ async def create_order(**kwargs) -> Dict[str, Any]:
             traceback.print_exc()
 
     await _run_service_call(_log_history)
+
+    # Emit SSE event for new order (background task)
+    if args.restaurant_id:
+        asyncio.create_task(
+            _emit_order_sse_event(
+                restaurant_id=int(args.restaurant_id),
+                order_id=order_id,
+                subtype=OrderEventSubtype.NEW_ORDER,
+                data={
+                    "order_id": order_id,
+                    "status": "pending",
+                    "total_amount": _calculate_total(args.items),
+                    "customer_name": args.customer_name,
+                },
+            )
+        )
 
     return {
         "status": "CREATED",
@@ -382,5 +424,26 @@ async def update_order_details(**kwargs) -> Dict[str, Any]:
             traceback.print_exc()
 
     await _run_service_call(_log_history)
+
+    # Emit SSE event for order update (background task)
+    if restaurant_id:
+        new_status = updated_order.get("status", "")
+        event_subtype = (
+            OrderEventSubtype.ORDER_CANCELLED
+            if new_status.lower() == "cancelled"
+            else OrderEventSubtype.ORDER_UPDATED
+        )
+        asyncio.create_task(
+            _emit_order_sse_event(
+                restaurant_id=int(restaurant_id),
+                order_id=updated_order.get("id"),
+                subtype=event_subtype,
+                data={
+                    "order_id": updated_order.get("id"),
+                    "status": new_status,
+                    "total_amount": updated_order.get("total_amount"),
+                },
+            )
+        )
 
     return {"status": "UPDATED", "order": updated_order}
