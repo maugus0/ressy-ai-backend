@@ -11,7 +11,7 @@ CREATE TABLE IF NOT EXISTS User_Activity_History (
     action VARCHAR(50) NOT NULL COMMENT 'Action performed: created, updated, cancelled, status_changed, etc.',
     previous_value JSON COMMENT 'Previous state before the change (serialized JSON)',
     new_value JSON COMMENT 'New state after the change (serialized JSON)',
-    change_summary VARCHAR(500) COMMENT 'Human-readable summary of the change',
+    change_summary VARCHAR(1000) COMMENT 'Human-readable summary of the change',
     restaurant_id INT NOT NULL COMMENT 'Restaurant ID for RBAC access control',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     
