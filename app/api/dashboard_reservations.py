@@ -323,21 +323,18 @@ async def create_reservation_direct(
 
         # Log activity history for reservation creation
         try:
-            actor_uuid = current_user.get("uuid") or current_user.get("sub")
-            actor_type = "admin" if current_user.get("user_type") == "admin" else "restaurant_admin"
-            if actor_uuid:
-                history_service.log_reservation_created(
-                    reservation_id=result["reservation_id"],
-                    restaurant_id=int(restaurant_id),
-                    reservation_data={
-                        "status": result.get("status"),
-                        "party_size": result.get("party_size"),
-                        "date_time": result.get("date_time"),
-                        "name": result.get("name"),
-                    },
-                    actor_uuid=actor_uuid,
-                    actor_type=actor_type,
-                )
+            history_service.log_reservation_created(
+                reservation_id=result["reservation_id"],
+                restaurant_id=int(restaurant_id),
+                reservation_data={
+                    "status": result.get("status"),
+                    "party_size": result.get("party_size"),
+                    "date_time": result.get("date_time"),
+                    "name": result.get("name"),
+                },
+                user_id=result.get("user_id"),
+                performed_by=current_user,
+            )
         except Exception as history_error:
             logger.warning(
                 f"Failed to log history for reservation creation {result['reservation_id']}: {history_error}"
@@ -706,9 +703,7 @@ async def update_reservation(
 
         # Log activity history for reservation update
         try:
-            actor_uuid = current_user.get("uuid") or current_user.get("sub")
-            actor_type = "admin" if current_user.get("user_type") == "admin" else "restaurant_admin"
-            if actor_uuid and restaurant_id:
+            if restaurant_id:
                 new_data = {
                     "status": result.get("status"),
                     "party_size": result.get("party_size"),
@@ -721,8 +716,8 @@ async def update_reservation(
                     restaurant_id=int(restaurant_id),
                     previous_data=previous_data,
                     new_data=new_data,
-                    actor_uuid=actor_uuid,
-                    actor_type=actor_type,
+                    user_id=result.get("user_id"),
+                    performed_by=current_user,
                 )
         except Exception as history_error:
             logger.warning(f"Failed to log history for reservation update {reservation_id}: {history_error}")
@@ -807,15 +802,13 @@ async def cancel_reservation_dashboard(
 
         # Log activity history for reservation cancellation
         try:
-            actor_uuid = current_user.get("uuid") or current_user.get("sub")
-            actor_type = "admin" if current_user.get("user_type") == "admin" else "restaurant_admin"
-            if actor_uuid and restaurant_id:
+            if restaurant_id:
                 history_service.log_reservation_cancelled(
                     reservation_id=reservation_id,
                     restaurant_id=int(restaurant_id),
                     previous_status=previous_status or "unknown",
-                    actor_uuid=actor_uuid,
-                    actor_type=actor_type,
+                    user_id=reservation.get("user_id"),
+                    performed_by=current_user,
                 )
         except Exception as history_error:
             logger.warning(f"Failed to log history for reservation cancellation {reservation_id}: {history_error}")

@@ -69,7 +69,9 @@ def get_function_definitions() -> List[Dict[str, Any]]:
         ),
         _definition(
             name="update_reservation",
-            description="Update the latest reservation for a caller using their phone number.",
+            description="Update the latest reservation for a caller. Requires customer_contact (phone number). "
+            "Optional fields to update: party_size (number of guests), datetime_iso (new date/time in ISO format), "
+            "special_request (dietary needs, preferences), notes (additional info).",
             schema=update_res_schema,
         ),
         _definition(

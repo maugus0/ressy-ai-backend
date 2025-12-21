@@ -571,21 +571,18 @@ async def create_order(
 
         # Log activity history for order creation
         try:
-            actor_uuid = current_user.get("uuid") or current_user.get("sub")
-            actor_type = "admin" if current_user.get("user_type") == "admin" else "restaurant_admin"
-            if actor_uuid:
-                history_service.log_order_created(
-                    order_id=result["order_id"],
-                    restaurant_id=int(restaurant_id),
-                    order_data={
-                        "status": result["status"],
-                        "total_amount": result["total_amount"],
-                        "customer_name": result.get("customer_name"),
-                        "order_details": result.get("order_details"),
-                    },
-                    actor_uuid=actor_uuid,
-                    actor_type=actor_type,
-                )
+            history_service.log_order_created(
+                order_id=result["order_id"],
+                restaurant_id=int(restaurant_id),
+                order_data={
+                    "status": result["status"],
+                    "total_amount": result["total_amount"],
+                    "customer_name": result.get("customer_name"),
+                    "order_details": result.get("order_details"),
+                },
+                user_id=result.get("user_id"),
+                performed_by=current_user,
+            )
         except Exception as history_error:
             logger.error(f"Failed to log history for order creation {result['order_id']}: {history_error}")
 
@@ -941,9 +938,7 @@ async def update_order(
 
         # Log activity history for order update
         try:
-            actor_uuid = current_user.get("uuid") or current_user.get("sub")
-            actor_type = "admin" if current_user.get("user_type") == "admin" else "restaurant_admin"
-            if actor_uuid and restaurant_id:
+            if restaurant_id:
                 new_data = {
                     "status": result.get("status"),
                     "total_amount": result.get("total_amount"),
@@ -955,8 +950,8 @@ async def update_order(
                     restaurant_id=int(restaurant_id),
                     previous_data=previous_data,
                     new_data=new_data,
-                    actor_uuid=actor_uuid,
-                    actor_type=actor_type,
+                    user_id=result.get("user_id"),
+                    performed_by=current_user,
                 )
         except Exception as history_error:
             logger.error(f"Failed to log history for order update {order_id}: {history_error}")
@@ -1068,16 +1063,14 @@ async def update_order_status(
 
         # Log activity history for status change
         try:
-            actor_uuid = current_user.get("uuid") or current_user.get("sub")
-            actor_type = "admin" if current_user.get("user_type") == "admin" else "restaurant_admin"
-            if actor_uuid and restaurant_id:
+            if restaurant_id:
                 history_service.log_order_status_changed(
                     order_id=order_id,
                     restaurant_id=int(restaurant_id),
                     old_status=old_status or "unknown",
                     new_status=request.status,
-                    actor_uuid=actor_uuid,
-                    actor_type=actor_type,
+                    user_id=order.get("user_id"),
+                    performed_by=current_user,
                 )
         except Exception as history_error:
             logger.error(f"Failed to log history for order status change {order_id}: {history_error}")
@@ -1185,15 +1178,13 @@ async def cancel_order(
 
         # Log activity history for order cancellation
         try:
-            actor_uuid = current_user.get("uuid") or current_user.get("sub")
-            actor_type = "admin" if current_user.get("user_type") == "admin" else "restaurant_admin"
-            if actor_uuid and restaurant_id:
+            if restaurant_id:
                 history_service.log_order_cancelled(
                     order_id=order_id,
                     restaurant_id=int(restaurant_id),
                     previous_status=previous_status or "unknown",
-                    actor_uuid=actor_uuid,
-                    actor_type=actor_type,
+                    user_id=order.get("user_id"),
+                    performed_by=current_user,
                 )
         except Exception as history_error:
             logger.error(f"Failed to log history for order cancellation {order_id}: {history_error}")
