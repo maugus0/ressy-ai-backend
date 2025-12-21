@@ -179,13 +179,17 @@ class MySQLMenuRepository(MySQLBaseRepository):
             LEFT JOIN Restaurants r ON m.restaurant_id = r.id
             WHERE m.id IN ({placeholders})
         """
-        results = self._execute_query(query, tuple(menu_ids))
+        # Ensure menu_ids are integers for consistent query
+        menu_ids_int = [int(mid) for mid in menu_ids]
+        results = self._execute_query(query, tuple(menu_ids_int))
 
         # Build a dictionary keyed by item ID for O(1) lookup
         items_by_id: Dict[int, Dict] = {}
         for item in results:
             parsed_item = self._parse_suggested_items(item)
-            items_by_id[parsed_item["id"]] = parsed_item
+            # Ensure the ID key is an integer for consistent lookup
+            item_id_from_db = int(parsed_item["id"])
+            items_by_id[item_id_from_db] = parsed_item
 
         return items_by_id
 

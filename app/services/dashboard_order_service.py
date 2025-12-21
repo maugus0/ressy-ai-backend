@@ -108,7 +108,9 @@ class DashboardOrderService:
             raise ValueError(f"Invalid status '{status}'. " f"Must be one of: {', '.join(self.VALID_STATUSES)}")
 
         # Validate order items belong to the restaurant's menu (single batch query)
-        item_ids = [item.get("item_id") for item in order_details if item.get("item_id") is not None]
+        # Ensure item_ids are integers for consistent comparison (defensive conversion)
+        raw_item_ids = [item.get("item_id") for item in order_details if item.get("item_id") is not None]
+        item_ids = [int(iid) for iid in raw_item_ids]  # Ensure all IDs are integers
         if item_ids:
             # Fetch all menu items in a single query to avoid N+1 pattern
             menu_items_by_id = self.menu_repo.get_by_ids(item_ids)
