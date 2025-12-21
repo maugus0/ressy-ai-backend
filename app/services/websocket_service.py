@@ -731,7 +731,9 @@ class WebSocketService:
             state.last_agent_audio_time = asyncio.get_event_loop().time()
             log_agent_audio_start_latency(state, now)
 
-    async def handle_barge_in(self, decoded, twilio_ws, streamsid, last_agent_audio_time, state: Optional[StreamState] = None):
+    async def handle_barge_in(
+        self, decoded, twilio_ws, streamsid, last_agent_audio_time, state: Optional[StreamState] = None
+    ):
         """Clear Twilio audio only if user starts speaking after a gap."""
         if decoded.get("type") == "UserStartedSpeaking":
             # For outbound calls, skip clearing during the greeting grace period
@@ -746,7 +748,9 @@ class WebSocketService:
                 await twilio_ws.send_text(json.dumps(clear_msg))
                 print(f"🧹 Cleared Twilio buffer after {now - (last_agent_audio_time or 0):.2f}s")
 
-    async def handle_text_message(self, decoded, twilio_ws, sts_ws, streamsid, last_agent_audio_time, state: Optional[StreamState] = None):
+    async def handle_text_message(
+        self, decoded, twilio_ws, sts_ws, streamsid, last_agent_audio_time, state: Optional[StreamState] = None
+    ):
         """Handle text messages and barge-in logic."""
         await self.handle_barge_in(decoded, twilio_ws, streamsid, last_agent_audio_time, state)
 
@@ -822,7 +826,9 @@ class WebSocketService:
 
                     self._update_barge_in_state(decoded, state)
                     await self._handle_audio_payload(decoded, state, twilio_ws, streamsid)
-                    await self.handle_text_message(decoded, twilio_ws, sts_ws, streamsid, state.last_agent_audio_time, state)
+                    await self.handle_text_message(
+                        decoded, twilio_ws, sts_ws, streamsid, state.last_agent_audio_time, state
+                    )
                     await self._route_function_calls(decoded, state, transport, sts_ws)
                     self._store_transcript_entry(decoded, call_id, state)
 
