@@ -31,15 +31,11 @@ class MySQLActivityHistoryRepository(MySQLBaseRepository):
         action: str,
         restaurant_id: int,
         user_id: Optional[int] = None,
-        actor_uuid: Optional[str] = None,
-        actor_type: str = "user",
         order_id: Optional[int] = None,
         reservation_id: Optional[int] = None,
         previous_value: Optional[Dict[str, Any]] = None,
         new_value: Optional[Dict[str, Any]] = None,
         change_summary: Optional[str] = None,
-        ip_address: Optional[str] = None,
-        user_agent: Optional[str] = None,
     ) -> int:
         """
         Create a new activity history entry.
@@ -48,35 +44,21 @@ class MySQLActivityHistoryRepository(MySQLBaseRepository):
             activity_type: Type of activity ('order' or 'reservation')
             action: Action performed (created, updated, cancelled, status_changed, etc.)
             restaurant_id: Restaurant ID for RBAC
-            user_id: User ID (for customer users from Users table), None for admin actions
-            actor_uuid: UUID of the actor (admin/staff/system user) who performed the action
-            actor_type: Type of actor ('user', 'admin', 'restaurant_admin', 'system')
+            user_id: User ID (from Users table)
             order_id: Associated order ID (if applicable)
             reservation_id: Associated reservation ID (if applicable)
             previous_value: Previous state before change (as dict)
             new_value: New state after change (as dict)
             change_summary: Human-readable summary of the change
-            ip_address: Request IP address (optional)
-            user_agent: Request user agent (optional)
 
         Returns:
             Created history entry ID
         """
-        # Include actor info in change_summary if actor_uuid is provided
-        final_change_summary = change_summary or ""
-        if actor_uuid or actor_type != "user":
-            actor_info = f" [by: {actor_type}"
-            if actor_uuid:
-                actor_info += f"/{actor_uuid[:8]}..."
-            actor_info += "]"
-            final_change_summary = (final_change_summary + actor_info)[:500]
-
         query = """
             INSERT INTO User_Activity_History
             (user_id, activity_type, order_id, reservation_id, action,
-             previous_value, new_value, change_summary, restaurant_id,
-             ip_address, user_agent, created_at)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
+             previous_value, new_value, change_summary, restaurant_id, created_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
         """
         return self._execute_insert(
             query,
@@ -88,10 +70,8 @@ class MySQLActivityHistoryRepository(MySQLBaseRepository):
                 action,
                 json.dumps(previous_value, cls=DecimalEncoder) if previous_value else None,
                 json.dumps(new_value, cls=DecimalEncoder) if new_value else None,
-                final_change_summary,
+                (change_summary or "")[:500],
                 restaurant_id,
-                ip_address,
-                user_agent,
             ),
         )
 
@@ -124,8 +104,6 @@ class MySQLActivityHistoryRepository(MySQLBaseRepository):
                 h.new_value,
                 h.change_summary,
                 h.restaurant_id,
-                h.ip_address,
-                h.user_agent,
                 h.created_at,
                 u.name as performed_by_name,
                 u.email as performed_by_email
@@ -167,8 +145,6 @@ class MySQLActivityHistoryRepository(MySQLBaseRepository):
                 h.new_value,
                 h.change_summary,
                 h.restaurant_id,
-                h.ip_address,
-                h.user_agent,
                 h.created_at,
                 u.name as performed_by_name,
                 u.email as performed_by_email
@@ -179,70 +155,6 @@ class MySQLActivityHistoryRepository(MySQLBaseRepository):
             LIMIT %s OFFSET %s
         """
         results = self._execute_query(query, (reservation_id, limit, offset))
-        return self._parse_json_fields(results)
-
-    def get_history_by_restaurant(
-        self,
-        restaurant_id: int,
-        activity_type: Optional[str] = None,
-        start_date: Optional[datetime] = None,
-        end_date: Optional[datetime] = None,
-        limit: int = 100,
-        offset: int = 0,
-    ) -> List[Dict[str, Any]]:
-        """
-        Get activity history for a restaurant.
-
-        Args:
-            restaurant_id: Restaurant ID
-            activity_type: Filter by type ('order' or 'reservation')
-            start_date: Filter by start date
-            end_date: Filter by end date
-            limit: Maximum results
-            offset: Pagination offset
-
-        Returns:
-            List of history entries
-        """
-        query = """
-            SELECT
-                h.id,
-                h.user_id,
-                h.activity_type,
-                h.order_id,
-                h.reservation_id,
-                h.action,
-                h.previous_value,
-                h.new_value,
-                h.change_summary,
-                h.restaurant_id,
-                h.ip_address,
-                h.user_agent,
-                h.created_at,
-                u.name as performed_by_name,
-                u.email as performed_by_email
-            FROM User_Activity_History h
-            LEFT JOIN Users u ON h.user_id = u.id
-            WHERE h.restaurant_id = %s
-        """
-        params: List[Any] = [restaurant_id]
-
-        if activity_type:
-            query += " AND h.activity_type = %s"
-            params.append(activity_type)
-
-        if start_date:
-            query += " AND h.created_at >= %s"
-            params.append(start_date)
-
-        if end_date:
-            query += " AND h.created_at <= %s"
-            params.append(end_date)
-
-        query += " ORDER BY h.created_at DESC LIMIT %s OFFSET %s"
-        params.extend([limit, offset])
-
-        results = self._execute_query(query, tuple(params))
         return self._parse_json_fields(results)
 
     def count_history_by_order(self, order_id: int) -> int:
@@ -263,36 +175,6 @@ class MySQLActivityHistoryRepository(MySQLBaseRepository):
             WHERE reservation_id = %s
         """
         results = self._execute_query(query, (reservation_id,))
-        return results[0]["total"] if results else 0
-
-    def count_history_by_restaurant(
-        self,
-        restaurant_id: int,
-        activity_type: Optional[str] = None,
-        start_date: Optional[datetime] = None,
-        end_date: Optional[datetime] = None,
-    ) -> int:
-        """Count history entries for a restaurant."""
-        query = """
-            SELECT COUNT(*) as total
-            FROM User_Activity_History
-            WHERE restaurant_id = %s
-        """
-        params: List[Any] = [restaurant_id]
-
-        if activity_type:
-            query += " AND activity_type = %s"
-            params.append(activity_type)
-
-        if start_date:
-            query += " AND created_at >= %s"
-            params.append(start_date)
-
-        if end_date:
-            query += " AND created_at <= %s"
-            params.append(end_date)
-
-        results = self._execute_query(query, tuple(params))
         return results[0]["total"] if results else 0
 
     def get_order_restaurant_id(self, order_id: int) -> Optional[int]:
@@ -332,7 +214,6 @@ class MySQLActivityHistoryRepository(MySQLBaseRepository):
                     try:
                         row_copy[field] = json.loads(row_copy[field])
                     except (json.JSONDecodeError, TypeError):
-                        # If JSON is invalid or of the wrong type, leave the original string value unchanged.
                         pass
             # Convert datetime to ISO format string
             if isinstance(row_copy.get("created_at"), datetime):

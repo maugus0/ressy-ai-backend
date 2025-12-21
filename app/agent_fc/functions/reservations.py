@@ -40,7 +40,10 @@ class UpdateReservationArgs(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     customer_contact: str
-    changes: Dict[str, Any]
+    party_size: Optional[int] = None
+    datetime_iso: Optional[str] = None
+    special_request: Optional[str] = None
+    notes: Optional[str] = None
 
 
 class LookupReservationArgs(BaseModel):
@@ -182,7 +185,7 @@ async def create_reservation(**kwargs) -> Dict[str, Any]:
                         "date_time": args.datetime_iso,
                         "name": args.customer_name,
                     },
-                    actor_type="system",  # Voice agent is a system actor
+                    user_id=reservation.get("user_id"),
                 )
                 print(f"[INFO] Activity history logged for reservation creation: history_id={history_id}")
             except Exception as history_error:
@@ -297,24 +300,17 @@ async def update_reservation(**kwargs) -> Dict[str, Any]:
             "notes": reservation.get("notes"),
         }
 
-        # Extract allowed update fields
-        changes = dict(args.changes)
-        party_size = changes.get("party_size")
-        special_request = changes.get("special_request")
-        notes = changes.get("notes")
-        status = changes.get("status")
-
-        # Update the reservation
+        # Update the reservation with provided fields
         _reservation_repo.update_reservation(
             reservation_id=reservation_id,
-            party_size=party_size,
-            special_request=special_request,
-            notes=notes,
-            status=status,
+            party_size=args.party_size,
+            special_request=args.special_request,
+            notes=args.notes,
+            status=None,  # Status changes only via dashboard
         )
 
         # If datetime is being changed, update the slot booking
-        new_datetime = changes.get("datetime_iso")
+        new_datetime = args.datetime_iso
         if new_datetime and reservation.get("slot_booking_id"):
             try:
                 parsed_datetime = datetime.fromisoformat(new_datetime.replace("Z", "+00:00"))
@@ -365,7 +361,7 @@ async def update_reservation(**kwargs) -> Dict[str, Any]:
                     restaurant_id=int(restaurant_id),
                     previous_data=previous_data or {},
                     new_data=new_data,
-                    actor_type="system",  # Voice agent is a system actor
+                    user_id=updated.get("user_id"),
                 )
                 print(f"[INFO] Activity history logged for reservation update: history_id={history_id}")
             else:

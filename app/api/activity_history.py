@@ -39,8 +39,6 @@ class HistoryEntryResponse(BaseModel):
     new_value: Optional[Dict[str, Any]] = Field(None, description="New state")
     change_summary: Optional[str] = Field(None, description="Human-readable summary")
     restaurant_id: int = Field(..., description="Restaurant ID")
-    ip_address: Optional[str] = Field(None, description="Client IP address")
-    user_agent: Optional[str] = Field(None, description="Client user agent")
     created_at: str = Field(..., description="Timestamp of the action")
     performed_by_name: Optional[str] = Field(None, description="Name of user who performed action")
     performed_by_email: Optional[str] = Field(None, description="Email of user who performed action")
@@ -62,17 +60,6 @@ class ReservationHistoryResponse(BaseModel):
 
     reservation_id: int = Field(..., description="Reservation ID")
     restaurant_id: int = Field(..., description="Restaurant ID")
-    entries: List[HistoryEntryResponse] = Field(..., description="History entries")
-    total: int = Field(..., description="Total count of entries")
-    limit: int = Field(..., description="Results limit")
-    offset: int = Field(..., description="Pagination offset")
-
-
-class RestaurantHistoryResponse(BaseModel):
-    """Response model for restaurant activity history."""
-
-    restaurant_id: int = Field(..., description="Restaurant ID")
-    activity_type: Optional[str] = Field(None, description="Filtered activity type")
     entries: List[HistoryEntryResponse] = Field(..., description="History entries")
     total: int = Field(..., description="Total count of entries")
     limit: int = Field(..., description="Results limit")
@@ -166,8 +153,6 @@ Each entry includes who made the change, when, and what was changed.
                                 "new_value": {"status": "preparing"},
                                 "change_summary": "Order #123 status changed: pending → preparing",
                                 "restaurant_id": 1,
-                                "ip_address": "192.168.1.1",
-                                "user_agent": "Mozilla/5.0...",
                                 "created_at": "2025-12-14T10:30:00",
                                 "performed_by_name": "John Staff",
                                 "performed_by_email": "john@restaurant.com",
@@ -258,8 +243,6 @@ Each entry includes who made the change, when, and what was changed.
                                 "new_value": {"status": "confirmed"},
                                 "change_summary": "Reservation #456 status changed: pending → confirmed",
                                 "restaurant_id": 1,
-                                "ip_address": "192.168.1.1",
-                                "user_agent": "Mozilla/5.0...",
                                 "created_at": "2025-12-14T11:00:00",
                                 "performed_by_name": "Jane Manager",
                                 "performed_by_email": "jane@restaurant.com",
@@ -301,106 +284,3 @@ async def get_reservation_history(
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error fetching reservation history: {str(e)}")
-
-
-# ---------- GET RESTAURANT HISTORY ----------
-@router.get(
-    "/restaurants/{restaurant_id}/history",
-    summary="Get restaurant activity history",
-    description="""
-Retrieve all activity history for a restaurant.
-
-This endpoint returns all order and reservation changes for the restaurant.
-Use the `activity_type` filter to show only orders or reservations.
-
-**Authentication**: Required (admin or restaurant manager role)
-
-**Authorization**:
-- Admins can view history for any restaurant
-- Restaurant managers can only view history for their own restaurant
-
-**Query Parameters**:
-- `activity_type`: Filter by 'order' or 'reservation' (optional)
-- `start_date`: Filter from this date (ISO format, optional)
-- `end_date`: Filter until this date (ISO format, optional)
-- `limit`: Maximum results (default: 100, max: 500)
-- `offset`: Pagination offset (default: 0)
-""",
-    response_description="Restaurant activity history with pagination",
-    response_model=RestaurantHistoryResponse,
-    responses={
-        200: {
-            "description": "History retrieved successfully",
-            "content": {
-                "application/json": {
-                    "example": {
-                        "restaurant_id": 1,
-                        "activity_type": None,
-                        "entries": [
-                            {
-                                "id": 1,
-                                "user_id": 5,
-                                "activity_type": "order",
-                                "order_id": 123,
-                                "reservation_id": None,
-                                "action": "created",
-                                "previous_value": None,
-                                "new_value": {"status": "pending", "total_amount": 45.99},
-                                "change_summary": "Order #123 created with status: pending",
-                                "restaurant_id": 1,
-                                "ip_address": "192.168.1.1",
-                                "user_agent": "Mozilla/5.0...",
-                                "created_at": "2025-12-14T10:00:00",
-                                "performed_by_name": "System",
-                                "performed_by_email": None,
-                            }
-                        ],
-                        "total": 1,
-                        "limit": 100,
-                        "offset": 0,
-                    }
-                }
-            },
-        },
-        400: {"description": "Invalid filter parameters"},
-        403: {"description": "Access denied - cannot access this restaurant's history"},
-    },
-)
-async def get_restaurant_history(
-    restaurant_id: int,
-    activity_type: Optional[str] = Query(
-        None,
-        description="Filter by activity type ('order' or 'reservation')",
-        json_schema_extra={"example": "order"},
-    ),
-    start_date: Optional[str] = Query(
-        None,
-        description="Filter from this date (ISO format)",
-        json_schema_extra={"example": "2025-12-01T00:00:00"},
-    ),
-    end_date: Optional[str] = Query(
-        None,
-        description="Filter until this date (ISO format)",
-        json_schema_extra={"example": "2025-12-31T23:59:59"},
-    ),
-    limit: int = Query(100, ge=1, le=500, description="Maximum results"),
-    offset: int = Query(0, ge=0, description="Pagination offset"),
-    current_user: dict = Depends(require_role(["admin", "client"])),
-):
-    """Get activity history for a restaurant."""
-    _check_restaurant_access(current_user, restaurant_id)
-
-    try:
-        result = history_service.get_restaurant_history(
-            restaurant_id=restaurant_id,
-            activity_type=activity_type,
-            start_date=start_date,
-            end_date=end_date,
-            limit=limit,
-            offset=offset,
-        )
-        return result
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error fetching restaurant history: {str(e)}")

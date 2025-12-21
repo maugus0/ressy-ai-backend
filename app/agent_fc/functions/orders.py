@@ -172,7 +172,7 @@ async def create_order(**kwargs) -> Dict[str, Any]:
                         "customer_name": args.customer_name,
                         "order_details": _summarize_items(args.items),
                     },
-                    actor_type="system",  # Voice agent is a system actor
+                    user_id=user_id,
                 )
                 print(f"[INFO] Activity history logged for order creation: history_id={history_id}")
             else:
@@ -362,7 +362,7 @@ async def update_order_details(**kwargs) -> Dict[str, Any]:
                     restaurant_id=int(restaurant_id),
                     previous_data=previous_data or {},
                     new_data=new_data,
-                    actor_type="system",  # Voice agent is a system actor
+                    user_id=updated_order.get("user_id"),
                 )
                 print(f"[INFO] Activity history logged for order update: history_id={history_id}")
             else:

@@ -28,13 +28,10 @@ from app.api import (
     faqs,
     menus,
     opentable,
-    order_history,
-    orders,
     reservations,
     restaurants,
     sse,
     testing,
-    users,
 )
 from app.api.websocket import twilio_websocket_handler
 from app.services.sse_service import SSEService
@@ -71,24 +68,12 @@ app = FastAPI(
             "description": "Voice call management endpoints. Track call history, transcripts, and analytics for restaurant voice interactions.",
         },
         {
-            "name": "Users",
-            "description": "⚠️ DEPRECATED: Legacy user management endpoints. Please use Dashboard Users API instead (/api/v1/dashboard/users/).",
-        },
-        {
             "name": "Menus",
             "description": "Menu management endpoints for Admin and Client CRM. Full CRUD, categories, availability, specials, and bulk updates; client endpoints are auto-scoped to the token restaurant.",
         },
         {
             "name": "Restaurants",
             "description": "Restaurant management endpoints for Admin CRM; Client CRM can read/update its own restaurant only.",
-        },
-        {
-            "name": "Orders",
-            "description": "⚠️ DEPRECATED: Legacy order management endpoints. Please use Dashboard Orders API instead (/api/v1/dashboard/orders/).",
-        },
-        {
-            "name": "Order History",
-            "description": "⚠️ DEPRECATED: Legacy order history endpoint. Please use Activity History API instead (/api/v1/dashboard/orders/{order_id}/history).",
         },
         {
             "name": "FAQs",
@@ -157,14 +142,11 @@ app.add_middleware(
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["Authentication"])
 app.include_router(calls.router)
 app.include_router(client_calls.router)
-app.include_router(users.router, prefix="/api/v1/users", tags=["Users"])
 app.include_router(menus.router)
 app.include_router(
     restaurants.router
     # Note: restaurants router declares its own prefix/tags to keep Admin CRM docs localized.
 )
-app.include_router(orders.router, prefix="/api/v1/orders", tags=["Orders"])
-app.include_router(order_history.router, prefix="/api/v1/order-history", tags=["Order History"])
 app.include_router(faqs.router)
 app.include_router(opentable.router, prefix="/api/v1/opentable", tags=["OpenTable"])
 app.include_router(reservations.router, prefix="/api/v1/reservations", tags=["Reservations"])
