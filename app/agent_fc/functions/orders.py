@@ -429,9 +429,7 @@ async def update_order_details(**kwargs) -> Dict[str, Any]:
     if restaurant_id:
         new_status = updated_order.get("status", "")
         event_subtype = (
-            OrderEventSubtype.ORDER_CANCELLED
-            if new_status.lower() == "cancelled"
-            else OrderEventSubtype.ORDER_UPDATED
+            OrderEventSubtype.ORDER_CANCELLED if new_status.lower() == "cancelled" else OrderEventSubtype.ORDER_UPDATED
         )
         asyncio.create_task(
             _emit_order_sse_event(
