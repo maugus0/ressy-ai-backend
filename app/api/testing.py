@@ -129,8 +129,6 @@ def place_outbound_call(
             "toNumber": restaurant.get("twilio_phone_number"),
             # Preserve the "caller number" as the developer's phone for transcript/user mapping.
             "fromNumber": payload.to_number,
-            # Mark as outbound so the handler can apply a greeting grace period (disable barge-in briefly).
-            "callDirection": "outbound",
         }
     )
     stream_url = f"{ws_base}/twilio?{stream_query}"

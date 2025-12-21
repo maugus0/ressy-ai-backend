@@ -13,9 +13,6 @@ class StreamState:
     agent_speaking: bool = False
     barge_in_start_time: Optional[float] = None
     barge_in_reported: bool = False
-    # Outbound call grace period: track call direction and start time
-    call_direction: str = "inbound"  # "inbound" or "outbound"
-    call_start_time: Optional[float] = None
     last_user_text_time: Optional[float] = None
     last_user_started_speaking_time: Optional[float] = None
     last_function_response_time: Optional[float] = None

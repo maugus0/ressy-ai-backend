@@ -558,17 +558,6 @@ class WebSocketService:
             state.agent_speaking = False
             state.barge_in_active = False
         elif event_type == "UserStartedSpeaking":
-            # For outbound calls, skip barge-in during the greeting grace period
-            # This allows the greeting to play even if the callee says "Hello?" when answering
-            if state.call_direction == "outbound" and state.call_start_time is not None:
-                elapsed = time.perf_counter() - state.call_start_time
-                grace_seconds = settings.OUTBOUND_GREETING_GRACE_SECONDS
-                if elapsed < grace_seconds:
-                    print(
-                        f"[Barge-in] Skipping barge-in during outbound greeting grace period "
-                        f"({elapsed:.2f}s < {grace_seconds}s)"
-                    )
-                    return
             state.barge_in_active = True
             state.barge_in_start_time = time.perf_counter()
             state.barge_in_reported = False
@@ -731,16 +720,9 @@ class WebSocketService:
             state.last_agent_audio_time = asyncio.get_event_loop().time()
             log_agent_audio_start_latency(state, now)
 
-    async def handle_barge_in(
-        self, decoded, twilio_ws, streamsid, last_agent_audio_time, state: Optional[StreamState] = None
-    ):
+    async def handle_barge_in(self, decoded, twilio_ws, streamsid, last_agent_audio_time):
         """Clear Twilio audio only if user starts speaking after a gap."""
         if decoded.get("type") == "UserStartedSpeaking":
-            # For outbound calls, skip clearing during the greeting grace period
-            if state and state.call_direction == "outbound" and state.call_start_time is not None:
-                elapsed = time.perf_counter() - state.call_start_time
-                if elapsed < settings.OUTBOUND_GREETING_GRACE_SECONDS:
-                    return
             now = asyncio.get_event_loop().time()
             threshold = float(getattr(settings, "BARGE_IN_CLEAR_SECONDS", 0.5))
             if not last_agent_audio_time or (now - last_agent_audio_time) > threshold:
@@ -748,11 +730,9 @@ class WebSocketService:
                 await twilio_ws.send_text(json.dumps(clear_msg))
                 print(f"🧹 Cleared Twilio buffer after {now - (last_agent_audio_time or 0):.2f}s")
 
-    async def handle_text_message(
-        self, decoded, twilio_ws, sts_ws, streamsid, last_agent_audio_time, state: Optional[StreamState] = None
-    ):
+    async def handle_text_message(self, decoded, twilio_ws, sts_ws, streamsid, last_agent_audio_time):
         """Handle text messages and barge-in logic."""
-        await self.handle_barge_in(decoded, twilio_ws, streamsid, last_agent_audio_time, state)
+        await self.handle_barge_in(decoded, twilio_ws, streamsid, last_agent_audio_time)
 
     async def sts_sender(self, sts_ws, audio_queue, shutdown_event: Optional[asyncio.Event] = None):
         """Send audio chunks to Deepgram STS."""
@@ -826,9 +806,7 @@ class WebSocketService:
 
                     self._update_barge_in_state(decoded, state)
                     await self._handle_audio_payload(decoded, state, twilio_ws, streamsid)
-                    await self.handle_text_message(
-                        decoded, twilio_ws, sts_ws, streamsid, state.last_agent_audio_time, state
-                    )
+                    await self.handle_text_message(decoded, twilio_ws, sts_ws, streamsid, state.last_agent_audio_time)
                     await self._route_function_calls(decoded, state, transport, sts_ws)
                     self._store_transcript_entry(decoded, call_id, state)
 
@@ -930,7 +908,6 @@ class WebSocketService:
         user_id: Optional[str] = None,
         restaurant_twilio_number: Optional[str] = None,
         caller_number: Optional[str] = None,
-        call_direction: str = "inbound",
     ) -> None:
         """Main WebSocket handler for Twilio connections."""
 
@@ -945,9 +922,6 @@ class WebSocketService:
         call_sid_queue: asyncio.Queue = asyncio.Queue()
         shutdown_event = asyncio.Event()
         state = self._create_stream_state()
-        # Track call direction and start time for outbound greeting grace period
-        state.call_direction = call_direction
-        state.call_start_time = time.perf_counter()
         call_id = None
         call_sid: Optional[str] = None
         transport: Optional[Transport] = None
