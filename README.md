@@ -33,7 +33,7 @@ FastAPI backend for a multitenant, function-calling voice agent. It streams Twil
 ressy-ai-backend/
 ├── app/
 │   ├── agent_fc/              # Deepgram function calling framework
-│   │   ├── functions/         # Function implementations (orders, reservations, conversation)
+│   │   ├── functions/         # Function implementations (orders, reservations, conversation, menu)
 │   │   ├── config.py          # Agent FC configuration
 │   │   ├── function_definitions.py  # Function definitions
 │   │   ├── models.py          # Function call models
@@ -201,7 +201,7 @@ DEEPGRAM_AUDIO_INPUT_SAMPLE_RATE=8000
 DEEPGRAM_AGENT_LANGUAGE=en
 DEEPGRAM_LISTEN_MODEL=nova-3
 DEEPGRAM_THINK_MODEL=gpt-4o-mini
-DEEPGRAM_SPEAK_MODEL=aura-2-amalthea-en
+DEEPGRAM_SPEAK_MODEL=aura-2-harmonia-en
 
 # Outbound Calls (Developer Testing)
 # Public base URL reachable by Twilio/ngrok (used for WS streaming and status callbacks)
@@ -965,7 +965,7 @@ curl --location 'http://localhost:5001/api/v1/restaurants/1/stats' \
 
 - **WebSocket Service** (`app/services/websocket_service.py`): Manages real-time audio streaming and function calls
 - **Deepgram Service** (`app/services/deepgram_service.py`): Handles Deepgram STS connections and prompt building
-- **Agent FC** (`app/agent_fc/`): Function calling framework for orders, reservations, and conversation
+- **Agent FC** (`app/agent_fc/`): Function calling framework for orders, reservations, conversation, and menu lookups; all agent function calls expect `restaurant_id`
 - **Repositories** (`app/repositories/mysql_*.py`): Data access layer for MySQL
 - **Services** (`app/services/*.py`): Business logic layer
 - **Call Manager** (`app/services/callmanager/`): Call state management and latency tracking

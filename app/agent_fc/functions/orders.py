@@ -37,7 +37,7 @@ class OrderItem(BaseModel):
 class CreateOrderArgs(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    restaurant_id: Optional[int] = None
+    restaurant_id: int
     customer_name: Optional[str] = None
     customer_contact: Optional[str] = None
     pickup_time_iso: Optional[str] = None
@@ -50,7 +50,7 @@ class LookupOrderArgs(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     customer_contact: str
-    restaurant_id: Optional[int] = None
+    restaurant_id: int
 
 
 class CheckItemsAvailabilityArgs(BaseModel):
@@ -65,6 +65,7 @@ class UpdateOrderDetailsArgs(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     customer_contact: str
+    restaurant_id: int
     items: List[OrderItem]
     customization: Dict[str, Any] = Field(default_factory=dict)
     total_amount: Optional[float] = None
@@ -121,7 +122,7 @@ def _summarize_items(items: List[OrderItem]) -> List[Dict[str, Any]]:
 
 
 def _calculate_total(items: List[OrderItem]) -> float:
-    """Compute total from item prices * quantities; treats missing prices as 0."""
+    """Compute total from item prices * quantities; treats missing prices as 0 after any lookups."""
     total = 0.0
     for item in items:
         price = item.price if item.price is not None else 0.0
@@ -133,8 +134,56 @@ def _calculate_total(items: List[OrderItem]) -> float:
     return round(total, 2)
 
 
+async def _populate_missing_prices(restaurant_id: int, items: List[OrderItem]) -> None:
+    """Fill in missing item prices by looking up the restaurant menu."""
+    missing_prices = [item for item in items if item.price is None]
+    if not missing_prices:
+        return
+
+    try:
+        menu_items = await _run_service_call(_menu_repo.get_available_items_by_restaurant, restaurant_id)
+    except Exception as exc:  # noqa: BLE001 - defensive for agent calls
+        print(f"[WARN] Unable to fetch menu for price lookup restaurant_id={restaurant_id}: {exc}")
+        return
+
+    price_by_id: Dict[int, Any] = {}
+    price_by_name: Dict[str, Any] = {}
+    for menu_item in menu_items or []:
+        try:
+            item_id = int(menu_item.get("id"))
+            price_by_id[item_id] = menu_item.get("price")
+        except (TypeError, ValueError, AttributeError):
+            # Skip malformed menu rows; price lookup will continue by name if available.
+            pass
+        name = menu_item.get("item_name") or menu_item.get("name")
+        if name:
+            price_by_name[str(name).lower()] = menu_item.get("price")
+
+    for item in items:
+        if item.price is not None:
+            continue
+
+        lookup_price = None
+        if item.item_id is not None:
+            try:
+                lookup_price = price_by_id.get(int(item.item_id))
+            except (TypeError, ValueError):
+                lookup_price = None
+        if lookup_price is None and item.name:
+            lookup_price = price_by_name.get(item.name.lower())
+
+        if lookup_price is None:
+            continue
+
+        try:
+            item.price = float(lookup_price)
+        except (TypeError, ValueError):
+            continue
+
+
 async def create_order(**kwargs) -> Dict[str, Any]:
     args = CreateOrderArgs.model_validate(kwargs)
+    await _populate_missing_prices(args.restaurant_id, args.items)
     print(f"[INFO] create_order invoked customer_contact={args.customer_contact} items={len(args.items)}")
 
     def _create():
@@ -246,11 +295,11 @@ async def lookup_order(**kwargs) -> Dict[str, Any]:
         user_id = _user_repo.get_user_id_by_phone_or_email(args.customer_contact, None)
         if not user_id:
             return None
-        return _order_repo.get_latest_order_by_user(user_id)
+        return _order_repo.get_latest_order_by_user(user_id, args.restaurant_id)
 
     order = await _run_service_call(_lookup)
     if not order:
-        return {"status": "NOT_FOUND"}
+        return {"status": "NOT_FOUND", "message": "No order found for this contact at this restaurant."}
     return {"status": "FOUND", "order": order}
 
 
@@ -337,13 +386,14 @@ def _is_within_update_window(created_at: Any) -> bool:
 
 async def update_order_details(**kwargs) -> Dict[str, Any]:
     args = UpdateOrderDetailsArgs.model_validate(kwargs)
+    await _populate_missing_prices(args.restaurant_id, args.items)
     print(f"[INFO] update_order_details invoked customer_contact={args.customer_contact}")
 
     def _update():
         user_id = _user_repo.get_user_id_by_phone_or_email(args.customer_contact, None)
         if not user_id:
             return None, None, None, None
-        order = _order_repo.get_latest_order_by_user(user_id)
+        order = _order_repo.get_latest_order_by_user(user_id, args.restaurant_id)
         if not order:
             return None, None, None, None
         order_id = order.get("id")
@@ -376,6 +426,7 @@ async def update_order_details(**kwargs) -> Dict[str, Any]:
         return updated, previous_data, order.get("restaurant_id"), order
 
     result, previous_data, restaurant_id, original_order = await _run_service_call(_update)
+    restaurant_id = restaurant_id or args.restaurant_id
 
     # Handle update window expired
     if result == "UPDATE_WINDOW_EXPIRED":
@@ -390,7 +441,7 @@ async def update_order_details(**kwargs) -> Dict[str, Any]:
         }
 
     if not result:
-        return {"status": "NOT_FOUND"}
+        return {"status": "NOT_FOUND", "message": "No order found to update for this restaurant."}
 
     updated_order = result
 

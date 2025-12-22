@@ -36,8 +36,8 @@ class MySQLOrderRepository(MySQLBaseRepository):
         )
         return order_id
 
-    def get_latest_order_by_user(self, user_id: int) -> Dict:
-        """Fetch the most recent order for a user."""
+    def get_latest_order_by_user(self, user_id: int, restaurant_id: Optional[int] = None) -> Dict:
+        """Fetch the most recent order for a user, optionally scoped to a restaurant."""
         query = """
             SELECT
                 id,
@@ -51,10 +51,14 @@ class MySQLOrderRepository(MySQLBaseRepository):
                 updated_at
             FROM Orders
             WHERE user_id = %s AND deleted_at IS NULL
-            ORDER BY created_at DESC
-            LIMIT 1
         """
-        results = self._execute_query(query, (user_id,))
+        params: List[Any] = [user_id]
+        if restaurant_id is not None:
+            query += " AND restaurant_id = %s"
+            params.append(restaurant_id)
+
+        query += " ORDER BY created_at DESC LIMIT 1"
+        results = self._execute_query(query, tuple(params))
         return results[0] if results else {}
 
     def get_order_by_id(self, order_id: int) -> Dict:

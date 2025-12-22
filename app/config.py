@@ -37,9 +37,9 @@ class Settings:
     DEEPGRAM_THINK_PROVIDER_TYPE = os.getenv("DEEPGRAM_THINK_PROVIDER_TYPE", "open_ai")
     DEEPGRAM_THINK_MODEL = os.getenv("DEEPGRAM_THINK_MODEL", "gpt-4o-mini")
     DEEPGRAM_THINK_TEMPERATURE = float(os.getenv("DEEPGRAM_THINK_TEMPERATURE", "0.15"))
-    DEEPGRAM_SPEAK_MODEL = os.getenv("DEEPGRAM_SPEAK_MODEL", "aura-2-amalthea-en")
+    DEEPGRAM_SPEAK_MODEL = os.getenv("DEEPGRAM_SPEAK_MODEL", "aura-2-harmonia-en")
     DEEPGRAM_AGENT_GREETING = os.getenv(
-        "DEEPGRAM_AGENT_GREETING", "Hi! Thank you for calling {RESTAURANT_NAME}. How may I help you today?"
+        "DEEPGRAM_AGENT_GREETING", "Hi! Thank you for calling {RESTAURANT_NAME}. How can I help you today?"
     )
     RESTAURANT_TIMEZONE = os.getenv("RESTAURANT_TIMEZONE", "America/Vancouver")
 
@@ -56,7 +56,7 @@ class Settings:
 
     # Barge-in behavior
     # Minimum gap in seconds after last agent audio chunk before clearing Twilio buffer when user starts speaking
-    BARGE_IN_CLEAR_SECONDS = float(os.getenv("BARGE_IN_CLEAR_SECONDS", "0.5"))
+    BARGE_IN_CLEAR_SECONDS = float(os.getenv("BARGE_IN_CLEAR_SECONDS", "0.2"))
 
     # Cost settings (USD)
     #
