@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
@@ -16,11 +17,36 @@ from app.repositories.mysql_user_restaurant_metadata_repo import (
     MySQLUserRestaurantMetadataRepository,
 )
 from app.services.activity_history_service import ActivityHistoryService
+from app.services.sse_service import ReservationEventSubtype, SSEService
+
+logger = logging.getLogger(__name__)
 
 _reservation_repo = MySQLReservationRepository()
 _user_repo = MySQLUserRepository()
 _metadata_repo = MySQLUserRestaurantMetadataRepository()
 _history_service = ActivityHistoryService()
+_sse_service = SSEService()
+
+
+async def _emit_reservation_sse_event(
+    restaurant_id: int,
+    reservation_id: int,
+    subtype: ReservationEventSubtype,
+    data: Dict[str, Any],
+) -> None:
+    """
+    Background task to emit SSE reservation events.
+    Logs errors but does not raise exceptions to avoid affecting other operations.
+    """
+    try:
+        await _sse_service.emit_reservation_event(
+            restaurant_id=restaurant_id,
+            reservation_id=reservation_id,
+            subtype=subtype,
+            data=data,
+        )
+    except Exception as sse_error:
+        logger.error(f"Failed to emit SSE event for reservation {reservation_id} ({subtype.value}): {sse_error}")
 
 
 class CreateReservationArgs(BaseModel):
@@ -196,6 +222,23 @@ async def create_reservation(**kwargs) -> Dict[str, Any]:
                 traceback.print_exc()
 
         await _run_service_call(_log_history)
+
+        # Emit SSE event for new reservation (background task)
+        asyncio.create_task(
+            _emit_reservation_sse_event(
+                restaurant_id=int(args.restaurant_id),
+                reservation_id=reservation["reservation_id"],
+                subtype=ReservationEventSubtype.NEW_RESERVATION,
+                data={
+                    "reservation_id": reservation["reservation_id"],
+                    "confirmation_number": reservation.get("confirmation_number"),
+                    "status": "pending",
+                    "date_time": args.datetime_iso,
+                    "party_size": args.party_size,
+                    "name": args.customer_name,
+                },
+            )
+        )
 
         return {
             "status": "SUBMITTED",
@@ -375,6 +418,28 @@ async def update_reservation(**kwargs) -> Dict[str, Any]:
             traceback.print_exc()
 
     await _run_service_call(_log_history)
+
+    # Emit SSE event for reservation update (background task)
+    if restaurant_id:
+        new_status = updated.get("status", "")
+        event_subtype = (
+            ReservationEventSubtype.RESERVATION_CANCELLED
+            if new_status.lower() == "cancelled"
+            else ReservationEventSubtype.RESERVATION_UPDATED
+        )
+        asyncio.create_task(
+            _emit_reservation_sse_event(
+                restaurant_id=int(restaurant_id),
+                reservation_id=updated.get("id"),
+                subtype=event_subtype,
+                data={
+                    "reservation_id": updated.get("id"),
+                    "status": new_status,
+                    "date_time": updated.get("date_time"),
+                    "party_size": updated.get("party_size"),
+                },
+            )
+        )
 
     return {"status": "UPDATED", "reservation": updated}
 
