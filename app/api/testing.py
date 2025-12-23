@@ -12,6 +12,9 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from app.config import settings
 from app.middleware.auth_middleware import get_current_admin_user
 from app.services.restaurant_service import RestaurantService
+from app.utils.logging_config import get_logger
+
+logger = get_logger(__name__)
 
 
 class OutboundCallRequest(BaseModel):
@@ -65,7 +68,7 @@ async def twilio_status_callback(request: Request, secret: str | None = Query(No
     form = await request.form()
     payload = dict(form)
     # Log the callback for debugging (contains CallStatus, CallSid, ErrorCode, etc.)
-    print(f"[Twilio StatusCallback] {payload}")
+    logger.info("[Twilio StatusCallback] %s", payload)
     return {"ok": True}
 
 

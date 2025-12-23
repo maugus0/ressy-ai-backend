@@ -109,7 +109,7 @@ async def create_reservation(**kwargs) -> Dict[str, Any]:
     3. Return reservation details with pending status (restaurant will confirm)
     """
     args = CreateReservationArgs.model_validate(kwargs)
-    print(f"[INFO] create_reservation invoked restaurant_id={args.restaurant_id} party_size={args.party_size}")
+    logger.info("create_reservation invoked restaurant_id=%s party_size=%s", args.restaurant_id, args.party_size)
 
     def _create():
         # 1. Create or update user with customer details
@@ -134,7 +134,7 @@ async def create_reservation(**kwargs) -> Dict[str, Any]:
             )
         except Exception as meta_err:
             # Log but don't fail reservation creation if metadata mapping fails
-            print(f"[WARN] Failed to create user-restaurant metadata: {meta_err}")
+            logger.warning("Failed to create user-restaurant metadata: %s", meta_err)
 
         # 2. Parse the datetime
         try:
@@ -201,8 +201,10 @@ async def create_reservation(**kwargs) -> Dict[str, Any]:
         # Log activity history for voice agent reservation creation (run in thread since it's a DB operation)
         def _log_history():
             try:
-                print(
-                    f"[DEBUG] Logging reservation creation history: reservation_id={reservation['reservation_id']}, restaurant_id={args.restaurant_id}"
+                logger.debug(
+                    "[DEBUG] Logging reservation creation history: reservation_id=%s, restaurant_id=%s",
+                    reservation["reservation_id"],
+                    args.restaurant_id,
                 )
                 history_id = _history_service.log_reservation_created(
                     reservation_id=reservation["reservation_id"],
@@ -215,12 +217,11 @@ async def create_reservation(**kwargs) -> Dict[str, Any]:
                     },
                     user_id=reservation.get("user_id"),
                 )
-                print(f"[INFO] Activity history logged for reservation creation: history_id={history_id}")
+                logger.info("Activity history logged for reservation creation: history_id=%s", history_id)
             except Exception as history_error:
-                print(f"[ERROR] Failed to log history for voice agent reservation creation: {history_error}")
-                import traceback
-
-                traceback.print_exc()
+                logger.exception(
+                    "[ERROR] Failed to log history for voice agent reservation creation: %s", history_error
+                )
 
         await _run_service_call(_log_history)
 
@@ -247,7 +248,7 @@ async def create_reservation(**kwargs) -> Dict[str, Any]:
             "reservation": reservation,
         }
     except Exception as exc:
-        print(f"[ERROR] create_reservation failed: {exc}")
+        logger.exception("[ERROR] create_reservation failed: %s", exc)
         return {
             "status": "FAILED",
             "message": "Unable to create reservation. Please try again or contact the restaurant directly.",
@@ -261,7 +262,7 @@ async def lookup_reservation(**kwargs) -> Dict[str, Any]:
     Similar to lookup_order but for reservations.
     """
     args = LookupReservationArgs.model_validate(kwargs)
-    print(f"[INFO] lookup_reservation invoked customer_contact={args.customer_contact}")
+    logger.info("lookup_reservation invoked customer_contact=%s", args.customer_contact)
 
     def _lookup():
         # Find user by phone number
@@ -320,7 +321,7 @@ async def update_reservation(**kwargs) -> Dict[str, Any]:
     Update the latest reservation for a caller using their phone number.
     """
     args = UpdateReservationArgs.model_validate(kwargs)
-    print(f"[INFO] update_reservation invoked customer_contact={args.customer_contact}")
+    logger.info("update_reservation invoked customer_contact=%s", args.customer_contact)
 
     def _update():
         user_id = _user_repo.get_user_id_by_phone_or_email(args.customer_contact, None)
@@ -398,8 +399,10 @@ async def update_reservation(**kwargs) -> Dict[str, Any]:
     def _log_history():
         try:
             if restaurant_id:
-                print(
-                    f"[DEBUG] Logging reservation update history: reservation_id={updated.get('id')}, restaurant_id={restaurant_id}"
+                logger.debug(
+                    "[DEBUG] Logging reservation update history: reservation_id=%s, restaurant_id=%s",
+                    updated.get("id"),
+                    restaurant_id,
                 )
                 new_data = {
                     "status": updated.get("status"),
@@ -415,14 +418,11 @@ async def update_reservation(**kwargs) -> Dict[str, Any]:
                     new_data=new_data,
                     user_id=updated.get("user_id"),
                 )
-                print(f"[INFO] Activity history logged for reservation update: history_id={history_id}")
+                logger.info("Activity history logged for reservation update: history_id=%s", history_id)
             else:
-                print(f"[WARN] Cannot log history - restaurant_id is None for reservation {updated.get('id')}")
+                logger.warning("Cannot log history - restaurant_id is None for reservation %s", updated.get("id"))
         except Exception as history_error:
-            print(f"[ERROR] Failed to log history for voice agent reservation update: {history_error}")
-            import traceback
-
-            traceback.print_exc()
+            logger.exception("[ERROR] Failed to log history for voice agent reservation update: %s", history_error)
 
     await _run_service_call(_log_history)
 
@@ -459,9 +459,10 @@ async def check_reservation_availability(**kwargs) -> Dict[str, Any]:
     if the restaurant can accommodate the party.
     """
     args = CheckAvailabilityArgs.model_validate(kwargs)
-    print(
-        f"[INFO] check_reservation_availability invoked restaurant_id={args.restaurant_id} "
-        f"party_size={args.party_size}"
+    logger.info(
+        "check_reservation_availability invoked restaurant_id=%s party_size=%s",
+        args.restaurant_id,
+        args.party_size,
     )
 
     def _check():
@@ -514,7 +515,7 @@ async def check_reservation_availability(**kwargs) -> Dict[str, Any]:
                 "locked_slot_count": len(locked_slots),
             }
         except Exception as exc:
-            print(f"[ERROR] check_reservation_availability failed: {exc}")
+            logger.exception("[ERROR] check_reservation_availability failed: %s", exc)
             return {
                 "restaurant_id": args.restaurant_id,
                 "party_size": args.party_size,

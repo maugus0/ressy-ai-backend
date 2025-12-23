@@ -6,10 +6,13 @@ import json
 from typing import Any, Dict, List, Optional, Tuple
 
 from app.repositories.mysql_base import MySQLBaseRepository
+from app.utils.logging_config import get_logger
 
 
 class MySQLMenuRepository(MySQLBaseRepository):
     """Repository for menu data access in MySQL."""
+
+    logger = get_logger(__name__)
 
     def _parse_suggested_items(self, item: Dict) -> Dict:
         """Parse suggested_items JSON field."""
@@ -198,9 +201,11 @@ class MySQLMenuRepository(MySQLBaseRepository):
                 item_id_from_db = int(parsed_item["id"])
             except (TypeError, ValueError, KeyError) as exc:
                 # Log the error but don't fail the entire query - skip this item
-                print(
-                    f"[WARN] Skipping menu item with invalid ID: {parsed_item.get('id', 'missing')} "
-                    f"(type: {type(parsed_item.get('id')).__name__}). Error: {exc}"
+                self.logger.warning(
+                    "Skipping menu item with invalid ID: %s (type: %s). Error: %s",
+                    parsed_item.get("id", "missing"),
+                    type(parsed_item.get("id")).__name__,
+                    exc,
                 )
                 continue
             items_by_id[item_id_from_db] = parsed_item

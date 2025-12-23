@@ -41,7 +41,6 @@ class FunctionRegistry:
             handler=handler,
             arg_model=arg_model,
         )
-        print(f"Registered function: {registered_function}")
         self._functions[name] = registered_function
 
     def get(self, name: str) -> RegisteredFunction:

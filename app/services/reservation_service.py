@@ -12,6 +12,7 @@ from app.repositories.mysql_user_repo import MySQLUserRepository
 from app.repositories.mysql_user_restaurant_metadata_repo import (
     MySQLUserRestaurantMetadataRepository,
 )
+from app.utils.logging_config import get_logger
 
 
 class ReservationService:
@@ -23,6 +24,7 @@ class ReservationService:
     SLOT_INTERVAL_MINUTES = 15  # Interval between slots
 
     def __init__(self):
+        self.logger = get_logger(__name__)
         self.reservation_repo = MySQLReservationRepository()
         self.restaurant_repo = MySQLRestaurantRepository()
         self.user_repo = MySQLUserRepository()
@@ -331,7 +333,7 @@ class ReservationService:
             )
         except Exception as meta_err:
             # Log but don't fail reservation creation if metadata mapping fails
-            print(f"[WARN] Failed to create user-restaurant metadata: {meta_err}")
+            self.logger.warning("Failed to create user-restaurant metadata: %s", meta_err)
 
         # Generate confirmation number
         confirmation_number = f"INH-{restaurant_id}-{uuid.uuid4().hex[:8].upper()}"
@@ -573,7 +575,7 @@ class ReservationService:
             )
         except Exception as meta_err:
             # Log but don't fail reservation creation if metadata mapping fails
-            print(f"[WARN] Failed to create user-restaurant metadata: {meta_err}")
+            self.logger.warning("Failed to create user-restaurant metadata: %s", meta_err)
 
         # Generate confirmation number
         confirmation_number = f"INH-{restaurant_id}-{uuid.uuid4().hex[:8].upper()}"

@@ -12,7 +12,7 @@ class Settings:
 
     call_timeout_ms: int = 2000
     max_retries: int = 1
-    log_level: str = "DEBUG"
+    log_level: str = "INFO"
 
 
 def _get_int_env(name: str, default: int) -> int:

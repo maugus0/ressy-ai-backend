@@ -10,6 +10,9 @@ from pydantic import BaseModel, ConfigDict
 
 from app.agent_fc.responses import AgentFunctionResult, AgentSideEffect
 from app.services.sse_service import SSEService
+from app.utils.logging_config import get_logger
+
+logger = get_logger(__name__)
 
 FILLER_LIBRARY = {
     "menu_lookup": [
@@ -101,14 +104,14 @@ async def _emit_escalation_sse_event(
             data={"urgency": urgency},
         )
     except Exception as exc:  # noqa: BLE001 - defensive
-        print(f"[WARN] Failed to emit escalation SSE event: {exc}")
+        logger.warning("Failed to emit escalation SSE event: %s", exc)
 
 
 async def agent_filler(**kwargs) -> AgentFunctionResult:
     args = AgentFillerArgs.model_validate(kwargs)
     options = FILLER_LIBRARY.get(args.filler_type) or FILLER_LIBRARY["general"]
     message = _pick_message(options)
-    print(f"[INFO] agent_filler invoked filler_type={args.filler_type}")
+    logger.info("agent_filler invoked filler_type=%s", args.filler_type)
     return AgentFunctionResult(
         content={"status": "QUEUED", "filler_type": args.filler_type},
         side_effects=[
@@ -120,7 +123,7 @@ async def agent_filler(**kwargs) -> AgentFunctionResult:
 async def end_call(**kwargs) -> AgentFunctionResult:
     args = EndCallArgs.model_validate(kwargs)
     message = FAREWELL_LIBRARY.get(args.farewell_style, FAREWELL_LIBRARY["general"])
-    print(f"[INFO] end_call invoked style={args.farewell_style}")
+    logger.info("end_call invoked style=%s", args.farewell_style)
     return AgentFunctionResult(
         content={"status": "CLOSING", "farewell_style": args.farewell_style},
         side_effects=[
@@ -132,7 +135,7 @@ async def end_call(**kwargs) -> AgentFunctionResult:
 
 async def escalate_to_human(**kwargs) -> AgentFunctionResult:
     args = EscalateToHumanArgs.model_validate(kwargs)
-    print(f"[INFO] escalate_to_human invoked urgency={args.urgency} reason={args.reason}")
+    logger.info("escalate_to_human invoked urgency=%s reason=%s", args.urgency, args.reason)
     message = "I’m looping in a team member to assist you now. You'll receive a call back from them shortly. Thank you for your patience."
     content = {
         "status": "HUMAN_ESCALATION_REQUESTED",

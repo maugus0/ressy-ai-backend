@@ -10,6 +10,8 @@ import mysql.connector
 from dotenv import load_dotenv
 from mysql.connector import Error
 
+from app.utils.logging_config import get_logger
+
 # Load environment variables from .env file
 # TODO: Investigate import order - this shouldn't be needed if config.py loads first
 load_dotenv()
@@ -19,6 +21,7 @@ class MySQLBaseRepository:
     """Base repository for MySQL database operations."""
 
     def __init__(self):
+        self.logger = get_logger(__name__)
         self.connection = None
         self._connect()
 
@@ -57,7 +60,7 @@ class MySQLBaseRepository:
             )
         except Error as e:
             error_msg = f"Error connecting to MySQL: {e}"
-            print(error_msg)
+            self.logger.error(error_msg)
             # In test mode, allow connection to fail without raising
             if os.getenv("ALLOW_DB_FAILURE", "false").lower() == "true":
                 self.connection = None
@@ -68,11 +71,11 @@ class MySQLBaseRepository:
         """Ensure database connection is active, reconnect if needed."""
         try:
             if not self.connection or not self.connection.is_connected():
-                print("[INFO] MySQL connection closed, reconnecting...")
+                self.logger.info("MySQL connection closed, reconnecting...")
                 self._connect()
         except (AttributeError, Error):
             # Connection object exists but is in invalid state
-            print("[INFO] MySQL connection in invalid state, reconnecting...")
+            self.logger.info("MySQL connection in invalid state, reconnecting...")
             self.connection = None
             self._connect()
 
@@ -86,7 +89,7 @@ class MySQLBaseRepository:
             results = cursor.fetchall()
             return results
         except Error as e:
-            print(f"Error executing query: {e}")
+            self.logger.exception("Error executing query: %s", e)
             raise
         finally:
             if cursor:
@@ -107,7 +110,7 @@ class MySQLBaseRepository:
             return last_id
         except Error as e:
             self.connection.rollback()
-            print(f"Error executing insert: {e}")
+            self.logger.exception("Error executing insert: %s", e)
             raise
         finally:
             if cursor:
@@ -128,7 +131,7 @@ class MySQLBaseRepository:
             return affected
         except Error as e:
             self.connection.rollback()
-            print(f"Error executing update: {e}")
+            self.logger.exception("Error executing update: %s", e)
             raise
         finally:
             if cursor:
