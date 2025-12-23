@@ -8,8 +8,10 @@ from typing import Any, Dict, List, Optional, Tuple
 from pydantic import BaseModel, ConfigDict, model_validator
 
 from app.repositories.mysql_menu_repo import MySQLMenuRepository
+from app.utils.logging_config import get_logger
 
 _menu_repo = MySQLMenuRepository()
+logger = get_logger(__name__)
 
 
 class ListMenuArgs(BaseModel):
@@ -65,7 +67,7 @@ async def list_menu_items(**kwargs) -> Dict[str, Any]:
     Return the full available menu for a restaurant with categories and item names.
     """
     args = ListMenuArgs.model_validate(kwargs)
-    print(f"[INFO] list_menu_items invoked restaurant_id={args.restaurant_id}")
+    logger.info("list_menu_items invoked restaurant_id=%s", args.restaurant_id)
 
     def _fetch():
         return _menu_repo.get_available_items_by_restaurant(args.restaurant_id)
@@ -73,7 +75,7 @@ async def list_menu_items(**kwargs) -> Dict[str, Any]:
     try:
         items = await _run_repo_call(_fetch)
     except Exception as exc:  # noqa: BLE001 - defensive for agent calls
-        print(f"[ERROR] list_menu_items failed restaurant_id={args.restaurant_id}: {exc}")
+        logger.exception("[ERROR] list_menu_items failed restaurant_id=%s: %s", args.restaurant_id, exc)
         return {
             "status": "ERROR",
             "restaurant_id": args.restaurant_id,
@@ -96,9 +98,11 @@ async def get_menu_item_details(**kwargs) -> Dict[str, Any]:
     """
     args = GetMenuItemDetailsArgs.model_validate(kwargs)
     item: Optional[Dict[str, Any]] = None
-    print(
-        f"[INFO] get_menu_item_details invoked restaurant_id={args.restaurant_id} "
-        f"item_id={args.item_id} search_term={args.search_term}"
+    logger.info(
+        "get_menu_item_details invoked restaurant_id=%s item_id=%s search_term=%s",
+        args.restaurant_id,
+        args.item_id,
+        args.search_term,
     )
 
     def _fetch_by_id():
@@ -142,9 +146,12 @@ async def get_menu_item_details(**kwargs) -> Dict[str, Any]:
                 ],
             }
     except Exception as exc:
-        print(
-            f"[ERROR] get_menu_item_details failed restaurant_id={args.restaurant_id} "
-            f"item_id={args.item_id} search_term={args.search_term}: {exc}"
+        logger.exception(
+            "[ERROR] get_menu_item_details failed restaurant_id=%s item_id=%s search_term=%s: %s",
+            args.restaurant_id,
+            args.item_id,
+            args.search_term,
+            exc,
         )
         return {
             "status": "ERROR",

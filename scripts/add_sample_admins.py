@@ -4,12 +4,23 @@ Create sample Ressy administrators and restaurant administrators for auth testin
 
 import json
 import os
+import sys
 import uuid
+from pathlib import Path
 
 import bcrypt
 import mysql.connector
 from dotenv import load_dotenv
 from mysql.connector import Error
+
+ROOT_DIR = Path(__file__).resolve().parents[1]
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
+
+from app.utils.logging_config import get_logger, setup_logging  # noqa: E402
+
+setup_logging()
+logger = get_logger(__name__)
 
 # Load environment variables
 load_dotenv()
@@ -25,7 +36,7 @@ def get_connection():
             database=os.getenv("DB_NAME", "ressy"),
         )
     except Error as exc:
-        print(f"Error connecting to MySQL: {exc}")
+        logger.error("Error connecting to MySQL: %s", exc)
         raise
 
 
@@ -54,7 +65,7 @@ def ensure_permissions_and_role(connection, role_name: str, routes: list[str]) -
     role_id = cursor.lastrowid
     connection.commit()
     cursor.close()
-    print(f"Created role '{role_name}' with permission_id={permission_id}")
+    logger.info("Created role '%s' with permission_id=%s", role_name, permission_id)
     return role_id
 
 
@@ -94,7 +105,7 @@ def ensure_sample_restaurant(connection) -> int:
     restaurant_id = cursor.lastrowid
     connection.commit()
     cursor.close()
-    print(f"Created sample restaurant with id={restaurant_id}")
+    logger.info("Created sample restaurant with id=%s", restaurant_id)
     return restaurant_id
 
 
@@ -107,7 +118,7 @@ def ensure_admin(connection, email: str, password: str, role_id: int):
     cursor.execute("SELECT uuid FROM Ressy_Administrator WHERE email = %s", (email,))
     row = cursor.fetchone()
     if row:
-        print(f"Admin already exists with email={email}")
+        logger.info("Admin already exists with email=%s", email)
         cursor.close()
         return row[0]
 
@@ -121,7 +132,7 @@ def ensure_admin(connection, email: str, password: str, role_id: int):
     )
     connection.commit()
     cursor.close()
-    print(f"Created admin user email={email} uuid={user_uuid}")
+    logger.info("Created admin user email=%s uuid=%s", email, user_uuid)
     return user_uuid
 
 
@@ -133,7 +144,7 @@ def ensure_restaurant_admin(connection, email: str, password: str, restaurant_id
     )
     row = cursor.fetchone()
     if row:
-        print(f"Restaurant admin already exists rest_id={restaurant_id} email={email}")
+        logger.info("Restaurant admin already exists rest_id=%s email=%s", restaurant_id, email)
         cursor.close()
         return row[0]
 
@@ -150,7 +161,7 @@ def ensure_restaurant_admin(connection, email: str, password: str, restaurant_id
     )
     connection.commit()
     cursor.close()
-    print(f"Created restaurant admin email={email} uuid={user_uuid} rest_id={restaurant_id}")
+    logger.info("Created restaurant admin email=%s uuid=%s rest_id=%s", email, user_uuid, restaurant_id)
     return user_uuid
 
 
@@ -172,17 +183,19 @@ def main():
             connection, rest_admin_email, rest_admin_password, restaurant_id, manager_role_id
         )
 
-        print("\nSample admin users created/verified:")
-        print(f"  Admin: {admin_email} / {admin_password} (uuid: {admin_uuid})")
-        print(f"  Restaurant Admin: {rest_admin_email} / {rest_admin_password} (uuid: {restaurant_admin_uuid})")
-        print(f"  Restaurant ID: {restaurant_id}")
+        logger.info("Sample admin users created/verified:")
+        logger.info("  Admin: %s / %s (uuid: %s)", admin_email, admin_password, admin_uuid)
+        logger.info(
+            "  Restaurant Admin: %s / %s (uuid: %s)", rest_admin_email, rest_admin_password, restaurant_admin_uuid
+        )
+        logger.info("  Restaurant ID: %s", restaurant_id)
     except Error as exc:
-        print(f"Error creating sample admins: {exc}")
+        logger.error("Error creating sample admins: %s", exc)
         raise
     finally:
         if connection.is_connected():
             connection.close()
-            print("Database connection closed")
+            logger.info("Database connection closed")
 
 
 if __name__ == "__main__":

@@ -3,10 +3,21 @@ Script to add sample data (restaurant, menu items, FAQs).
 """
 import json
 import os
+import sys
+from pathlib import Path
 
 import mysql.connector
 from dotenv import load_dotenv
 from mysql.connector import Error
+
+ROOT_DIR = Path(__file__).resolve().parents[1]
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
+
+from app.utils.logging_config import get_logger, setup_logging  # noqa: E402
+
+setup_logging()
+logger = get_logger(__name__)
 
 # Load environment variables
 load_dotenv()
@@ -24,7 +35,7 @@ def get_connection():
         )
         return connection
     except Error as e:
-        print(f"Error connecting to MySQL: {e}")
+        logger.error("Error connecting to MySQL: %s", e)
         raise
 
 
@@ -39,7 +50,7 @@ def add_sample_restaurant(connection):
 
         if result:
             restaurant_id = result[0]
-            print(f"Restaurant already exists with id: {restaurant_id}")
+            logger.info("Restaurant already exists with id: %s", restaurant_id)
         else:
             query = """
                 INSERT INTO Restaurants (
@@ -69,13 +80,13 @@ def add_sample_restaurant(connection):
             cursor.execute(query, values)
             connection.commit()
             restaurant_id = cursor.lastrowid
-            print(f"Added restaurant with id: {restaurant_id}")
+            logger.info("Added restaurant with id: %s", restaurant_id)
 
         cursor.close()
         return restaurant_id
 
     except Error as e:
-        print(f"Error adding restaurant: {e}")
+        logger.error("Error adding restaurant: %s", e)
         raise
 
 
@@ -215,14 +226,14 @@ def add_sample_menu_items(connection, restaurant_id):
             except Error as e:
                 # Skip if already exists
                 if "Duplicate" not in str(e):
-                    print(f"Error adding menu item {item['item_name']}: {e}")
+                    logger.error("Error adding menu item %s: %s", item["item_name"], e)
 
         connection.commit()
         cursor.close()
-        print(f"Added {added_count} menu items")
+        logger.info("Added %s menu items", added_count)
 
     except Error as e:
-        print(f"Error adding menu items: {e}")
+        logger.error("Error adding menu items: %s", e)
         raise
 
 
@@ -280,20 +291,20 @@ def add_sample_faqs(connection, restaurant_id):
             except Error as e:
                 # Skip if already exists
                 if "Duplicate" not in str(e):
-                    print(f"Error adding FAQ: {e}")
+                    logger.error("Error adding FAQ: %s", e)
 
         connection.commit()
         cursor.close()
-        print(f"Added {added_count} FAQs")
+        logger.info("Added %s FAQs", added_count)
 
     except Error as e:
-        print(f"Error adding FAQs: {e}")
+        logger.error("Error adding FAQs: %s", e)
         raise
 
 
 def main():
     """Main function to add sample data."""
-    print("Adding sample data...")
+    logger.info("Adding sample data...")
 
     connection = get_connection()
 
@@ -307,16 +318,16 @@ def main():
         # Add FAQs
         add_sample_faqs(connection, restaurant_id)
 
-        print("\nSample data added successfully!")
-        print(f"Twilio Number to use for testing: +14313404949")
-        print(f"Restaurant ID: {restaurant_id}")
+        logger.info("Sample data added successfully!")
+        logger.info("Twilio Number to use for testing: +14313404949")
+        logger.info("Restaurant ID: %s", restaurant_id)
 
     except Error as e:
-        print(f"Error adding sample data: {e}")
+        logger.error("Error adding sample data: %s", e)
     finally:
         if connection.is_connected():
             connection.close()
-            print("Database connection closed")
+            logger.info("Database connection closed")
 
 
 if __name__ == "__main__":

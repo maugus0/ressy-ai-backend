@@ -4,10 +4,21 @@ This script adds restaurants and their menu items to the database.
 """
 import json
 import os
+import sys
+from pathlib import Path
 
 import mysql.connector
 from dotenv import load_dotenv
 from mysql.connector import Error
+
+ROOT_DIR = Path(__file__).resolve().parents[1]
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
+
+from app.utils.logging_config import get_logger, setup_logging  # noqa: E402
+
+setup_logging()
+logger = get_logger(__name__)
 
 # Load environment variables
 load_dotenv()
@@ -25,7 +36,7 @@ def get_connection():
         )
         return connection
     except Error as e:
-        print(f"Error connecting to MySQL: {e}")
+        logger.error("Error connecting to MySQL: %s", e)
         raise
 
 
@@ -40,7 +51,7 @@ def add_restaurant(connection, restaurant_data):
 
         if result:
             restaurant_id = result[0]
-            print(f"[OK] Restaurant '{restaurant_data['name']}' already exists with id: {restaurant_id}")
+            logger.info("[OK] Restaurant '%s' already exists with id: %s", restaurant_data["name"], restaurant_id)
             cursor.close()
             return restaurant_id
 
@@ -72,13 +83,13 @@ def add_restaurant(connection, restaurant_data):
         cursor.execute(query, values)
         connection.commit()
         restaurant_id = cursor.lastrowid
-        print(f"[OK] Added restaurant '{restaurant_data['name']}' with id: {restaurant_id}")
+        logger.info("[OK] Added restaurant '%s' with id: %s", restaurant_data["name"], restaurant_id)
 
         cursor.close()
         return restaurant_id
 
     except Error as e:
-        print(f"[ERROR] Error adding restaurant {restaurant_data['name']}: {e}")
+        logger.error("[ERROR] Error adding restaurant %s: %s", restaurant_data["name"], e)
         raise
 
 
@@ -125,14 +136,14 @@ def add_menu_items(connection, restaurant_id, menu_items):
                 added_count += 1
             except Error as e:
                 if "Duplicate" not in str(e):
-                    print(f"  [ERROR] Error adding menu item '{item['item_name']}': {e}")
+                    logger.error("  [ERROR] Error adding menu item '%s': %s", item["item_name"], e)
 
         connection.commit()
         cursor.close()
-        print(f"  [OK] Added {added_count} menu items (skipped {skipped_count} duplicates)")
+        logger.info("  [OK] Added %s menu items (skipped %s duplicates)", added_count, skipped_count)
 
     except Error as e:
-        print(f"[ERROR] Error adding menu items: {e}")
+        logger.error("[ERROR] Error adding menu items: %s", e)
         raise
 
 
@@ -949,9 +960,9 @@ house_of_dosas_menu = [
 
 def main():
     """Main function to seed pilot restaurant data."""
-    print("=" * 60)
-    print("Seeding Pilot Restaurant Data")
-    print("=" * 60)
+    logger.info("=" * 60)
+    logger.info("Seeding Pilot Restaurant Data")
+    logger.info("=" * 60)
 
     connection = get_connection()
 
@@ -988,30 +999,30 @@ def main():
 
     try:
         for restaurant_data in restaurants:
-            print(f"\n[INFO] Processing: {restaurant_data['name']}")
-            print("-" * 60)
+            logger.info("Processing: %s", restaurant_data["name"])
+            logger.info("-" * 60)
 
             # Add restaurant
             restaurant_id = add_restaurant(connection, restaurant_data)
 
             # Add menu items
-            print(f"  Adding {len(restaurant_data['menu'])} menu items...")
+            logger.info("  Adding %s menu items...", len(restaurant_data["menu"]))
             add_menu_items(connection, restaurant_id, restaurant_data['menu'])
 
-        print("\n" + "=" * 60)
-        print("[SUCCESS] All pilot restaurants and menus seeded successfully!")
-        print("=" * 60)
-        print("\nTwilio Numbers for testing:")
+        logger.info("=" * 60)
+        logger.info("[SUCCESS] All pilot restaurants and menus seeded successfully!")
+        logger.info("=" * 60)
+        logger.info("Twilio Numbers for testing:")
         for r in restaurants:
-            print(f"  - {r['name']}: {r['twilio_phone_number']}")
+            logger.info("  - %s: %s", r["name"], r["twilio_phone_number"])
 
     except Error as e:
-        print(f"\n[ERROR] Error seeding data: {e}")
+        logger.error("[ERROR] Error seeding data: %s", e)
         connection.rollback()
     finally:
         if connection.is_connected():
             connection.close()
-            print("\nDatabase connection closed")
+            logger.info("Database connection closed")
 
 
 if __name__ == "__main__":

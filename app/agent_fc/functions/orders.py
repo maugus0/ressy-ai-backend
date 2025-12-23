@@ -143,7 +143,7 @@ async def _populate_missing_prices(restaurant_id: int, items: List[OrderItem]) -
     try:
         menu_items = await _run_service_call(_menu_repo.get_available_items_by_restaurant, restaurant_id)
     except Exception as exc:  # noqa: BLE001 - defensive for agent calls
-        print(f"[WARN] Unable to fetch menu for price lookup restaurant_id={restaurant_id}: {exc}")
+        logger.warning("Unable to fetch menu for price lookup restaurant_id=%s: %s", restaurant_id, exc)
         return
 
     price_by_id: Dict[int, Any] = {}
@@ -184,7 +184,8 @@ async def _populate_missing_prices(restaurant_id: int, items: List[OrderItem]) -
 async def create_order(**kwargs) -> Dict[str, Any]:
     args = CreateOrderArgs.model_validate(kwargs)
     await _populate_missing_prices(args.restaurant_id, args.items)
-    print(f"[INFO] create_order invoked customer_contact={args.customer_contact} items={len(args.items)}")
+    total_amount = _calculate_total(args.items)
+    logger.info("create_order invoked customer_contact=%s items=%s", args.customer_contact, len(args.items))
 
     def _create():
         # Ensure user exists/updated
@@ -210,9 +211,8 @@ async def create_order(**kwargs) -> Dict[str, Any]:
                 )
             except Exception as meta_err:
                 # Log but don't fail order creation if metadata mapping fails
-                print(f"[WARN] Failed to create user-restaurant metadata: {meta_err}")
+                logger.warning("Failed to create user-restaurant metadata: %s", meta_err)
 
-        total_amount = _calculate_total(args.items)
         order_payload = {
             "restaurant_id": int(args.restaurant_id) if args.restaurant_id else None,
             "status": "pending",
@@ -235,10 +235,11 @@ async def create_order(**kwargs) -> Dict[str, Any]:
     def _log_history():
         try:
             if args.restaurant_id:
-                print(
-                    f"[DEBUG] Logging order creation history: order_id={order_id}, restaurant_id={args.restaurant_id}"
+                logger.debug(
+                    "[DEBUG] Logging order creation history: order_id=%s, restaurant_id=%s",
+                    order_id,
+                    args.restaurant_id,
                 )
-                total_amount = _calculate_total(args.items)
                 history_id = _history_service.log_order_created(
                     order_id=order_id,
                     restaurant_id=int(args.restaurant_id),
@@ -250,14 +251,11 @@ async def create_order(**kwargs) -> Dict[str, Any]:
                     },
                     user_id=user_id,
                 )
-                print(f"[INFO] Activity history logged for order creation: history_id={history_id}")
+                logger.info("Activity history logged for order creation: history_id=%s", history_id)
             else:
-                print(f"[WARN] Cannot log history - restaurant_id is None for order {order_id}")
+                logger.warning("Cannot log history - restaurant_id is None for order %s", order_id)
         except Exception as history_error:
-            print(f"[ERROR] Failed to log history for voice agent order creation: {history_error}")
-            import traceback
-
-            traceback.print_exc()
+            logger.exception("[ERROR] Failed to log history for voice agent order creation: %s", history_error)
 
     await _run_service_call(_log_history)
 
@@ -271,7 +269,7 @@ async def create_order(**kwargs) -> Dict[str, Any]:
                 data={
                     "order_id": order_id,
                     "status": "pending",
-                    "total_amount": _calculate_total(args.items),
+                    "total_amount": total_amount,
                     "customer_name": args.customer_name,
                 },
             )
@@ -284,12 +282,13 @@ async def create_order(**kwargs) -> Dict[str, Any]:
         "user_id": user_id,
         "restaurant_id": args.restaurant_id,
         "items": _summarize_items(args.items),
+        "total_amount": total_amount,
     }
 
 
 async def lookup_order(**kwargs) -> Dict[str, Any]:
     args = LookupOrderArgs.model_validate(kwargs)
-    print(f"[INFO] lookup_order invoked customer_contact={args.customer_contact}")
+    logger.info("lookup_order invoked customer_contact=%s", args.customer_contact)
 
     def _lookup():
         user_id = _user_repo.get_user_id_by_phone_or_email(args.customer_contact, None)
@@ -318,8 +317,10 @@ def _match_menu_item(menu_items: List[Dict[str, Any]], request_item: OrderItem) 
 
 async def check_items_availability(**kwargs) -> Dict[str, Any]:
     args = CheckItemsAvailabilityArgs.model_validate(kwargs)
-    print(
-        f"[INFO] check_items_availability invoked restaurant_id={args.restaurant_id} " f"item_count={len(args.items)}"
+    logger.info(
+        "check_items_availability invoked restaurant_id=%s item_count=%s",
+        args.restaurant_id,
+        len(args.items),
     )
     menu_items = await _run_service_call(_menu_repo.get_available_items_by_restaurant, args.restaurant_id)
     menu_items = _flatten_menu_items(menu_items)
@@ -387,7 +388,7 @@ def _is_within_update_window(created_at: Any) -> bool:
 async def update_order_details(**kwargs) -> Dict[str, Any]:
     args = UpdateOrderDetailsArgs.model_validate(kwargs)
     await _populate_missing_prices(args.restaurant_id, args.items)
-    print(f"[INFO] update_order_details invoked customer_contact={args.customer_contact}")
+    logger.info("update_order_details invoked customer_contact=%s", args.customer_contact)
 
     def _update():
         user_id = _user_repo.get_user_id_by_phone_or_email(args.customer_contact, None)
@@ -449,8 +450,10 @@ async def update_order_details(**kwargs) -> Dict[str, Any]:
     def _log_history():
         try:
             if restaurant_id:
-                print(
-                    f"[DEBUG] Logging order update history: order_id={updated_order.get('id')}, restaurant_id={restaurant_id}"
+                logger.debug(
+                    "[DEBUG] Logging order update history: order_id=%s, restaurant_id=%s",
+                    updated_order.get("id"),
+                    restaurant_id,
                 )
                 new_data = {
                     "status": updated_order.get("status"),
@@ -465,14 +468,11 @@ async def update_order_details(**kwargs) -> Dict[str, Any]:
                     new_data=new_data,
                     user_id=updated_order.get("user_id"),
                 )
-                print(f"[INFO] Activity history logged for order update: history_id={history_id}")
+                logger.info("Activity history logged for order update: history_id=%s", history_id)
             else:
-                print(f"[WARN] Cannot log history - restaurant_id is None for order {updated_order.get('id')}")
+                logger.warning("Cannot log history - restaurant_id is None for order %s", updated_order.get("id"))
         except Exception as history_error:
-            print(f"[ERROR] Failed to log history for voice agent order update: {history_error}")
-            import traceback
-
-            traceback.print_exc()
+            logger.exception("[ERROR] Failed to log history for voice agent order update: %s", history_error)
 
     await _run_service_call(_log_history)
 

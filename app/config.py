@@ -58,6 +58,10 @@ class Settings:
     # Minimum gap in seconds after last agent audio chunk before clearing Twilio buffer when user starts speaking
     BARGE_IN_CLEAR_SECONDS = float(os.getenv("BARGE_IN_CLEAR_SECONDS", "0.2"))
 
+    # Telemetry / diagnostics
+    # Enable verbose latency logging for call manager pipelines
+    LATENCY_LOGS_ENABLED = os.getenv("LATENCY_LOGS_ENABLED", "false").lower() in {"1", "true", "yes", "on"}
+
     # Cost settings (USD)
     #
     # Defaults are intentionally set to the *highest* per-second costs discussed:
@@ -70,6 +74,19 @@ class Settings:
     TWILIO_MULTIPLIER = float(os.getenv("TWILIO_MULTIPLIER", "1.0"))
     DEEPGRAM_MULTIPLIER = float(os.getenv("DEEPGRAM_MULTIPLIER", "1.0"))
     RESSY_MULTIPLIER = float(os.getenv("RESSY_MULTIPLIER", "1.0"))
+
+    # Call limits
+    # Maximum duration (seconds) a live call should run before gracefully timing out
+    AGENT_CALL_TIMEOUT_SECONDS = int(os.getenv("AGENT_CALL_TIMEOUT_SECONDS", "900"))  # 15 minutes
+    AGENT_CALL_TIMEOUT_MESSAGE = os.getenv(
+        "AGENT_CALL_TIMEOUT_MESSAGE",
+        "I have to wrap up this call now. If you need anything else, please call back and I'll get you sorted.",
+    )
+    AGENT_IDLE_TIMEOUT_SECONDS = int(os.getenv("AGENT_IDLE_TIMEOUT_SECONDS", "60"))
+    AGENT_IDLE_TIMEOUT_MESSAGE = os.getenv(
+        "AGENT_IDLE_TIMEOUT_MESSAGE",
+        "I'm still here, but I'll need to wrap up this call. If you need anything else, please call back.",
+    )
 
     # Public base URL (reachable by Twilio) used for outbound-call testing webhooks.
     # Example: https://api.example.com

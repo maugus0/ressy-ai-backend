@@ -31,7 +31,6 @@ def get_function_definitions() -> List[Dict[str, Any]]:
     check_items_schema = orders.CheckItemsAvailabilityArgs.model_json_schema()
     res_check_avail_schema = reservations.CheckAvailabilityArgs.model_json_schema()
     update_order_details_schema = orders.UpdateOrderDetailsArgs.model_json_schema()
-    list_menu_schema = menu.ListMenuArgs.model_json_schema()
     menu_item_details_schema = menu.GetMenuItemDetailsArgs.model_json_schema()
     filler_schema = conversation.AgentFillerArgs.model_json_schema()
     end_call_schema = conversation.EndCallArgs.model_json_schema()
@@ -60,15 +59,9 @@ def get_function_definitions() -> List[Dict[str, Any]]:
             schema=check_items_schema,
         ),
         _definition(
-            name="list_menu_items",
-            description="Fetch the FULL available menu ONLY ONCE for this restaurant, including all categories and item names with IDs, when the caller asks about the menu. "
-            "Since this is a potentially slow lookup, use the agent_filler function right before calling this function and then call this immediately. "
-            "Re-use the response whenever asked about the menu again.",
-            schema=list_menu_schema,
-        ),
-        _definition(
             name="get_menu_item_details",
-            description="Retrieve price/description/prep-time details for a specific menu item by item_id, or search the restaurant menu by search_term.",
+            description="Retrieve price/description/prep-time details for a specific menu item by item_id, OR search the restaurant menu by search_term. "
+            "For searching, use the base form of the main food item keyword (e.g., convert plurals to singulars like 'tacos' → 'taco', and remove size/flavor modifiers like 'large spicy chicken tacos' → 'chicken taco').",
             schema=menu_item_details_schema,
         ),
         _definition(

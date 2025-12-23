@@ -8,10 +8,13 @@ from typing import Any, Dict, List, Optional
 from mysql.connector import Error
 
 from app.repositories.mysql_base import MySQLBaseRepository
+from app.utils.logging_config import get_logger
 
 
 class MySQLReservationRepository(MySQLBaseRepository):
     """Repository for in-house reservation data access in MySQL."""
+
+    logger = get_logger(__name__)
 
     # Table Availability Requests
     def create_availability_request(
@@ -344,7 +347,7 @@ class MySQLReservationRepository(MySQLBaseRepository):
             return {"reservation_id": reservation_id, "slot_id": slot_id}
         except Error as e:
             self.connection.rollback()
-            print(f"Error creating direct reservation: {e}")
+            self.logger.exception("Error creating direct reservation: %s", e)
             raise
         finally:
             if cursor:
