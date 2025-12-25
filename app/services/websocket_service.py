@@ -88,7 +88,7 @@ class WebSocketService:
         }
 
     def _summarize_specials(self, specials: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        grouped = self._group_items_by_category(specials[:5])
+        grouped = self._group_items_by_category(specials)
         return [{"category": category, "items": items_list} for category, items_list in grouped.items()]
 
     def _build_restaurant_context(
@@ -106,9 +106,8 @@ class WebSocketService:
         faqs = self.faq_service.list_faqs(restaurant_id) if restaurant_id else []
 
         restaurant_name = restaurant.get("name")
-        hours = restaurant.get("hours") or restaurant.get("hours_of_operation") or []
-        if isinstance(hours, dict):
-            hours = [f"{day}: {span}" for day, span in hours.items()]
+        opening_time = restaurant.get("opening_time")
+        closing_time = restaurant.get("closing_time")
 
         service_options = restaurant.get("service_options") or {}
         if not isinstance(service_options, dict):
@@ -121,9 +120,10 @@ class WebSocketService:
                 "cuisine": restaurant.get("cuisine_type"),
                 "address": restaurant.get("full_address") or restaurant.get("address"),
                 "phone": restaurant.get("phone_number"),
+                "opening_time": opening_time,
+                "closing_time": closing_time,
                 "prep_time_minutes": restaurant.get("prep_time_minutes", 20),
             },
-            "hours": hours,
             "service_options": {
                 "dine_in": service_options.get("dine_in", True),
                 "takeout": service_options.get("takeout", True),
