@@ -34,17 +34,36 @@ from app.api import (
     testing,
 )
 from app.api.websocket import twilio_websocket_handler
+from app.repositories.db_pool import close_db_pool, get_db_pool
 from app.services.sse_service import SSEService
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifespan context manager for startup and shutdown events."""
-    # Startup
+    # Startup: Initialize database connection pool
+    try:
+        db_pool = get_db_pool()
+        if db_pool.is_available:
+            stats = db_pool.get_pool_stats()
+            print(f"[Startup] Database pool initialized: {stats}")
+        else:
+            print("[Startup] Database pool not available (may be in test mode)")
+    except Exception as e:
+        print(f"[Startup] Warning - Database pool initialization: {e}")
+
     yield
+
     # Shutdown: cleanup SSE connections and heartbeat task
     sse_service = SSEService()
     await sse_service.shutdown()
+
+    # Shutdown: Close database connection pool
+    try:
+        close_db_pool()
+        print("[Shutdown] Database pool closed")
+    except Exception as e:
+        print(f"[Shutdown] Warning - Database pool cleanup: {e}")
 
 
 app = FastAPI(

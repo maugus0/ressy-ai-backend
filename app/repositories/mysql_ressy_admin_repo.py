@@ -106,31 +106,16 @@ class MySQLRessyAdminRepository(MySQLBaseRepository):
         if not admins:
             return []
 
-        self._ensure_connected()
-        if not self.connection:
-            raise RuntimeError("Database connection unavailable")
-
         insert_query = """
             INSERT INTO Ressy_Administrator (uuid, email, password, role_id, created_at, updated_at)
             VALUES (%s, %s, %s, %s, UTC_TIMESTAMP(), UTC_TIMESTAMP())
         """
         params = [(admin["uuid"], admin["email"], admin["password"], admin["role_id"]) for admin in admins]
 
-        cursor = None
         try:
-            cursor = self.connection.cursor()
-            cursor.executemany(insert_query, params)
-            self.connection.commit()
-        except Error as err:
-            if self.connection:
-                self.connection.rollback()
+            self._execute_many(insert_query, params)
+        except Exception as err:
             raise RuntimeError(f"Bulk insert admin users failed: {err}") from err
-        finally:
-            if cursor:
-                try:
-                    cursor.close()
-                except Exception:
-                    pass
 
         uuids = [admin["uuid"] for admin in admins]
         return self._fetch_by_uuids(uuids)

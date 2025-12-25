@@ -182,9 +182,8 @@ class MySQLFAQRepository(MySQLBaseRepository):
         """
         Bulk insert FAQs in a single transaction.
         """
-        self._ensure_connected()
-        if not self.connection:
-            raise RuntimeError("Database connection unavailable")
+        if not faqs:
+            return []
 
         insert_query = """
             INSERT INTO FAQs (restaurant_id, question, answer, created_at, updated_at)
@@ -192,22 +191,10 @@ class MySQLFAQRepository(MySQLBaseRepository):
         """
         params = [(restaurant_id, faq.get("question"), faq.get("answer")) for faq in faqs]
 
-        cursor = None
         try:
-            cursor = self.connection.cursor()
-            cursor.executemany(insert_query, params)
-            self.connection.commit()
-            first_id = cursor.lastrowid
-        except Error as err:
-            if self.connection:
-                self.connection.rollback()
+            first_id = self._execute_many(insert_query, params)
+        except Exception as err:
             raise RuntimeError(f"Bulk insert FAQs failed: {err}") from err
-        finally:
-            if cursor:
-                try:
-                    cursor.close()
-                except Exception:
-                    pass
 
         if not first_id:
             return []
