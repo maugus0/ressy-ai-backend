@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List
 
-from .functions import conversation, orders, reservations
+from .functions import conversation, menu, orders, reservations
 
 
 def _definition(name: str, description: str, schema: Dict[str, Any]) -> Dict[str, Any]:
@@ -31,6 +31,7 @@ def get_function_definitions() -> List[Dict[str, Any]]:
     check_items_schema = orders.CheckItemsAvailabilityArgs.model_json_schema()
     res_check_avail_schema = reservations.CheckAvailabilityArgs.model_json_schema()
     update_order_details_schema = orders.UpdateOrderDetailsArgs.model_json_schema()
+    menu_item_details_schema = menu.GetMenuItemDetailsArgs.model_json_schema()
     filler_schema = conversation.AgentFillerArgs.model_json_schema()
     end_call_schema = conversation.EndCallArgs.model_json_schema()
     escalate_schema = conversation.EscalateToHumanArgs.model_json_schema()
@@ -53,8 +54,15 @@ def get_function_definitions() -> List[Dict[str, Any]]:
         ),
         _definition(
             name="check_items_availability",
-            description="Check availability of menu items for pickup order requests. Always use this just before confirming the final order.",
+            description="Check availability of menu items for pickup order requests. ALWAYS use this before creating/updating the final order. "
+            "If the intent is determined, no need to confirm with user again, call the subsequent agent function right after a successful response from this function call.",
             schema=check_items_schema,
+        ),
+        _definition(
+            name="get_menu_item_details",
+            description="Retrieve price/description/prep-time details for a specific menu item by item_id, OR search the restaurant menu by search_term. "
+            "For searching, use the base form of the main food item keyword (e.g., convert plurals to singulars like 'tacos' → 'taco', and remove size/flavor modifiers like 'large spicy chicken tacos' → 'chicken taco').",
+            schema=menu_item_details_schema,
         ),
         _definition(
             name="create_reservation",
@@ -94,7 +102,9 @@ def get_function_definitions() -> List[Dict[str, Any]]:
         ),
         _definition(
             name="escalate_to_human",
-            description="Escalate the conversation to a human when the caller has special requests or repeated misunderstandings.",
+            description="Escalate the conversation to a human when the caller has special requests or repeated misunderstandings."
+            "Use this function for large orders (more than 20 items) or reservations (pary size more than 10). "
+            "This can also be used to flag suspected spam callers.",
             schema=escalate_schema,
         ),
     ]

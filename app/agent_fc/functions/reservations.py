@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
@@ -16,11 +17,36 @@ from app.repositories.mysql_user_restaurant_metadata_repo import (
     MySQLUserRestaurantMetadataRepository,
 )
 from app.services.activity_history_service import ActivityHistoryService
+from app.services.sse_service import ReservationEventSubtype, SSEService
+
+logger = logging.getLogger(__name__)
 
 _reservation_repo = MySQLReservationRepository()
 _user_repo = MySQLUserRepository()
 _metadata_repo = MySQLUserRestaurantMetadataRepository()
 _history_service = ActivityHistoryService()
+_sse_service = SSEService()
+
+
+async def _emit_reservation_sse_event(
+    restaurant_id: int,
+    reservation_id: int,
+    subtype: ReservationEventSubtype,
+    data: Dict[str, Any],
+) -> None:
+    """
+    Background task to emit SSE reservation events.
+    Logs errors but does not raise exceptions to avoid affecting other operations.
+    """
+    try:
+        await _sse_service.emit_reservation_event(
+            restaurant_id=restaurant_id,
+            reservation_id=reservation_id,
+            subtype=subtype,
+            data=data,
+        )
+    except Exception as sse_error:
+        logger.error(f"Failed to emit SSE event for reservation {reservation_id} ({subtype.value}): {sse_error}")
 
 
 class CreateReservationArgs(BaseModel):
@@ -40,6 +66,7 @@ class UpdateReservationArgs(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     customer_contact: str
+    restaurant_id: int
     party_size: Optional[int] = None
     datetime_iso: Optional[str] = None
     special_request: Optional[str] = None
@@ -51,7 +78,7 @@ class LookupReservationArgs(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     customer_contact: str
-    restaurant_id: Optional[int] = None
+    restaurant_id: int
 
 
 class CheckAvailabilityArgs(BaseModel):
@@ -82,7 +109,7 @@ async def create_reservation(**kwargs) -> Dict[str, Any]:
     3. Return reservation details with pending status (restaurant will confirm)
     """
     args = CreateReservationArgs.model_validate(kwargs)
-    print(f"[INFO] create_reservation invoked restaurant_id={args.restaurant_id} party_size={args.party_size}")
+    logger.info("create_reservation invoked restaurant_id=%s party_size=%s", args.restaurant_id, args.party_size)
 
     def _create():
         # 1. Create or update user with customer details
@@ -107,7 +134,7 @@ async def create_reservation(**kwargs) -> Dict[str, Any]:
             )
         except Exception as meta_err:
             # Log but don't fail reservation creation if metadata mapping fails
-            print(f"[WARN] Failed to create user-restaurant metadata: {meta_err}")
+            logger.warning("Failed to create user-restaurant metadata: %s", meta_err)
 
         # 2. Parse the datetime
         try:
@@ -174,8 +201,10 @@ async def create_reservation(**kwargs) -> Dict[str, Any]:
         # Log activity history for voice agent reservation creation (run in thread since it's a DB operation)
         def _log_history():
             try:
-                print(
-                    f"[DEBUG] Logging reservation creation history: reservation_id={reservation['reservation_id']}, restaurant_id={args.restaurant_id}"
+                logger.debug(
+                    "[DEBUG] Logging reservation creation history: reservation_id=%s, restaurant_id=%s",
+                    reservation["reservation_id"],
+                    args.restaurant_id,
                 )
                 history_id = _history_service.log_reservation_created(
                     reservation_id=reservation["reservation_id"],
@@ -188,14 +217,30 @@ async def create_reservation(**kwargs) -> Dict[str, Any]:
                     },
                     user_id=reservation.get("user_id"),
                 )
-                print(f"[INFO] Activity history logged for reservation creation: history_id={history_id}")
+                logger.info("Activity history logged for reservation creation: history_id=%s", history_id)
             except Exception as history_error:
-                print(f"[ERROR] Failed to log history for voice agent reservation creation: {history_error}")
-                import traceback
-
-                traceback.print_exc()
+                logger.exception(
+                    "[ERROR] Failed to log history for voice agent reservation creation: %s", history_error
+                )
 
         await _run_service_call(_log_history)
+
+        # Emit SSE event for new reservation (background task)
+        asyncio.create_task(
+            _emit_reservation_sse_event(
+                restaurant_id=int(args.restaurant_id),
+                reservation_id=reservation["reservation_id"],
+                subtype=ReservationEventSubtype.NEW_RESERVATION,
+                data={
+                    "reservation_id": reservation["reservation_id"],
+                    "confirmation_number": reservation.get("confirmation_number"),
+                    "status": "pending",
+                    "date_time": args.datetime_iso,
+                    "party_size": args.party_size,
+                    "name": args.customer_name,
+                },
+            )
+        )
 
         return {
             "status": "SUBMITTED",
@@ -203,7 +248,7 @@ async def create_reservation(**kwargs) -> Dict[str, Any]:
             "reservation": reservation,
         }
     except Exception as exc:
-        print(f"[ERROR] create_reservation failed: {exc}")
+        logger.exception("[ERROR] create_reservation failed: %s", exc)
         return {
             "status": "FAILED",
             "message": "Unable to create reservation. Please try again or contact the restaurant directly.",
@@ -217,7 +262,7 @@ async def lookup_reservation(**kwargs) -> Dict[str, Any]:
     Similar to lookup_order but for reservations.
     """
     args = LookupReservationArgs.model_validate(kwargs)
-    print(f"[INFO] lookup_reservation invoked customer_contact={args.customer_contact}")
+    logger.info("lookup_reservation invoked customer_contact=%s", args.customer_contact)
 
     def _lookup():
         # Find user by phone number
@@ -226,12 +271,15 @@ async def lookup_reservation(**kwargs) -> Dict[str, Any]:
             return None
 
         # Get the latest reservation for this user
-        reservation = _reservation_repo.get_latest_by_user(user_id)
+        reservation = _reservation_repo.get_latest_by_user(user_id, restaurant_id=args.restaurant_id)
         return reservation
 
     reservation = await _run_service_call(_lookup)
     if not reservation:
-        return {"status": "NOT_FOUND", "message": "No reservation found for this contact."}
+        return {
+            "status": "NOT_FOUND",
+            "message": "No reservation found for this contact at this restaurant.",
+        }
     return {"status": "FOUND", "reservation": reservation}
 
 
@@ -273,13 +321,13 @@ async def update_reservation(**kwargs) -> Dict[str, Any]:
     Update the latest reservation for a caller using their phone number.
     """
     args = UpdateReservationArgs.model_validate(kwargs)
-    print(f"[INFO] update_reservation invoked customer_contact={args.customer_contact}")
+    logger.info("update_reservation invoked customer_contact=%s", args.customer_contact)
 
     def _update():
         user_id = _user_repo.get_user_id_by_phone_or_email(args.customer_contact, None)
         if not user_id:
             return None, None, None
-        reservation = _reservation_repo.get_latest_by_user(user_id)
+        reservation = _reservation_repo.get_latest_by_user(user_id, restaurant_id=args.restaurant_id)
         if not reservation:
             return None, None, None
 
@@ -339,17 +387,22 @@ async def update_reservation(**kwargs) -> Dict[str, Any]:
         }
 
     if not result:
-        return {"status": "NOT_FOUND", "message": "No reservation found to update."}
+        return {
+            "status": "NOT_FOUND",
+            "message": "No reservation found to update for this restaurant.",
+        }
 
     updated = result
-    restaurant_id = extra
+    restaurant_id = extra or args.restaurant_id
 
     # Log activity history for voice agent reservation update (run in thread since it's a DB operation)
     def _log_history():
         try:
             if restaurant_id:
-                print(
-                    f"[DEBUG] Logging reservation update history: reservation_id={updated.get('id')}, restaurant_id={restaurant_id}"
+                logger.debug(
+                    "[DEBUG] Logging reservation update history: reservation_id=%s, restaurant_id=%s",
+                    updated.get("id"),
+                    restaurant_id,
                 )
                 new_data = {
                     "status": updated.get("status"),
@@ -365,16 +418,35 @@ async def update_reservation(**kwargs) -> Dict[str, Any]:
                     new_data=new_data,
                     user_id=updated.get("user_id"),
                 )
-                print(f"[INFO] Activity history logged for reservation update: history_id={history_id}")
+                logger.info("Activity history logged for reservation update: history_id=%s", history_id)
             else:
-                print(f"[WARN] Cannot log history - restaurant_id is None for reservation {updated.get('id')}")
+                logger.warning("Cannot log history - restaurant_id is None for reservation %s", updated.get("id"))
         except Exception as history_error:
-            print(f"[ERROR] Failed to log history for voice agent reservation update: {history_error}")
-            import traceback
-
-            traceback.print_exc()
+            logger.exception("[ERROR] Failed to log history for voice agent reservation update: %s", history_error)
 
     await _run_service_call(_log_history)
+
+    # Emit SSE event for reservation update (background task)
+    if restaurant_id:
+        new_status = updated.get("status", "")
+        event_subtype = (
+            ReservationEventSubtype.RESERVATION_CANCELLED
+            if new_status.lower() == "cancelled"
+            else ReservationEventSubtype.RESERVATION_UPDATED
+        )
+        asyncio.create_task(
+            _emit_reservation_sse_event(
+                restaurant_id=int(restaurant_id),
+                reservation_id=updated.get("id"),
+                subtype=event_subtype,
+                data={
+                    "reservation_id": updated.get("id"),
+                    "status": new_status,
+                    "date_time": updated.get("date_time"),
+                    "party_size": updated.get("party_size"),
+                },
+            )
+        )
 
     return {"status": "UPDATED", "reservation": updated}
 
@@ -387,9 +459,10 @@ async def check_reservation_availability(**kwargs) -> Dict[str, Any]:
     if the restaurant can accommodate the party.
     """
     args = CheckAvailabilityArgs.model_validate(kwargs)
-    print(
-        f"[INFO] check_reservation_availability invoked restaurant_id={args.restaurant_id} "
-        f"party_size={args.party_size}"
+    logger.info(
+        "check_reservation_availability invoked restaurant_id=%s party_size=%s",
+        args.restaurant_id,
+        args.party_size,
     )
 
     def _check():
@@ -442,7 +515,7 @@ async def check_reservation_availability(**kwargs) -> Dict[str, Any]:
                 "locked_slot_count": len(locked_slots),
             }
         except Exception as exc:
-            print(f"[ERROR] check_reservation_availability failed: {exc}")
+            logger.exception("[ERROR] check_reservation_availability failed: %s", exc)
             return {
                 "restaurant_id": args.restaurant_id,
                 "party_size": args.party_size,

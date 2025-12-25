@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
@@ -17,6 +18,9 @@ from app.repositories.mysql_user_restaurant_metadata_repo import (
     MySQLUserRestaurantMetadataRepository,
 )
 from app.services.activity_history_service import ActivityHistoryService
+from app.services.sse_service import OrderEventSubtype, SSEService
+
+logger = logging.getLogger(__name__)
 
 
 class OrderItem(BaseModel):
@@ -33,7 +37,7 @@ class OrderItem(BaseModel):
 class CreateOrderArgs(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    restaurant_id: Optional[int] = None
+    restaurant_id: int
     customer_name: Optional[str] = None
     customer_contact: Optional[str] = None
     pickup_time_iso: Optional[str] = None
@@ -46,7 +50,7 @@ class LookupOrderArgs(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     customer_contact: str
-    restaurant_id: Optional[int] = None
+    restaurant_id: int
 
 
 class CheckItemsAvailabilityArgs(BaseModel):
@@ -61,6 +65,7 @@ class UpdateOrderDetailsArgs(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     customer_contact: str
+    restaurant_id: int
     items: List[OrderItem]
     customization: Dict[str, Any] = Field(default_factory=dict)
     total_amount: Optional[float] = None
@@ -73,6 +78,28 @@ _user_repo = MySQLUserRepository()
 _menu_repo = MySQLMenuRepository()
 _metadata_repo = MySQLUserRestaurantMetadataRepository()
 _history_service = ActivityHistoryService()
+_sse_service = SSEService()
+
+
+async def _emit_order_sse_event(
+    restaurant_id: int,
+    order_id: int,
+    subtype: OrderEventSubtype,
+    data: Dict[str, Any],
+) -> None:
+    """
+    Background task to emit SSE order events.
+    Logs errors but does not raise exceptions to avoid affecting other operations.
+    """
+    try:
+        await _sse_service.emit_order_event(
+            restaurant_id=restaurant_id,
+            order_id=order_id,
+            subtype=subtype,
+            data=data,
+        )
+    except Exception as sse_error:
+        logger.error(f"Failed to emit SSE event for order {order_id} ({subtype.value}): {sse_error}")
 
 
 async def _run_service_call(func, *args, **kwargs):
@@ -95,7 +122,7 @@ def _summarize_items(items: List[OrderItem]) -> List[Dict[str, Any]]:
 
 
 def _calculate_total(items: List[OrderItem]) -> float:
-    """Compute total from item prices * quantities; treats missing prices as 0."""
+    """Compute total from item prices * quantities; treats missing prices as 0 after any lookups."""
     total = 0.0
     for item in items:
         price = item.price if item.price is not None else 0.0
@@ -107,9 +134,58 @@ def _calculate_total(items: List[OrderItem]) -> float:
     return round(total, 2)
 
 
+async def _populate_missing_prices(restaurant_id: int, items: List[OrderItem]) -> None:
+    """Fill in missing item prices by looking up the restaurant menu."""
+    missing_prices = [item for item in items if item.price is None]
+    if not missing_prices:
+        return
+
+    try:
+        menu_items = await _run_service_call(_menu_repo.get_available_items_by_restaurant, restaurant_id)
+    except Exception as exc:  # noqa: BLE001 - defensive for agent calls
+        logger.warning("Unable to fetch menu for price lookup restaurant_id=%s: %s", restaurant_id, exc)
+        return
+
+    price_by_id: Dict[int, Any] = {}
+    price_by_name: Dict[str, Any] = {}
+    for menu_item in menu_items or []:
+        try:
+            item_id = int(menu_item.get("id"))
+            price_by_id[item_id] = menu_item.get("price")
+        except (TypeError, ValueError, AttributeError):
+            # Skip malformed menu rows; price lookup will continue by name if available.
+            pass
+        name = menu_item.get("item_name") or menu_item.get("name")
+        if name:
+            price_by_name[str(name).lower()] = menu_item.get("price")
+
+    for item in items:
+        if item.price is not None:
+            continue
+
+        lookup_price = None
+        if item.item_id is not None:
+            try:
+                lookup_price = price_by_id.get(int(item.item_id))
+            except (TypeError, ValueError):
+                lookup_price = None
+        if lookup_price is None and item.name:
+            lookup_price = price_by_name.get(item.name.lower())
+
+        if lookup_price is None:
+            continue
+
+        try:
+            item.price = float(lookup_price)
+        except (TypeError, ValueError):
+            continue
+
+
 async def create_order(**kwargs) -> Dict[str, Any]:
     args = CreateOrderArgs.model_validate(kwargs)
-    print(f"[INFO] create_order invoked customer_contact={args.customer_contact} items={len(args.items)}")
+    await _populate_missing_prices(args.restaurant_id, args.items)
+    total_amount = _calculate_total(args.items)
+    logger.info("create_order invoked customer_contact=%s items=%s", args.customer_contact, len(args.items))
 
     def _create():
         # Ensure user exists/updated
@@ -135,9 +211,8 @@ async def create_order(**kwargs) -> Dict[str, Any]:
                 )
             except Exception as meta_err:
                 # Log but don't fail order creation if metadata mapping fails
-                print(f"[WARN] Failed to create user-restaurant metadata: {meta_err}")
+                logger.warning("Failed to create user-restaurant metadata: %s", meta_err)
 
-        total_amount = _calculate_total(args.items)
         order_payload = {
             "restaurant_id": int(args.restaurant_id) if args.restaurant_id else None,
             "status": "pending",
@@ -160,10 +235,11 @@ async def create_order(**kwargs) -> Dict[str, Any]:
     def _log_history():
         try:
             if args.restaurant_id:
-                print(
-                    f"[DEBUG] Logging order creation history: order_id={order_id}, restaurant_id={args.restaurant_id}"
+                logger.debug(
+                    "[DEBUG] Logging order creation history: order_id=%s, restaurant_id=%s",
+                    order_id,
+                    args.restaurant_id,
                 )
-                total_amount = _calculate_total(args.items)
                 history_id = _history_service.log_order_created(
                     order_id=order_id,
                     restaurant_id=int(args.restaurant_id),
@@ -175,16 +251,29 @@ async def create_order(**kwargs) -> Dict[str, Any]:
                     },
                     user_id=user_id,
                 )
-                print(f"[INFO] Activity history logged for order creation: history_id={history_id}")
+                logger.info("Activity history logged for order creation: history_id=%s", history_id)
             else:
-                print(f"[WARN] Cannot log history - restaurant_id is None for order {order_id}")
+                logger.warning("Cannot log history - restaurant_id is None for order %s", order_id)
         except Exception as history_error:
-            print(f"[ERROR] Failed to log history for voice agent order creation: {history_error}")
-            import traceback
-
-            traceback.print_exc()
+            logger.exception("[ERROR] Failed to log history for voice agent order creation: %s", history_error)
 
     await _run_service_call(_log_history)
+
+    # Emit SSE event for new order (background task)
+    if args.restaurant_id:
+        asyncio.create_task(
+            _emit_order_sse_event(
+                restaurant_id=int(args.restaurant_id),
+                order_id=order_id,
+                subtype=OrderEventSubtype.NEW_ORDER,
+                data={
+                    "order_id": order_id,
+                    "status": "pending",
+                    "total_amount": total_amount,
+                    "customer_name": args.customer_name,
+                },
+            )
+        )
 
     return {
         "status": "CREATED",
@@ -193,22 +282,23 @@ async def create_order(**kwargs) -> Dict[str, Any]:
         "user_id": user_id,
         "restaurant_id": args.restaurant_id,
         "items": _summarize_items(args.items),
+        "total_amount": total_amount,
     }
 
 
 async def lookup_order(**kwargs) -> Dict[str, Any]:
     args = LookupOrderArgs.model_validate(kwargs)
-    print(f"[INFO] lookup_order invoked customer_contact={args.customer_contact}")
+    logger.info("lookup_order invoked customer_contact=%s", args.customer_contact)
 
     def _lookup():
         user_id = _user_repo.get_user_id_by_phone_or_email(args.customer_contact, None)
         if not user_id:
             return None
-        return _order_repo.get_latest_order_by_user(user_id)
+        return _order_repo.get_latest_order_by_user(user_id, args.restaurant_id)
 
     order = await _run_service_call(_lookup)
     if not order:
-        return {"status": "NOT_FOUND"}
+        return {"status": "NOT_FOUND", "message": "No order found for this contact at this restaurant."}
     return {"status": "FOUND", "order": order}
 
 
@@ -227,8 +317,10 @@ def _match_menu_item(menu_items: List[Dict[str, Any]], request_item: OrderItem) 
 
 async def check_items_availability(**kwargs) -> Dict[str, Any]:
     args = CheckItemsAvailabilityArgs.model_validate(kwargs)
-    print(
-        f"[INFO] check_items_availability invoked restaurant_id={args.restaurant_id} " f"item_count={len(args.items)}"
+    logger.info(
+        "check_items_availability invoked restaurant_id=%s item_count=%s",
+        args.restaurant_id,
+        len(args.items),
     )
     menu_items = await _run_service_call(_menu_repo.get_available_items_by_restaurant, args.restaurant_id)
     menu_items = _flatten_menu_items(menu_items)
@@ -295,13 +387,14 @@ def _is_within_update_window(created_at: Any) -> bool:
 
 async def update_order_details(**kwargs) -> Dict[str, Any]:
     args = UpdateOrderDetailsArgs.model_validate(kwargs)
-    print(f"[INFO] update_order_details invoked customer_contact={args.customer_contact}")
+    await _populate_missing_prices(args.restaurant_id, args.items)
+    logger.info("update_order_details invoked customer_contact=%s", args.customer_contact)
 
     def _update():
         user_id = _user_repo.get_user_id_by_phone_or_email(args.customer_contact, None)
         if not user_id:
             return None, None, None, None
-        order = _order_repo.get_latest_order_by_user(user_id)
+        order = _order_repo.get_latest_order_by_user(user_id, args.restaurant_id)
         if not order:
             return None, None, None, None
         order_id = order.get("id")
@@ -334,6 +427,7 @@ async def update_order_details(**kwargs) -> Dict[str, Any]:
         return updated, previous_data, order.get("restaurant_id"), order
 
     result, previous_data, restaurant_id, original_order = await _run_service_call(_update)
+    restaurant_id = restaurant_id or args.restaurant_id
 
     # Handle update window expired
     if result == "UPDATE_WINDOW_EXPIRED":
@@ -348,7 +442,7 @@ async def update_order_details(**kwargs) -> Dict[str, Any]:
         }
 
     if not result:
-        return {"status": "NOT_FOUND"}
+        return {"status": "NOT_FOUND", "message": "No order found to update for this restaurant."}
 
     updated_order = result
 
@@ -356,8 +450,10 @@ async def update_order_details(**kwargs) -> Dict[str, Any]:
     def _log_history():
         try:
             if restaurant_id:
-                print(
-                    f"[DEBUG] Logging order update history: order_id={updated_order.get('id')}, restaurant_id={restaurant_id}"
+                logger.debug(
+                    "[DEBUG] Logging order update history: order_id=%s, restaurant_id=%s",
+                    updated_order.get("id"),
+                    restaurant_id,
                 )
                 new_data = {
                     "status": updated_order.get("status"),
@@ -372,15 +468,31 @@ async def update_order_details(**kwargs) -> Dict[str, Any]:
                     new_data=new_data,
                     user_id=updated_order.get("user_id"),
                 )
-                print(f"[INFO] Activity history logged for order update: history_id={history_id}")
+                logger.info("Activity history logged for order update: history_id=%s", history_id)
             else:
-                print(f"[WARN] Cannot log history - restaurant_id is None for order {updated_order.get('id')}")
+                logger.warning("Cannot log history - restaurant_id is None for order %s", updated_order.get("id"))
         except Exception as history_error:
-            print(f"[ERROR] Failed to log history for voice agent order update: {history_error}")
-            import traceback
-
-            traceback.print_exc()
+            logger.exception("[ERROR] Failed to log history for voice agent order update: %s", history_error)
 
     await _run_service_call(_log_history)
+
+    # Emit SSE event for order update (background task)
+    if restaurant_id:
+        new_status = updated_order.get("status", "")
+        event_subtype = (
+            OrderEventSubtype.ORDER_CANCELLED if new_status.lower() == "cancelled" else OrderEventSubtype.ORDER_UPDATED
+        )
+        asyncio.create_task(
+            _emit_order_sse_event(
+                restaurant_id=int(restaurant_id),
+                order_id=updated_order.get("id"),
+                subtype=event_subtype,
+                data={
+                    "order_id": updated_order.get("id"),
+                    "status": new_status,
+                    "total_amount": updated_order.get("total_amount"),
+                },
+            )
+        )
 
     return {"status": "UPDATED", "order": updated_order}

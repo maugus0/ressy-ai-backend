@@ -11,7 +11,7 @@ import websockets
 from fastapi import WebSocket, WebSocketDisconnect
 
 from app.agent_fc.config import get_settings as get_fc_settings
-from app.agent_fc.functions import conversation, orders, reservations
+from app.agent_fc.functions import conversation, menu, orders, reservations
 from app.agent_fc.models import AgentFrame
 from app.agent_fc.registry import FunctionRegistry
 from app.agent_fc.responses import AgentSideEffect
@@ -28,6 +28,7 @@ from app.services.faq_service import FAQService
 from app.services.menu_service import MenuService
 from app.services.restaurant_service import RestaurantService
 from app.utils import prompt_loader
+from app.utils.logging_config import get_logger
 
 
 @dataclass
@@ -43,6 +44,7 @@ class CallResources:
 
 class WebSocketService:
     def __init__(self):
+        self.logger = get_logger(__name__)
         self.deepgram_service = DeepgramService()
         self.call_service = CallService()
         self.user_repo = MySQLUserRepository()
@@ -54,49 +56,40 @@ class WebSocketService:
         self._connections_lock = asyncio.Lock()
         self._filler_manager = FillerManager()
 
-    def _summarize_menu(self, items: list[dict[str, Any]]) -> Dict[str, Any]:
-        """Return a compact menu summary for prompts."""
-        highlights: list[dict[str, Any]] = []
-        categories: list[str] = []
+    def _group_items_by_category(self, items: list[dict[str, Any]]) -> Dict[str, list[dict[str, Any]]]:
+        """Bucket menu items by category with only id + name."""
+        grouped: Dict[str, list[dict[str, Any]]] = {}
+        category_order: list[str] = []
+
         for item in items:
-            category = item.get("category")
-            if category:
-                categories.append(str(category))
-            entry = {
-                "item_id": item.get("id"),
-                "name": item.get("item_name"),
-                "price": item.get("price"),
-                "description": item.get("item_desc"),
-                "category": category,
-            }
-            if entry["name"]:
-                highlights.append(entry)
-            if len(highlights) >= 10:
-                break
-        # Preserve order while deduping categories
-        deduped_categories = list(dict.fromkeys(categories))
-        return {"categories": deduped_categories[:6], "highlights": highlights[:10]}
+            name = item.get("item_name")
+            if not name:
+                continue
+            category_raw = item.get("category")
+            category = str(category_raw) if category_raw is not None else "Uncategorized"
+
+            if category not in grouped:
+                grouped[category] = []
+                category_order.append(category)
+
+            grouped[category].append({"item_id": item.get("id"), "name": name})
+
+        # Return in the order categories were first seen
+        return {category: grouped[category] for category in category_order}
+
+    def _summarize_menu(self, items: list[dict[str, Any]]) -> Dict[str, Any]:
+        """Return a compact menu summary grouped by category (id + name only)."""
+        grouped = self._group_items_by_category(items)
+        return {
+            "categories": list(grouped.keys()),
+            "items_by_category": [
+                {"category": category, "items": items_list} for category, items_list in grouped.items()
+            ],
+        }
 
     def _summarize_specials(self, specials: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        return [
-            {
-                "item_id": special.get("id"),
-                "name": special.get("item_name"),
-                "description": special.get("item_desc"),
-                "price": special.get("price"),
-                "category": special.get("category"),
-            }
-            for special in specials[:5]
-        ]
-
-    def _summarize_faqs(self, faqs: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        return [
-            {
-                "question": faq.get("question"),
-                "answer": faq.get("answer"),
-            }
-            for faq in faqs[:6]
-        ]
+        grouped = self._group_items_by_category(specials)
+        return [{"category": category, "items": items_list} for category, items_list in grouped.items()]
 
     def _build_restaurant_context(
         self, caller_phone: Optional[str] = None, restaurant_record: Optional[Dict[str, Any]] = None
@@ -113,9 +106,8 @@ class WebSocketService:
         faqs = self.faq_service.list_faqs(restaurant_id) if restaurant_id else []
 
         restaurant_name = restaurant.get("name")
-        hours = restaurant.get("hours") or restaurant.get("hours_of_operation") or []
-        if isinstance(hours, dict):
-            hours = [f"{day}: {span}" for day, span in hours.items()]
+        opening_time = restaurant.get("opening_time")
+        closing_time = restaurant.get("closing_time")
 
         service_options = restaurant.get("service_options") or {}
         if not isinstance(service_options, dict):
@@ -128,9 +120,10 @@ class WebSocketService:
                 "cuisine": restaurant.get("cuisine_type"),
                 "address": restaurant.get("full_address") or restaurant.get("address"),
                 "phone": restaurant.get("phone_number"),
+                "opening_time": opening_time,
+                "closing_time": closing_time,
                 "prep_time_minutes": restaurant.get("prep_time_minutes", 20),
             },
-            "hours": hours,
             "service_options": {
                 "dine_in": service_options.get("dine_in", True),
                 "takeout": service_options.get("takeout", True),
@@ -139,7 +132,7 @@ class WebSocketService:
             },
             "menu": self._summarize_menu(regular_menu_items),
             "specials": self._summarize_specials(specials),
-            "faqs": self._summarize_faqs(faqs),
+            "faqs": faqs,
             "function_defaults": {
                 "restaurant_id": restaurant_id,
                 "restaurant_phone": restaurant_phone_fwd,
@@ -188,7 +181,7 @@ class WebSocketService:
             if asyncio.iscoroutine(result):
                 await result
         except Exception as exc:
-            print(f"[Shutdown] connection close failed: {exc}")
+            self.logger.warning("[Shutdown] connection close failed: %s", exc)
 
     async def _handle_side_effects(
         self,
@@ -212,15 +205,15 @@ class WebSocketService:
                 if effect_type == "InjectAgentMessage":
                     await sts_ws.send(json.dumps(payload))
                     last_inject_message = payload.get("message") or last_inject_message
-                    print(f"[FX] InjectAgentMessage sent: {payload}")
+                    self.logger.info("[FX] InjectAgentMessage sent: %s", payload)
                 elif effect_type == "close":
                     close_requested = True
-                    print("[FX] Close request received from agent function")
+                    self.logger.info("[FX] Close request received from agent function")
                 else:
                     await sts_ws.send(json.dumps(payload))
-                    print(f"[FX] Side effect forwarded: {payload}")
+                    self.logger.info("[FX] Side effect forwarded: %s", payload)
             except Exception as exc:
-                print(f"[FX] Failed to process side effect {effect.payload}: {exc}")
+                self.logger.exception("[FX] Failed to process side effect %s: %s", effect.payload, exc)
 
         if not close_requested:
             last_inject_message = None
@@ -242,15 +235,15 @@ class WebSocketService:
                 audio_queue.put_nowait(None)
             except asyncio.QueueFull:
                 pass
-        print("🔚 Farewell finished, closing sockets")
+        self.logger.info("🔚 Farewell finished, closing sockets")
         try:
             await twilio_ws.close()
         except Exception as exc:
-            print(f"[Close] Failed to close Twilio websocket: {exc}")
+            self.logger.warning("[Close] Failed to close Twilio websocket: %s", exc)
         try:
             await sts_ws.close()
         except Exception as exc:
-            print(f"[Close] Failed to close Deepgram websocket: {exc}")
+            self.logger.warning("[Close] Failed to close Deepgram websocket: %s", exc)
 
     async def _handle_unregistered_twilio_call(
         self,
@@ -264,14 +257,14 @@ class WebSocketService:
         Plays an error message to the caller before disconnecting.
         """
         error_message = settings.UNREGISTERED_TWILIO_MESSAGE
-        print(f"[INFO] Playing unregistered number message: {error_message}")
+        self.logger.info("Playing unregistered number message: %s", error_message)
 
         try:
             # Wait for streamSid from Twilio start event
             try:
                 streamsid = await asyncio.wait_for(streamsid_queue.get(), timeout=5.0)
             except asyncio.TimeoutError:
-                print("[WARN] Timeout waiting for Twilio streamSid, closing connection")
+                self.logger.warning("Timeout waiting for Twilio streamSid, closing connection")
                 return
 
             # Connect to Deepgram with default API key to play the message
@@ -320,7 +313,7 @@ class WebSocketService:
                         },
                     }
                     await sts_ws.send(json.dumps(config_message))
-                    print("[INFO] Sent config with error message as greeting to Deepgram")
+                    self.logger.info("Sent config with error message as greeting to Deepgram")
 
                     # Create a stream state for audio handling
                     state = self._create_stream_state()
@@ -333,7 +326,7 @@ class WebSocketService:
                     async for message in sts_ws:
                         elapsed = asyncio.get_event_loop().time() - start_time
                         if elapsed > timeout_seconds:
-                            print("[WARN] Timeout waiting for error message audio")
+                            self.logger.warning("Timeout waiting for error message audio")
                             break
 
                         if isinstance(message, str):
@@ -362,7 +355,7 @@ class WebSocketService:
                         self._active_deepgram.discard(sts_ws)
 
         except Exception as exc:
-            print(f"[ERROR] Failed to play unregistered number message: {exc}")
+            self.logger.exception("[ERROR] Failed to play unregistered number message: %s", exc)
 
         finally:
             # Signal shutdown and close connections
@@ -371,7 +364,7 @@ class WebSocketService:
                 audio_queue.put_nowait(None)
             except asyncio.QueueFull:
                 pass
-            print("[INFO] Closing connection for unregistered Twilio number")
+            self.logger.info("Closing connection for unregistered Twilio number")
 
     async def _prepare_call_resources(
         self,
@@ -421,13 +414,13 @@ class WebSocketService:
                 if created_id:
                     return str(created_id)
             except Exception as exc:
-                print(f"[WARN] Failed to resolve/create user for phone {caller_phone}: {exc}")
+                self.logger.warning("Failed to resolve/create user for phone %s: %s", caller_phone, exc)
 
         if fallback_user_id:
             return fallback_user_id
 
         # No phone or provided user – use a safe sentinel to avoid breaking FK/analytics
-        print("[WARN] No caller phone or provided user_id; defaulting to user_id=0 for call logging")
+        self.logger.warning("No caller phone or provided user_id; defaulting to user_id=0 for call logging")
         return "0"
 
     def _build_function_router(self, sts_ws) -> Transport:
@@ -451,6 +444,11 @@ class WebSocketService:
             name="check_items_availability",
             handler=orders.check_items_availability,
             arg_model=orders.CheckItemsAvailabilityArgs,
+        )
+        registry.register(
+            name="get_menu_item_details",
+            handler=menu.get_menu_item_details,
+            arg_model=menu.GetMenuItemDetailsArgs,
         )
         registry.register(
             name="create_reservation",
@@ -495,7 +493,6 @@ class WebSocketService:
             settings=get_fc_settings(),
         )
         transport.on_message(router.handle_frame)
-        print("Function calling router initialized")
         return transport
 
     def _create_call_session(
@@ -512,10 +509,10 @@ class WebSocketService:
                 deepgram_session_id,
                 restaurant_id,
             )
-            print(f"📞 Call session created: {call_id}")
+            self.logger.info("📞 Call session created: %s", call_id)
             return str(call_id)
         except Exception as exc:
-            print(f"[DB] create_call_session error: {exc}")
+            self.logger.exception("[DB] create_call_session error: %s", exc)
             return None
 
     def _create_stream_state(self) -> StreamState:
@@ -529,9 +526,8 @@ class WebSocketService:
         try:
             await twilio_ws.send_text(json.dumps(msg))
             state.last_agent_audio_time = asyncio.get_event_loop().time()
-            print(f"✅ Flushed {len(state.audio_buffer)} bytes to Twilio")
         except Exception as exc:
-            print(f"Error sending buffered audio to Twilio: {exc}")
+            self.logger.warning("Error sending buffered audio to Twilio: %s", exc)
         state.audio_buffer.clear()
 
     async def _wait_for_farewell_playback(self, state: StreamState) -> None:
@@ -549,6 +545,99 @@ class WebSocketService:
         remaining = grace_seconds - elapsed
         if remaining > 0:
             await asyncio.sleep(remaining)
+
+    async def _call_timeout_guard(
+        self,
+        timeout_seconds: float,
+        sts_ws,
+        state: StreamState,
+        shutdown_event: Optional[asyncio.Event] = None,
+    ) -> None:
+        """Inject a timeout message after the configured duration to gracefully end the call."""
+        try:
+            if shutdown_event:
+                try:
+                    await asyncio.wait_for(shutdown_event.wait(), timeout_seconds)
+                    return
+                except asyncio.TimeoutError:
+                    pass
+            else:
+                await asyncio.sleep(timeout_seconds)
+        except asyncio.CancelledError:
+            return
+
+        if shutdown_event and shutdown_event.is_set():
+            return
+        if state.closing_after_farewell:
+            return
+
+        timeout_message = getattr(
+            settings,
+            "AGENT_CALL_TIMEOUT_MESSAGE",
+            "I have to wrap up this call now. If you need anything else, please call back and I'll get you sorted.",
+        )
+        payload = {"type": "InjectAgentMessage", "message": timeout_message}
+        try:
+            await sts_ws.send(json.dumps(payload))
+            self.logger.info("[Timeout] Injected graceful timeout message after %.0fs", timeout_seconds)
+        except Exception as exc:
+            self.logger.warning("[Timeout] Failed to inject timeout message: %s", exc)
+
+        state.closing_after_farewell = True
+        state.farewell_started = False
+        state.farewell_expected_text = timeout_message
+
+    async def _call_idle_guard(
+        self,
+        idle_seconds: float,
+        sts_ws,
+        state: StreamState,
+        shutdown_event: Optional[asyncio.Event] = None,
+        start_time: Optional[float] = None,
+    ) -> None:
+        """Monitor inactivity and inject a graceful wrap-up if nobody speaks for too long."""
+        check_interval = min(5.0, max(1.0, idle_seconds / 4.0))
+        fallback_start = start_time or time.perf_counter()
+        has_fired = False
+
+        try:
+            while True:
+                if shutdown_event and shutdown_event.is_set():
+                    return
+                if state.closing_after_farewell:
+                    return
+
+                await asyncio.sleep(check_interval)
+                if shutdown_event and shutdown_event.is_set():
+                    return
+                if state.closing_after_farewell:
+                    return
+
+                activity_time = state.last_activity_time or fallback_start
+                elapsed = time.perf_counter() - activity_time
+                if elapsed < idle_seconds:
+                    continue
+                if has_fired:
+                    continue
+
+                idle_message = getattr(
+                    settings,
+                    "AGENT_IDLE_TIMEOUT_MESSAGE",
+                    "I'm still here, but I'll need to wrap up this call. If you need anything else, please call back.",
+                )
+                payload = {"type": "InjectAgentMessage", "message": idle_message}
+                try:
+                    await sts_ws.send(json.dumps(payload))
+                    self.logger.info("[IdleTimeout] Injected idle timeout message after %.0fs", elapsed)
+                except Exception as exc:
+                    self.logger.warning("[IdleTimeout] Failed to inject idle timeout message: %s", exc)
+
+                state.closing_after_farewell = True
+                state.farewell_started = False
+                state.farewell_expected_text = idle_message
+                has_fired = True
+        except asyncio.CancelledError:
+            return
 
     def _update_barge_in_state(self, decoded: dict[str, Any], state: StreamState) -> None:
         event_type = decoded.get("type")
@@ -571,7 +660,7 @@ class WebSocketService:
         if state.barge_in_active:
             if not state.barge_in_reported and state.barge_in_start_time is not None:
                 delta = time.perf_counter() - state.barge_in_start_time
-                print(f"Barge-in suppression delay: {delta:.3f}s")
+                self.logger.debug("Barge-in suppression delay: %.3fs", delta)
                 state.barge_in_reported = True
             return
 
@@ -591,9 +680,9 @@ class WebSocketService:
                 await twilio_ws.send_text(json.dumps(msg))
                 state.last_agent_audio_time = asyncio.get_event_loop().time()
                 log_agent_audio_start_latency(state, now)
-                print(f"✅ Sent ConversationAudio {len(chunk)} bytes to Twilio")
+                self.logger.info("✅ Sent ConversationAudio %s bytes to Twilio", len(chunk))
         except Exception as exc:
-            print(f"Error processing ConversationAudio: {exc}")
+            self.logger.warning("Error processing ConversationAudio: %s", exc)
 
     def _track_conversation_turn(
         self, decoded: dict[str, Any], state: StreamState, now: Optional[float] = None
@@ -610,6 +699,7 @@ class WebSocketService:
             state.last_assistant_text_time = current_time
             state.agent_audio_latency_logged = False
             state.last_assistant_audio_start_time = None
+        state.last_activity_time = current_time
 
     def _store_transcript_entry(self, decoded: dict[str, Any], call_id: Optional[str], state: StreamState) -> None:
         # Record only live ConversationText events to avoid duplicate transcript entries from History payloads.
@@ -647,16 +737,19 @@ class WebSocketService:
         now = time.perf_counter()
         if state.in_function_chain and state.last_function_response_time:
             latency = now - state.last_function_response_time
-            print(f"LLM Decision Latency (chain): {latency:.3f}s")
+            if settings.LATENCY_LOGS_ENABLED:
+                self.logger.debug("LLM Decision Latency (chain): %.3fs", latency)
         elif state.last_user_text_time:
             latency = now - state.last_user_text_time
-            print(f"LLM Decision Latency (initial): {latency:.3f}s")
+            if settings.LATENCY_LOGS_ENABLED:
+                self.logger.debug("LLM Decision Latency (initial): %.3fs", latency)
             state.in_function_chain = True
 
         exec_start = time.perf_counter()
         router_result = await transport.emit(decoded)
         exec_ms = (time.perf_counter() - exec_start) * 1000.0
-        print(f"Function Execution Latency: {exec_ms:.2f}ms")
+        if settings.LATENCY_LOGS_ENABLED:
+            self.logger.debug("Function Execution Latency: %.2fms", exec_ms)
         state.last_function_response_time = time.perf_counter()
 
         if not router_result or not router_result.get("side_effects"):
@@ -669,7 +762,7 @@ class WebSocketService:
             state.closing_after_farewell = True
             state.farewell_expected_text = effects_meta.get("farewell_message")
             state.farewell_started = state.farewell_expected_text is None
-            print("[Call] Farewell close scheduled")
+            self.logger.info("[Call] Farewell close scheduled")
 
     async def _maybe_finish_farewell(
         self,
@@ -708,9 +801,10 @@ class WebSocketService:
         try:
             state.audio_buffer.extend(message)
         except Exception as exc:
-            print(f"[WARN] Failed to buffer binary audio payload ({type(message)}): {exc}")
+            self.logger.warning("Failed to buffer binary audio payload (%s): %s", type(message), exc)
             return
-        buffer_size = 3200
+        # Keep outbound chunks small to reduce playback latency
+        buffer_size = 5 * 160  # 800 bytes per ~100ms
         while len(state.audio_buffer) >= buffer_size:
             chunk = state.audio_buffer[:buffer_size]
             del state.audio_buffer[:buffer_size]
@@ -728,15 +822,59 @@ class WebSocketService:
             if not last_agent_audio_time or (now - last_agent_audio_time) > threshold:
                 clear_msg = {"event": "clear", "streamSid": streamsid}
                 await twilio_ws.send_text(json.dumps(clear_msg))
-                print(f"🧹 Cleared Twilio buffer after {now - (last_agent_audio_time or 0):.2f}s")
 
     async def handle_text_message(self, decoded, twilio_ws, sts_ws, streamsid, last_agent_audio_time):
         """Handle text messages and barge-in logic."""
         await self.handle_barge_in(decoded, twilio_ws, streamsid, last_agent_audio_time)
 
+    async def buffer_flusher(
+        self,
+        shared_buffer: bytearray,
+        audio_queue: asyncio.Queue,
+        shutdown_event: Optional[asyncio.Event] = None,
+        buffer_lock: Optional[asyncio.Lock] = None,
+    ) -> None:
+        """Periodically flush partial inbound audio to keep Deepgram connection active."""
+        flush_interval = 0.3
+        try:
+            while True:
+                if shutdown_event and shutdown_event.is_set():
+                    # Flush remaining buffered audio before exiting
+                    if buffer_lock:
+                        async with buffer_lock:
+                            if shared_buffer:
+                                await audio_queue.put(bytes(shared_buffer))
+                                shared_buffer.clear()
+                    elif shared_buffer:
+                        await audio_queue.put(bytes(shared_buffer))
+                        shared_buffer.clear()
+                    break
+
+                await asyncio.sleep(flush_interval)
+                chunk = None
+                if buffer_lock:
+                    async with buffer_lock:
+                        if not shared_buffer:
+                            chunk = None
+                        else:
+                            chunk = bytes(shared_buffer)
+                            shared_buffer.clear()
+                else:
+                    if not shared_buffer:
+                        chunk = None
+                    else:
+                        chunk = bytes(shared_buffer)
+                        shared_buffer.clear()
+                if chunk:
+                    await audio_queue.put(chunk)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            if not shutdown_event or not shutdown_event.is_set():
+                self.logger.warning("buffer_flusher error: %s", exc)
+
     async def sts_sender(self, sts_ws, audio_queue, shutdown_event: Optional[asyncio.Event] = None):
         """Send audio chunks to Deepgram STS."""
-        print("sts_sender started")
         try:
             while True:
                 if shutdown_event and shutdown_event.is_set():
@@ -749,7 +887,7 @@ class WebSocketService:
                     break
                 await sts_ws.send(chunk)
         except (asyncio.CancelledError, websockets.exceptions.ConnectionClosed):
-            print("sts_sender stopped")
+            self.logger.info("sts_sender stopped")
 
     async def sts_receiver(
         self,
@@ -764,10 +902,10 @@ class WebSocketService:
         state: Optional[StreamState] = None,
     ):
         """Receive messages from Deepgram STS and forward to Twilio."""
-        print("sts_receiver started")
         streamsid = await streamsid_queue.get()
         start_time = asyncio.get_event_loop().time()
         state = state or self._create_stream_state()
+        deepgram_request_id_stored = False
 
         try:
             async for message in sts_ws:
@@ -775,14 +913,24 @@ class WebSocketService:
                     decoded = json.loads(message)
                     message_type = decoded.get("type")
                     now = time.perf_counter()
+                    if message_type == "Welcome" and not deepgram_request_id_stored:
+                        request_id = decoded.get("request_id") or decoded.get("requestId")
+                        if request_id and call_id:
+                            try:
+                                self.call_service.update_deepgram_request_id(call_id, request_id)
+                                deepgram_request_id_stored = True
+                            except Exception as exc:
+                                self.logger.warning("Error storing Deepgram request_id: %s", exc)
                     if message_type == "History":
                         pass  # Don't print history entries to reduce noise
                     elif message_type == "ConversationText":
                         role = decoded.get("role", "unknown")
                         content = decoded.get("content", "")
-                        print(f"{role}: {content}")
-                    else:
-                        print(f"Deepgram Message: {decoded}")
+                        self.logger.debug("[Call] %s: %s", role, content)
+                    elif message_type == "Warning":
+                        self.logger.warning("[Deepgram WARNING] : %s", decoded)
+                    elif message_type == "Error":
+                        self.logger.error("[Deepgram ERROR] : %s", decoded)
 
                     if message_type == "UserStartedSpeaking":
                         state.last_user_started_speaking_time = now
@@ -817,15 +965,15 @@ class WebSocketService:
                 elif isinstance(message, (bytes, bytearray, memoryview)):
                     await self._handle_binary_audio(message, state, twilio_ws, streamsid)
                 else:
-                    print(f"[WARN] Dropping unexpected Deepgram payload type: {type(message)}")
+                    self.logger.warning("Dropping unexpected Deepgram payload type: %s", type(message))
                     continue
 
             if not state.farewell_shutdown_complete:
                 await self._flush_audio_buffer(state, twilio_ws, streamsid)
         except (websockets.exceptions.ConnectionClosed, websockets.exceptions.ConnectionClosedOK):
-            print("sts_receiver: Deepgram connection closed")
+            self.logger.info("sts_receiver: Deepgram connection closed")
         except asyncio.CancelledError:
-            print("sts_receiver cancelled")
+            self.logger.info("sts_receiver cancelled")
             raise
         finally:
             end_time = asyncio.get_event_loop().time()
@@ -835,7 +983,7 @@ class WebSocketService:
                 if call_id:
                     self.call_service.update_call_cost(call_id, duration)
             except Exception as exc:
-                print(f"[WARN] Error updating call cost: {exc}")
+                self.logger.warning("Error updating call cost: %s", exc)
 
     async def twilio_receiver(
         self,
@@ -846,10 +994,13 @@ class WebSocketService:
         to_number_queue: Optional[asyncio.Queue] = None,
         from_number_queue: Optional[asyncio.Queue] = None,
         call_sid_queue: Optional[asyncio.Queue] = None,
+        shared_buffer: Optional[bytearray] = None,
+        buffer_lock: Optional[asyncio.Lock] = None,
     ):
         """Receive audio from Twilio and forward to Deepgram."""
-        buffer_size = 20 * 160  # 3200 bytes per 100ms
-        inbuffer = bytearray()
+        # Smaller buffer reduces turnaround latency (~0.1s chunks)
+        buffer_size = 5 * 160  # 800 bytes per ~100ms
+        inbuffer = shared_buffer if shared_buffer is not None else bytearray()
 
         try:
             async for message in twilio_ws.iter_text():
@@ -871,36 +1022,59 @@ class WebSocketService:
                         await from_number_queue.put(from_number)
                     if call_sid_queue and call_sid:
                         await call_sid_queue.put(call_sid)
-                    print(f"📞 Stream started: {streamsid}, to={to_number}, from={from_number}")
+                    self.logger.info("📞 Stream started: %s, to=%s, from=%s", streamsid, to_number, from_number)
                 elif event == "media":
                     chunk = base64.b64decode(data["media"]["payload"])
                     if data["media"]["track"] == "inbound":
-                        inbuffer.extend(chunk)
+                        if buffer_lock:
+                            async with buffer_lock:
+                                inbuffer.extend(chunk)
+                        else:
+                            inbuffer.extend(chunk)
                 elif event == "stop":
-                    print("🛑 Twilio stop event received - closing gracefully")
+                    self.logger.info("🛑 Twilio stop event received - closing gracefully")
                     break
 
-                while len(inbuffer) >= buffer_size:
-                    await audio_queue.put(inbuffer[:buffer_size])
-                    del inbuffer[:buffer_size]
+                while True:
+                    if buffer_lock:
+                        async with buffer_lock:
+                            if len(inbuffer) < buffer_size:
+                                break
+                            chunk_to_send = inbuffer[:buffer_size]
+                            del inbuffer[:buffer_size]
+                    else:
+                        if len(inbuffer) < buffer_size:
+                            break
+                        chunk_to_send = inbuffer[:buffer_size]
+                        del inbuffer[:buffer_size]
+                    await audio_queue.put(chunk_to_send)
 
         except (WebSocketDisconnect, ConnectionError) as exc:
-            print(f"Twilio receiver disconnected: {exc}")
+            self.logger.info("Twilio receiver disconnected: %s", exc)
         except asyncio.CancelledError:
-            print("twilio_receiver cancelled")
+            self.logger.info("twilio_receiver cancelled")
             raise
         except Exception as e:
             if shutdown_event and shutdown_event.is_set():
-                print("Twilio receiver closed after shutdown")
+                self.logger.info("Twilio receiver closed after shutdown")
             else:
-                print(f"Twilio receiver error: {e}")
+                self.logger.exception("Twilio receiver error: %s", e)
         finally:
+            if buffer_lock:
+                async with buffer_lock:
+                    if inbuffer:
+                        await audio_queue.put(bytes(inbuffer))
+                        inbuffer.clear()
+            elif inbuffer:
+                await audio_queue.put(bytes(inbuffer))
+                inbuffer.clear()
             if shutdown_event and not shutdown_event.is_set():
                 shutdown_event.set()
             try:
                 audio_queue.put_nowait(None)
             except asyncio.QueueFull:
-                pass
+                # Best-effort sentinel; queue is already saturated so receiver will exit shortly.
+                self.logger.warning("audio_queue full while sending shutdown sentinel")
 
     async def twilio_websocket_handler(
         self,
@@ -921,6 +1095,8 @@ class WebSocketService:
         from_number_queue: asyncio.Queue = asyncio.Queue()
         call_sid_queue: asyncio.Queue = asyncio.Queue()
         shutdown_event = asyncio.Event()
+        shared_buffer = bytearray()
+        buffer_lock = asyncio.Lock()
         state = self._create_stream_state()
         call_id = None
         call_sid: Optional[str] = None
@@ -928,6 +1104,8 @@ class WebSocketService:
         restaurant_record: Optional[Dict[str, Any]] = None
         deepgram_api_key: Optional[str] = None
         deepgram_key_terms: Optional[Any] = None
+        call_timeout_task: Optional[asyncio.Task] = None
+        call_idle_task: Optional[asyncio.Task] = None
 
         twilio_task = asyncio.create_task(
             self.twilio_receiver(
@@ -938,8 +1116,11 @@ class WebSocketService:
                 to_number_queue,
                 from_number_queue,
                 call_sid_queue,
+                shared_buffer,
+                buffer_lock,
             )
         )
+        flusher_task = asyncio.create_task(self.buffer_flusher(shared_buffer, audio_queue, shutdown_event, buffer_lock))
 
         try:
             # Use values provided by API first; fall back to Twilio start event if missing.
@@ -961,12 +1142,12 @@ class WebSocketService:
 
             restaurant_record = self.restaurant_service.get_restaurant_by_twilio(restaurant_twilio_number)
             if not restaurant_record:
-                print(f"[FATAL ERROR] No restaurant found with twilio number: {restaurant_twilio_number}")
+                self.logger.error("[FATAL ERROR] No restaurant found with twilio number: %s", restaurant_twilio_number)
                 # Play an error message to the caller before disconnecting
                 await self._handle_unregistered_twilio_call(twilio_ws, streamsid_queue, shutdown_event, audio_queue)
                 return
             else:
-                print(f"Serving call for restaurant: {restaurant_record.get('name')}")
+                self.logger.info("Serving call for restaurant: %s", restaurant_record.get("name"))
 
             deepgram_details = restaurant_record.get("deepgram_details") if restaurant_record else None
             if isinstance(deepgram_details, str):
@@ -990,14 +1171,13 @@ class WebSocketService:
                         self._active_deepgram.add(sts_ws)
 
                     try:
-                        print("🔗 Connected to Deepgram STS")
+                        self.logger.info("🔗 Connected to Deepgram STS")
                         config_message = self.deepgram_service.load_config(
                             think_prompt=call_resources.think_prompt,
                             key_terms=call_resources.deepgram_key_terms or None,
                             restaurant_name=call_resources.restaurant_name,
                         )
                         config_message_json = json.dumps(config_message)
-                        print(f"Deepgram agent config: {config_message_json}")
                         await sts_ws.send(config_message_json)
 
                         transport = self._build_function_router(sts_ws)
@@ -1006,22 +1186,41 @@ class WebSocketService:
                             resolved_user_id, call_resources.restaurant_id, call_sid, None
                         )
 
+                        timeout_seconds = float(getattr(settings, "AGENT_CALL_TIMEOUT_SECONDS", 900))
+                        call_timeout_task = asyncio.create_task(
+                            self._call_timeout_guard(timeout_seconds, sts_ws, state, shutdown_event)
+                        )
+                        idle_seconds = float(getattr(settings, "AGENT_IDLE_TIMEOUT_SECONDS", 60))
+                        call_idle_task = asyncio.create_task(
+                            self._call_idle_guard(
+                                idle_seconds,
+                                sts_ws,
+                                state,
+                                shutdown_event,
+                                start_time=time.perf_counter(),
+                            )
+                        )
+
+                        sts_sender_task = asyncio.create_task(self.sts_sender(sts_ws, audio_queue, shutdown_event))
+                        sts_receiver_task = asyncio.create_task(
+                            self.sts_receiver(
+                                sts_ws,
+                                twilio_ws,
+                                streamsid_queue,
+                                call_id,
+                                user_id,
+                                transport,
+                                shutdown_event,
+                                audio_queue,
+                                state,
+                            )
+                        )
+
                         tasks = [
                             twilio_task,
-                            asyncio.create_task(self.sts_sender(sts_ws, audio_queue, shutdown_event)),
-                            asyncio.create_task(
-                                self.sts_receiver(
-                                    sts_ws,
-                                    twilio_ws,
-                                    streamsid_queue,
-                                    call_id,
-                                    user_id,
-                                    transport,
-                                    shutdown_event,
-                                    audio_queue,
-                                    state,
-                                )
-                            ),
+                            flusher_task,
+                            sts_sender_task,
+                            sts_receiver_task,
                         ]
                         try:
                             done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
@@ -1034,29 +1233,59 @@ class WebSocketService:
                             for task in pending:
                                 task.cancel()
                             await asyncio.gather(*tasks, return_exceptions=True)
+                            if call_timeout_task:
+                                await asyncio.gather(call_timeout_task, return_exceptions=True)
+                            if call_idle_task:
+                                await asyncio.gather(call_idle_task, return_exceptions=True)
                         finally:
                             for task in tasks:
                                 if not task.done():
                                     task.cancel()
                             await asyncio.gather(*tasks, return_exceptions=True)
+                            if call_timeout_task:
+                                if not call_timeout_task.done():
+                                    call_timeout_task.cancel()
+                                await asyncio.gather(call_timeout_task, return_exceptions=True)
+                            if call_idle_task:
+                                if not call_idle_task.done():
+                                    call_idle_task.cancel()
+                                await asyncio.gather(call_idle_task, return_exceptions=True)
                     finally:
                         async with self._connections_lock:
                             self._active_deepgram.discard(sts_ws)
             except websockets.exceptions.InvalidStatusCode as exc:
                 if exc.status_code == 401:
-                    print(
+                    self.logger.error(
                         "[Deepgram] Unauthorized (401). Check that DEEPGRAM_API_KEY is valid "
                         "for the restaurant or environment."
                     )
                 raise
         except WebSocketDisconnect:
-            print("Client disconnected")
+            self.logger.info("Client disconnected")
         except Exception as e:
-            print(f"Error in twilio_websocket_handler: {e}")
+            self.logger.exception("Error in twilio_websocket_handler: %s", e)
         finally:
-            if twilio_task and not twilio_task.done():
-                twilio_task.cancel()
-                await asyncio.gather(twilio_task, return_exceptions=True)
+            if shutdown_event and not shutdown_event.is_set():
+                shutdown_event.set()
+            try:
+                audio_queue.put_nowait(None)
+            except asyncio.QueueFull:
+                pass
+
+            # Ensure background tasks are stopped
+            for task in (twilio_task, flusher_task):
+                if task and not task.done():
+                    task.cancel()
+            await asyncio.gather(twilio_task, flusher_task, return_exceptions=True)
+            if call_timeout_task:
+                if not call_timeout_task.done():
+                    call_timeout_task.cancel()
+                await asyncio.gather(call_timeout_task, return_exceptions=True)
+            if call_idle_task:
+                if not call_idle_task.done():
+                    call_idle_task.cancel()
+                await asyncio.gather(call_idle_task, return_exceptions=True)
+
             async with self._connections_lock:
                 self._active_twilio.discard(twilio_ws)
             try:
@@ -1067,8 +1296,8 @@ class WebSocketService:
             if state.conversation_history and call_id:
                 try:
                     self.call_service.save_call_transcript(call_id, state.conversation_history)
-                    print("[INFO] Transcript stored to Calls.call_transcript")
+                    self.logger.info("Transcript stored to Calls.call_transcript")
                 except Exception as exc:
-                    print(f"[WARN] Failed to store call transcript: {exc}")
+                    self.logger.warning("Failed to store call transcript: %s", exc)
 
-            print("🔌 Twilio connection closed")
+            self.logger.info("🔌 Twilio connection closed")

@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+import asyncio
 import random
-from typing import Literal, Optional
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
 from app.agent_fc.responses import AgentFunctionResult, AgentSideEffect
+from app.services.sse_service import SSEService
+from app.utils.logging_config import get_logger
+
+logger = get_logger(__name__)
 
 FILLER_LIBRARY = {
     "menu_lookup": [
@@ -64,7 +69,7 @@ class AgentFillerArgs(BaseModel):
 class EndCallArgs(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    farewell_style: Literal["general", "positive", "busy"] = "general"
+    farewell_style: Literal["general", "positive", "apologetic"] = "general"
     delay_seconds: float = 0.7
 
 
@@ -72,7 +77,8 @@ class EscalateToHumanArgs(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     restaurant_id: int
-    reason: Optional[str] = None
+    customer_contact: str
+    reason: str
     urgency: Literal["standard", "urgent"] = "standard"
 
 
@@ -80,11 +86,32 @@ def _pick_message(message_set: list[str]) -> str:
     return random.choice(message_set)
 
 
+_sse_service = SSEService()
+
+
+async def _emit_escalation_sse_event(
+    restaurant_id: int,
+    caller_phone: str,
+    reason: str,
+    urgency: Literal["standard", "urgent"],
+) -> None:
+    """Broadcast escalation to SSE subscribers; keep failures from affecting the call flow."""
+    try:
+        await _sse_service.emit_escalation_user_requested(
+            restaurant_id=restaurant_id,
+            caller_phone=caller_phone,
+            reason=reason,
+            data={"urgency": urgency},
+        )
+    except Exception as exc:  # noqa: BLE001 - defensive
+        logger.warning("Failed to emit escalation SSE event: %s", exc)
+
+
 async def agent_filler(**kwargs) -> AgentFunctionResult:
     args = AgentFillerArgs.model_validate(kwargs)
     options = FILLER_LIBRARY.get(args.filler_type) or FILLER_LIBRARY["general"]
     message = _pick_message(options)
-    print(f"[INFO] agent_filler invoked filler_type={args.filler_type}")
+    logger.info("agent_filler invoked filler_type=%s", args.filler_type)
     return AgentFunctionResult(
         content={"status": "QUEUED", "filler_type": args.filler_type},
         side_effects=[
@@ -96,7 +123,7 @@ async def agent_filler(**kwargs) -> AgentFunctionResult:
 async def end_call(**kwargs) -> AgentFunctionResult:
     args = EndCallArgs.model_validate(kwargs)
     message = FAREWELL_LIBRARY.get(args.farewell_style, FAREWELL_LIBRARY["general"])
-    print(f"[INFO] end_call invoked style={args.farewell_style}")
+    logger.info("end_call invoked style=%s", args.farewell_style)
     return AgentFunctionResult(
         content={"status": "CLOSING", "farewell_style": args.farewell_style},
         side_effects=[
@@ -108,13 +135,22 @@ async def end_call(**kwargs) -> AgentFunctionResult:
 
 async def escalate_to_human(**kwargs) -> AgentFunctionResult:
     args = EscalateToHumanArgs.model_validate(kwargs)
-    print(f"[INFO] escalate_to_human invoked urgency={args.urgency} reason={args.reason}")
-    message = "It sounds like you'd prefer to speak with one of our team members. Please allow me to connect you."
+    logger.info("escalate_to_human invoked urgency=%s reason=%s", args.urgency, args.reason)
+    message = "I’m looping in a team member to assist you now. You'll receive a call back from them shortly. Thank you for your patience."
     content = {
         "status": "HUMAN_ESCALATION_REQUESTED",
         "urgency": args.urgency,
         "reason": args.reason,
+        "customer_contact": args.customer_contact,
     }
+    asyncio.create_task(
+        _emit_escalation_sse_event(
+            restaurant_id=int(args.restaurant_id),
+            caller_phone=args.customer_contact,
+            reason=args.reason,
+            urgency=args.urgency,
+        )
+    )
     return AgentFunctionResult(
         content=content,
         side_effects=[

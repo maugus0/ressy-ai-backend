@@ -7,6 +7,9 @@ from typing import Optional
 
 from app.config import settings
 from app.services.callmanager.call_state import StreamState
+from app.utils.logging_config import get_logger
+
+logger = get_logger(__name__)
 
 
 class FillerManager:
@@ -70,8 +73,8 @@ class FillerManager:
             await sts_ws.send(json.dumps(payload))
             state.filler_injected = True
             state.last_filler_message = message
-            print(f"[Filler] Sent filler message: {message}")
+            logger.info("[Filler] Sent filler message: %s", message)
         except asyncio.CancelledError:
             return
         except Exception as exc:
-            print(f"[Filler] Failed to send filler message: {exc}")
+            logger.warning("[Filler] Failed to send filler message: %s", exc)

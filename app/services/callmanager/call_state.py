@@ -29,3 +29,4 @@ class StreamState:
     filler_task: Optional[asyncio.Task] = None
     filler_injected: bool = False
     last_filler_message: Optional[str] = None
+    last_activity_time: Optional[float] = None

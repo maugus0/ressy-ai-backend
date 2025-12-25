@@ -192,7 +192,7 @@ class SSEService:
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                print(f"[SSE] Heartbeat error: {e}")
+                logger.warning("[SSE] Heartbeat error: %s", e)
 
     async def connect(
         self,
@@ -232,7 +232,7 @@ class SSEService:
         # Start heartbeat if not running
         await self.start_heartbeat()
 
-        print(f"[SSE] New connection: {connection_id} " f"(restaurant_id={restaurant_id}, is_admin={is_admin})")
+        logger.info("[SSE] New connection: %s (restaurant_id=%s, is_admin=%s)", connection_id, restaurant_id, is_admin)
         return connection
 
     async def disconnect(self, connection_id: str):
@@ -253,7 +253,7 @@ class SSEService:
                             del self.restaurant_connections[connection.restaurant_id]
 
                 del self.connections[connection_id]
-                print(f"[SSE] Disconnected: {connection_id}")
+                logger.info("[SSE] Disconnected: %s", connection_id)
 
     async def _broadcast_to_all(self, event: SSEEvent):
         """Broadcast event to all connections."""
@@ -308,7 +308,7 @@ class SSEService:
         else:
             await self._broadcast_to_all(event)
 
-        print(f"[SSE] Event emitted: {event_type.value}/{subtype} " f"to restaurant_id={restaurant_id}")
+        logger.info("[SSE] Event emitted: %s/%s to restaurant_id=%s", event_type.value, subtype, restaurant_id)
         return event
 
     # ---------- Escalation Event Methods ----------
@@ -523,7 +523,7 @@ class SSEService:
 
     async def shutdown(self):
         """Shutdown SSE service and disconnect all connections."""
-        print("[SSE] Shutting down...")
+        logger.info("[SSE] Shutting down...")
 
         # Cancel heartbeat task
         if self._heartbeat_task and not self._heartbeat_task.done():
@@ -537,4 +537,4 @@ class SSEService:
         for connection_id in list(self.connections.keys()):
             await self.disconnect(connection_id)
 
-        print("[SSE] Shutdown complete")
+        logger.info("[SSE] Shutdown complete")

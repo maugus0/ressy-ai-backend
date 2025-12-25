@@ -7,12 +7,22 @@ into the Users and Calls tables using environment-driven DB credentials.
 
 import json
 import os
+import sys
 from pathlib import Path
 from typing import Any, Iterable, Optional
 
 import mysql.connector
 from dotenv import load_dotenv
 from mysql.connector import Error
+
+ROOT_DIR = Path(__file__).resolve().parents[1]
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
+
+from app.utils.logging_config import get_logger, setup_logging  # noqa: E402
+
+setup_logging()
+logger = get_logger(__name__)
 
 # Load environment variables from .env if present
 load_dotenv()
@@ -33,7 +43,7 @@ def get_connection():
             database=os.getenv("DB_NAME", "ressy"),
         )
     except Error as exc:
-        print(f"Error connecting to MySQL: {exc}")
+        logger.error("Error connecting to MySQL: %s", exc)
         raise
 
 
@@ -147,8 +157,8 @@ def main() -> None:
         user_count = upsert_users(connection, users)
         call_count = upsert_calls(connection, calls)
 
-        print(f"Upserted {user_count} users from {USERS_PATH.name}")
-        print(f"Upserted {call_count} calls from {CALLS_PATH.name}")
+        logger.info("Upserted %s users from %s", user_count, USERS_PATH.name)
+        logger.info("Upserted %s calls from %s", call_count, CALLS_PATH.name)
     finally:
         if connection and connection.is_connected():
             connection.close()

@@ -13,6 +13,9 @@ from app.repositories.mysql_user_repo import MySQLUserRepository
 from app.repositories.mysql_user_restaurant_metadata_repo import (
     MySQLUserRestaurantMetadataRepository,
 )
+from app.utils.logging_config import get_logger
+
+logger = get_logger(__name__)
 
 
 def _transform_order(order: Dict[str, Any]) -> Dict[str, Any]:
@@ -168,7 +171,7 @@ class DashboardOrderService:
                 )
             except Exception as meta_err:
                 # Log but don't fail order creation if metadata mapping fails
-                print(f"[WARN] Failed to create user-restaurant metadata: {meta_err}")
+                logger.warning("Failed to create user-restaurant metadata: %s", meta_err)
 
         # Create order
         order_data = {

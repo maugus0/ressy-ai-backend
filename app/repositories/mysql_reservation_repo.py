@@ -8,10 +8,13 @@ from typing import Any, Dict, List, Optional
 from mysql.connector import Error
 
 from app.repositories.mysql_base import MySQLBaseRepository
+from app.utils.logging_config import get_logger
 
 
 class MySQLReservationRepository(MySQLBaseRepository):
     """Repository for in-house reservation data access in MySQL."""
+
+    logger = get_logger(__name__)
 
     # Table Availability Requests
     def create_availability_request(
@@ -646,13 +649,16 @@ class MySQLReservationRepository(MySQLBaseRepository):
         affected = self._execute_update(query, tuple(params))
         return affected > 0
 
-    def get_latest_by_user(self, user_id: int, reservation_type: Optional[str] = None) -> Optional[Dict]:
+    def get_latest_by_user(
+        self, user_id: int, reservation_type: Optional[str] = None, restaurant_id: Optional[int] = None
+    ) -> Optional[Dict]:
         """
         Get the most recent reservation for a user.
 
         Args:
             user_id: User ID
             reservation_type: Optional filter by reservation type
+            restaurant_id: Optional filter by restaurant
 
         Returns:
             Latest reservation dict or None if not found
@@ -688,6 +694,10 @@ class MySQLReservationRepository(MySQLBaseRepository):
         if reservation_type:
             query += " AND r.reservation_type = %s"
             params.append(reservation_type)
+
+        if restaurant_id is not None:
+            query += " AND sb.restaurant_id = %s"
+            params.append(restaurant_id)
 
         query += " ORDER BY r.created_at DESC LIMIT 1"
         results = self._execute_query(query, tuple(params))

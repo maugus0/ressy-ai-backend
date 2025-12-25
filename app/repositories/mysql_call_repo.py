@@ -6,10 +6,13 @@ import json
 from typing import Dict, List, Optional
 
 from app.repositories.mysql_base import MySQLBaseRepository
+from app.utils.logging_config import get_logger
 
 
 class MySQLCallRepository(MySQLBaseRepository):
     """Repository for call data access in MySQL."""
+
+    logger = get_logger(__name__)
 
     def create_call_session(
         self, user_id: str, twilio_sid: str | None, deepgram_session_id: str | None, restaurant_id: Optional[str] = None
@@ -26,7 +29,12 @@ class MySQLCallRepository(MySQLBaseRepository):
         call_id = self._execute_insert(
             query, (user_id, restaurant_id, twilio_sid, deepgram_session_id, "in_progress", "inbound", 0, 0.000000)
         )
-        print(f"[MySQL] Created call session: call_id={call_id}, user_id={user_id}, restaurant_id={restaurant_id}")
+        self.logger.info(
+            "[MySQL] Created call session: call_id=%s, user_id=%s, restaurant_id=%s",
+            call_id,
+            user_id,
+            restaurant_id,
+        )
         return call_id
 
     def update_call_cost(self, call_id: int, duration_seconds: int, ressy_cost: float) -> None:
@@ -60,7 +68,22 @@ class MySQLCallRepository(MySQLBaseRepository):
             WHERE id = %s
         """
         self._execute_update(query, (duration_seconds, ressy_cost, call_id))
-        print("[MySQL] Updated call: " f"call_id={call_id}, duration={duration_seconds}s, ressy_cost=${ressy_cost:.6f}")
+        self.logger.info(
+            "[MySQL] Updated call: call_id=%s, duration=%ss, ressy_cost=$%.6f", call_id, duration_seconds, ressy_cost
+        )
+
+    def update_deepgram_request_id(self, call_id: int, deepgram_request_id: str) -> None:
+        """
+        Store Deepgram request/session ID for an existing call.
+        """
+        query = """
+            UPDATE Calls
+            SET deepgram_request_id = %s,
+                updated_at = NOW()
+            WHERE id = %s
+        """
+        self._execute_update(query, (deepgram_request_id, call_id))
+        self.logger.info("[MySQL] Updated deepgram_request_id for call_id=%s to %s", call_id, deepgram_request_id)
 
     def update_call_transcript(self, call_id: int, conversation: List[Dict]) -> None:
         """
@@ -74,7 +97,7 @@ class MySQLCallRepository(MySQLBaseRepository):
             WHERE id = %s
         """
         self._execute_update(query, (transcript_json, call_id))
-        print(f"[MySQL] Stored call transcript for call_id={call_id}")
+        self.logger.info("[MySQL] Stored call transcript for call_id=%s", call_id)
 
     def get_user_calls(self, user_id: str, limit: int = 50) -> List[Dict]:
         query = """

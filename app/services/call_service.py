@@ -69,6 +69,15 @@ class CallService:
     ) -> None:
         self.call_repo.store_transcript_message(call_id, message_sequence, speaker, message, timestamp)
 
+    def update_deepgram_request_id(self, call_id: str | int, deepgram_request_id: str) -> None:
+        """Persist Deepgram request ID for a call once it is available."""
+        normalized_id = self._safe_int(call_id)
+        if normalized_id is None:
+            return
+        if not deepgram_request_id:
+            return
+        self.call_repo.update_deepgram_request_id(normalized_id, deepgram_request_id)
+
     def get_call_history(
         self, user_id: str, user_role: str, restaurant_id: str | None = None, limit: int = 50
     ) -> List[CallResponse]:

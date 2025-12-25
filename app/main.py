@@ -1,9 +1,9 @@
 import asyncio
-import traceback
 import urllib.parse
 from contextlib import asynccontextmanager
 from xml.sax.saxutils import escape
 
+from dotenv import load_dotenv
 from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
@@ -36,6 +36,11 @@ from app.api import (
 from app.api.websocket import twilio_websocket_handler
 from app.repositories.db_pool import close_db_pool, get_db_pool
 from app.services.sse_service import SSEService
+from app.utils.logging_config import get_logger, setup_logging
+
+load_dotenv()
+setup_logging()
+logger = get_logger(__name__)
 
 
 @asynccontextmanager
@@ -247,8 +252,13 @@ async def voice(request: Request):
         from_number = qp.get("fromNumber") or twilio_from
         to_number = qp.get("toNumber") or twilio_to
 
-        print(
-            f"Incoming call call_sid={call_sid} from={twilio_from} to={twilio_to} (ws from={from_number} to={to_number})"
+        logger.info(
+            "Incoming call call_sid=%s from=%s to=%s (ws from=%s to=%s)",
+            call_sid,
+            twilio_from,
+            twilio_to,
+            from_number,
+            to_number,
         )
         params = {
             "fromNumber": from_number,
@@ -266,9 +276,9 @@ async def voice(request: Request):
         # Escape user-controlled values before embedding into TwiML XML.
         from_number_xml = escape(from_number) if from_number is not None else ""
         to_number_xml = escape(to_number) if to_number is not None else ""
-        print(f"Final websocket stream URL: {stream_url}")
         xml = f"""
         <Response>
+            <Say language="en">"This call may be monitored or recorded."</Say>
             <Connect>
                 <Stream url="{stream_url}">
                     <Parameter name="fromNumber" value="{from_number_xml}"/>
@@ -279,8 +289,7 @@ async def voice(request: Request):
         """
         return Response(content=xml.strip(), media_type="application/xml")
     except Exception as exc:
-        print(f"[ERROR] voice endpoint failed: {exc}")
-        print(traceback.format_exc())
+        logger.exception("[ERROR] voice endpoint failed: %s", exc)
         error_xml = """
         <Response>
             <Say>We are experiencing technical difficulties. Please try again shortly.</Say>
