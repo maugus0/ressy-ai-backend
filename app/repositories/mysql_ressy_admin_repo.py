@@ -4,8 +4,6 @@ MySQL repository for managing Ressy platform admin users (Admin CRM users).
 
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-from mysql.connector import Error
-
 from app.repositories.mysql_base import MySQLBaseRepository
 from app.utils.permission_utils import apply_permission_normalization
 

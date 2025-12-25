@@ -98,7 +98,12 @@ class Settings:
     DB_POOL_SIZE = int(os.getenv("DB_POOL_SIZE", 10))  # Max connections in pool
     DB_POOL_NAME = os.getenv("DB_POOL_NAME", "ressy_pool")  # Pool identifier
     DB_CONNECTION_TIMEOUT = int(os.getenv("DB_CONNECTION_TIMEOUT", 20))  # Connection timeout in seconds
-    DB_POOL_LOG_CONNECTIONS = os.getenv("DB_POOL_LOG_CONNECTIONS", "false").lower() in ("true", "1", "yes")  # Enable connection logging for debugging
+    # Enable connection logging for debugging
+    DB_POOL_LOG_CONNECTIONS = os.getenv("DB_POOL_LOG_CONNECTIONS", "false").lower() in (
+        "true",
+        "1",
+        "yes",
+    )
 
     # Database Tables
     RESTAURANTS_TABLE: str = "Restaurants"

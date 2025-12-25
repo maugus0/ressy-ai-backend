@@ -4,8 +4,6 @@ MySQL FAQ Repository for fetching and managing restaurant FAQs.
 
 from typing import Any, Dict, List, Optional, Tuple
 
-from mysql.connector import Error
-
 from app.repositories.mysql_base import MySQLBaseRepository
 
 
