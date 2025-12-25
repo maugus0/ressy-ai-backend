@@ -354,14 +354,16 @@ class MySQLReservationRepository(MySQLBaseRepository):
                 try:
                     connection.rollback()
                 except Exception:
+                    # Rollback may fail if connection is already closed - safe to ignore
                     pass
-            print(f"Error creating direct reservation: {e}")
+            self.logger.exception("Error creating direct reservation: %s", e)
             raise
         finally:
             if cursor:
                 try:
                     cursor.close()
                 except Exception:
+                    # Cursor may already be closed or in invalid state - safe to ignore
                     pass
             self._return_connection(connection)
 
