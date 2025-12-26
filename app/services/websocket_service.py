@@ -501,16 +501,16 @@ class WebSocketService:
     def _resolve_user_id(self, caller_phone: Optional[str], provided_user_id: Optional[str]) -> str:
         """
         Resolve a concrete Users.id to store on Calls.
-        Preference: existing user by caller phone, then create a placeholder user, then fallback to provided ID.
+        Uses atomic create_or_update_user to prevent duplicate user entries.
+        Preference: find or create user by caller phone, then fallback to provided ID.
         """
         fallback_user_id = str(provided_user_id) if provided_user_id else None
 
         if caller_phone:
             try:
-                existing_id = self.user_repo.get_user_id_by_phone_or_email(caller_phone, None)
-                if existing_id:
-                    return str(existing_id)
-                created_id = self.user_repo.create_user(
+                # Use atomic create_or_update_user to prevent race conditions
+                # This will either find existing user or create new one atomically
+                user_id = self.user_repo.create_or_update_user(
                     {
                         "name": None,
                         "phone_number": caller_phone,
@@ -520,8 +520,8 @@ class WebSocketService:
                         "credit_card": None,
                     }
                 )
-                if created_id:
-                    return str(created_id)
+                if user_id:
+                    return str(user_id)
             except Exception as exc:
                 self.logger.warning("Failed to resolve/create user for phone %s: %s", caller_phone, exc)
 
