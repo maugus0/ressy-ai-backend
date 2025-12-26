@@ -20,7 +20,14 @@ security = HTTPBearer(
 router = APIRouter(
     dependencies=[Depends(security)],
 )
-history_service = ActivityHistoryService()
+
+
+# ---------- Service dependencies ----------
+
+
+def get_history_service() -> ActivityHistoryService:
+    """Dependency to get a fresh activity history service instance per request."""
+    return ActivityHistoryService()
 
 
 # ---------- Pydantic Response Models ----------
@@ -174,6 +181,7 @@ async def get_order_history(
     limit: int = Query(100, ge=1, le=500, description="Maximum results"),
     offset: int = Query(0, ge=0, description="Pagination offset"),
     current_user: dict = Depends(require_role(["admin", "client"])),
+    history_service: ActivityHistoryService = Depends(get_history_service),
 ):
     """Get activity history for an order."""
     # Check if order exists and get restaurant_id for RBAC
@@ -264,6 +272,7 @@ async def get_reservation_history(
     limit: int = Query(100, ge=1, le=500, description="Maximum results"),
     offset: int = Query(0, ge=0, description="Pagination offset"),
     current_user: dict = Depends(require_role(["admin", "client"])),
+    history_service: ActivityHistoryService = Depends(get_history_service),
 ):
     """Get activity history for a reservation."""
     # Check if reservation exists and get restaurant_id for RBAC

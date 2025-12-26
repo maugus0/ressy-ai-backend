@@ -20,7 +20,14 @@ security = HTTPBearer(
 router = APIRouter(
     dependencies=[Depends(security)],
 )
-user_service = UserService()
+
+
+# ---------- Service dependencies ----------
+
+
+def get_user_service() -> UserService:
+    """Dependency to get a fresh user service instance per request."""
+    return UserService()
 
 
 # ---------- Pydantic models for request validation ----------
@@ -149,7 +156,7 @@ def _check_restaurant_access(current_user: dict, restaurant_id: int):
     raise HTTPException(status_code=403, detail="Access denied - unknown user type")
 
 
-def _check_user_access(current_user: dict, user_id: int):
+def _check_user_access(current_user: dict, user_id: int, user_service: UserService):
     """
     Check if the current user has access to the specified user.
     Validates that the user is associated with the current user's restaurant
@@ -158,6 +165,7 @@ def _check_user_access(current_user: dict, user_id: int):
     Args:
         current_user: JWT claims dict
         user_id: The user ID to check access for
+        user_service: The user service instance to use
 
     Returns:
         The user dict if access is granted
@@ -288,6 +296,7 @@ async def create_user(
     restaurant_id: int,
     request: CreateUserRequest,
     current_user: dict = Depends(require_role(["admin", "client"])),
+    user_service: UserService = Depends(get_user_service),
 ):
     """Create a new user from the dashboard."""
     _check_restaurant_access(current_user, restaurant_id)
@@ -379,6 +388,7 @@ async def get_restaurant_users(
     limit: int = Query(50, ge=1, le=500, description="Limit results"),
     offset: int = Query(0, ge=0, description="Offset for pagination"),
     current_user: dict = Depends(require_role(["admin", "client"])),
+    user_service: UserService = Depends(get_user_service),
 ):
     """Get users for a restaurant with optional filters and statistics."""
     _check_restaurant_access(current_user, restaurant_id)
@@ -438,9 +448,10 @@ Retrieve detailed information about a specific user.
 async def get_user_dashboard(
     user_id: int,
     current_user: dict = Depends(require_role(["admin", "client"])),
+    user_service: UserService = Depends(get_user_service),
 ):
     """Get a user by ID with authorization check."""
-    user = _check_user_access(current_user, user_id)
+    user = _check_user_access(current_user, user_id, user_service)
 
     # Remove restaurant_ids from response for clients (restaurant users)
     # Admins should see restaurant_ids, but clients should not
@@ -506,9 +517,10 @@ async def update_user(
     user_id: int,
     request: UpdateUserRequest,
     current_user: dict = Depends(require_role(["admin", "client"])),
+    user_service: UserService = Depends(get_user_service),
 ):
     """Update user details."""
-    _check_user_access(current_user, user_id)
+    _check_user_access(current_user, user_id, user_service)
 
     try:
         user_data = request.model_dump(exclude_none=True)

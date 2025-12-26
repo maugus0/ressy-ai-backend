@@ -35,8 +35,15 @@ security_optional = HTTPBearer(
 )
 
 router = APIRouter()
-sse_service = SSEService()
 jwt_util = JWTUtil()
+
+
+# ---------- Service dependencies ----------
+
+
+def get_sse_service() -> SSEService:
+    """Dependency to get SSE service instance."""
+    return SSEService()
 
 
 # ---------- Pydantic models ----------
@@ -293,6 +300,7 @@ async def subscribe_to_events(
         description="JWT access token (alternative to Authorization header for browser EventSource)",
     ),
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(security_optional),
+    sse_service: SSEService = Depends(get_sse_service),
 ):
     """
     Subscribe to SSE event stream.
@@ -467,6 +475,7 @@ async def trigger_escalation(
     restaurant_id: int,
     request: EscalationEventRequest,
     current_user: dict = Depends(require_role(["admin", "client"])),
+    sse_service: SSEService = Depends(get_sse_service),
 ):
     """
     Trigger an escalation event.
@@ -568,6 +577,7 @@ Useful for monitoring and debugging real-time event delivery.
 )
 async def get_sse_stats(
     current_user: dict = Depends(require_role(["admin"])),
+    sse_service: SSEService = Depends(get_sse_service),
 ):
     """
     Get SSE connection statistics.

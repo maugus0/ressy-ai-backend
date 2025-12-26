@@ -4,13 +4,20 @@ In-House Reservation API routes for handling reservation operations.
 
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from app.services.reservation_service import ReservationService
 
 router = APIRouter()
-reservation_service = ReservationService()
+
+
+# ---------- Service dependencies ----------
+
+
+def get_reservation_service() -> ReservationService:
+    """Dependency to get a fresh reservation service instance per request."""
+    return ReservationService()
 
 
 # Pydantic models for request validation
@@ -40,6 +47,7 @@ async def get_availability(
     forward_minutes: Optional[int] = Query(None, description="Forward booking window in minutes"),
     backward_minutes: Optional[int] = Query(None, description="Backward booking window in minutes"),
     party_size: Optional[int] = Query(None, gt=0, description="Party size"),
+    reservation_service: ReservationService = Depends(get_reservation_service),
 ):
     """
     Get table availability for a restaurant.
@@ -67,7 +75,11 @@ async def get_availability(
 
 # ---------- LOCK SLOT ----------
 @router.post("/booking/{restaurant_id}/slot_locks", summary="Lock a booking slot")
-async def lock_slot(restaurant_id: int, request: LockSlotRequest):
+async def lock_slot(
+    restaurant_id: int,
+    request: LockSlotRequest,
+    reservation_service: ReservationService = Depends(get_reservation_service),
+):
     """
     Lock a booking slot for a reservation.
 
@@ -90,7 +102,11 @@ async def lock_slot(restaurant_id: int, request: LockSlotRequest):
 
 # ---------- CREATE RESERVATION ----------
 @router.post("/booking/{restaurant_id}/reservations", summary="Create a reservation")
-async def create_reservation(restaurant_id: int, request: CreateReservationRequest):
+async def create_reservation(
+    restaurant_id: int,
+    request: CreateReservationRequest,
+    reservation_service: ReservationService = Depends(get_reservation_service),
+):
     """
     Create a reservation (pending status).
 
@@ -115,7 +131,10 @@ async def create_reservation(restaurant_id: int, request: CreateReservationReque
 
 # ---------- GET RESERVATION ----------
 @router.get("/{reservation_id}", summary="Get a reservation by ID")
-async def get_reservation(reservation_id: int):
+async def get_reservation(
+    reservation_id: int,
+    reservation_service: ReservationService = Depends(get_reservation_service),
+):
     """
     Get a reservation by ID.
 
@@ -132,7 +151,10 @@ async def get_reservation(reservation_id: int):
 
 # ---------- CANCEL RESERVATION ----------
 @router.put("/{reservation_id}/cancel", summary="Cancel a reservation")
-async def cancel_reservation(reservation_id: int):
+async def cancel_reservation(
+    reservation_id: int,
+    reservation_service: ReservationService = Depends(get_reservation_service),
+):
     """
     Cancel a reservation.
 
