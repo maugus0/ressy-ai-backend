@@ -93,6 +93,18 @@ class Settings:
     PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "http://localhost:5001")
     OUTBOUND_CALL_STATUS_SECRET = os.getenv("OUTBOUND_CALL_STATUS_SECRET", "")
 
+    # Database Connection Pool Configuration
+    # These settings control the MySQL connection pool behavior
+    DB_POOL_SIZE = int(os.getenv("DB_POOL_SIZE", 10))  # Max connections in pool
+    DB_POOL_NAME = os.getenv("DB_POOL_NAME", "ressy_pool")  # Pool identifier
+    DB_CONNECTION_TIMEOUT = int(os.getenv("DB_CONNECTION_TIMEOUT", 20))  # Connection timeout in seconds
+    # Enable connection logging for debugging
+    DB_POOL_LOG_CONNECTIONS = os.getenv("DB_POOL_LOG_CONNECTIONS", "false").lower() in (
+        "true",
+        "1",
+        "yes",
+    )
+
     # Database Tables
     RESTAURANTS_TABLE: str = "Restaurants"
     MENUS_TABLE: str = "Menus"

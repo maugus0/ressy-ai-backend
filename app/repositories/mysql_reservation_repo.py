@@ -293,22 +293,26 @@ class MySQLReservationRepository(MySQLBaseRepository):
         Returns:
             Dict with reservation_id and slot_id
         """
-        # Create slot booking query
-        slot_query = """
-            INSERT INTO Slot_Bookings
-            (restaurant_id, reservation_type, date_time, expires_at, status, reservation_token, party_size)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
-        """
-        import uuid
+        import uuid as uuid_module
 
-        reservation_token = str(uuid.uuid4())
+        reservation_token = str(uuid_module.uuid4())
 
-        self._ensure_connected()
+        # Use connection pool with transaction
+        connection = None
         cursor = None
         try:
-            cursor = self.connection.cursor()
+            connection = self._get_connection()
+            if connection is None:
+                raise RuntimeError("Database connection unavailable")
+
+            cursor = connection.cursor()
 
             # Insert slot booking
+            slot_query = """
+                INSERT INTO Slot_Bookings
+                (restaurant_id, reservation_type, date_time, expires_at, status, reservation_token, party_size)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+            """
             cursor.execute(
                 slot_query,
                 (
@@ -343,10 +347,15 @@ class MySQLReservationRepository(MySQLBaseRepository):
             )
             reservation_id = cursor.lastrowid
 
-            self.connection.commit()
+            connection.commit()
             return {"reservation_id": reservation_id, "slot_id": slot_id}
         except Error as e:
-            self.connection.rollback()
+            if connection:
+                try:
+                    connection.rollback()
+                except Exception:
+                    # Rollback may fail if connection is already closed - safe to ignore
+                    pass
             self.logger.exception("Error creating direct reservation: %s", e)
             raise
         finally:
@@ -354,7 +363,9 @@ class MySQLReservationRepository(MySQLBaseRepository):
                 try:
                     cursor.close()
                 except Exception:
+                    # Cursor may already be closed or in invalid state - safe to ignore
                     pass
+            self._return_connection(connection)
 
     def get_reservation_restaurant_id(self, reservation_id: int) -> Optional[int]:
         """

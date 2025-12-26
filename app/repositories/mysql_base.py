@@ -1,152 +1,294 @@
 """
 MySQL Base Repository for database operations.
-This is a placeholder for MySQL operations - adapt based on your MySQL connection library.
+
+This module provides a base class for all MySQL repositories with connection pooling.
+Connections are borrowed from a shared pool for each operation, improving performance
+under high load by avoiding the overhead of creating new connections per request.
 """
 
 import os
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
-import mysql.connector
 from dotenv import load_dotenv
 from mysql.connector import Error
+from mysql.connector.pooling import PooledMySQLConnection
 
+from app.repositories.db_pool import get_db_pool
 from app.utils.logging_config import get_logger
 
 # Load environment variables from .env file
-# TODO: Investigate import order - this shouldn't be needed if config.py loads first
 load_dotenv()
+
+logger = get_logger(__name__)
 
 
 class MySQLBaseRepository:
-    """Base repository for MySQL database operations."""
+    """
+    Base repository for MySQL database operations with connection pooling.
+
+    This class manages database connections using a shared connection pool.
+    Connections are borrowed from the pool for each operation and returned
+    automatically, significantly improving performance for high-volume API calls.
+
+    Thread Safety:
+        This class is thread-safe. Each method borrows its own connection
+        from the pool and returns it when done.
+    """
 
     def __init__(self):
-        self.logger = get_logger(__name__)
-        self.connection = None
-        self._connect()
+        """
+        Initialize the repository.
+
+        Note: Unlike the previous implementation, this no longer creates a
+        dedicated connection. Instead, connections are borrowed from the
+        shared pool as needed.
+        """
+        self._pool = get_db_pool()
 
     def __enter__(self):
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        self.close()
+        # No cleanup needed - connections are managed by the pool
+        pass
 
     def __del__(self):
-        self.close()
+        # No cleanup needed - connections are managed by the pool
+        pass
 
-    def _connect(self):
-        """Establish MySQL connection."""
-        try:
-            # Close existing connection if it exists
-            if self.connection:
-                try:
-                    if self.connection.is_connected():
-                        self.connection.close()
-                except (AttributeError, Error):
-                    # Connection is in invalid state, ignore
-                    pass
-        except Exception:
-            # Ignore any errors when closing old connection
-            pass
+    def _get_connection(self) -> Optional[PooledMySQLConnection]:
+        """
+        Get a connection from the pool.
 
-        try:
-            self.connection = mysql.connector.connect(
-                host=os.getenv("DB_HOST", os.getenv("MYSQL_HOST", "localhost")),
-                database=os.getenv("DB_NAME", os.getenv("MYSQL_DATABASE", "ressy")),
-                user=os.getenv("DB_USERNAME", os.getenv("MYSQL_USER", "root")),
-                password=os.getenv("DB_PASSWORD", os.getenv("MYSQL_PASSWORD", "root")),
-                port=int(os.getenv("DB_PORT", os.getenv("MYSQL_PORT", 3306))),
-                connection_timeout=5,  # Add timeout for faster failure in tests
-            )
-        except Error as e:
-            error_msg = f"Error connecting to MySQL: {e}"
-            self.logger.error(error_msg)
-            # In test mode, allow connection to fail without raising
-            if os.getenv("ALLOW_DB_FAILURE", "false").lower() == "true":
-                self.connection = None
-                return
-            raise
+        Returns:
+            A pooled MySQL connection, or None if unavailable.
 
-    def _ensure_connected(self):
-        """Ensure database connection is active, reconnect if needed."""
-        try:
-            if not self.connection or not self.connection.is_connected():
-                self.logger.info("MySQL connection closed, reconnecting...")
-                self._connect()
-        except (AttributeError, Error):
-            # Connection object exists but is in invalid state
-            self.logger.info("MySQL connection in invalid state, reconnecting...")
-            self.connection = None
-            self._connect()
+        Note:
+            The caller MUST return the connection using _return_connection()
+            when done.
+        """
+        return self._pool.get_connection()
+
+    def _return_connection(self, connection: Optional[PooledMySQLConnection]) -> None:
+        """
+        Return a connection to the pool with logging.
+
+        Args:
+            connection: The pooled connection to return
+        """
+        if connection:
+            self._pool.return_connection(connection)
 
     def _execute_query(self, query: str, params: tuple = None) -> List[Dict[str, Any]]:
-        """Execute SELECT query and return results."""
-        self._ensure_connected()
+        """
+        Execute SELECT query and return results.
+
+        Borrows a connection from the pool, executes the query, and returns
+        the connection to the pool when done.
+        """
+        connection = None
         cursor = None
         try:
-            cursor = self.connection.cursor(dictionary=True)
+            connection = self._get_connection()
+            if connection is None:
+                if os.getenv("ALLOW_DB_FAILURE", "false").lower() == "true":
+                    return []
+                raise RuntimeError("Database connection unavailable")
+
+            cursor = connection.cursor(dictionary=True)
             cursor.execute(query, params)
             results = cursor.fetchall()
             return results
         except Error as e:
-            self.logger.exception("Error executing query: %s", e)
+            logger.exception("Error executing query: %s", e)
             raise
         finally:
             if cursor:
                 try:
                     cursor.close()
                 except Exception:
+                    # Cursor may already be closed or in invalid state - safe to ignore
                     pass
+            self._return_connection(connection)
 
     def _execute_insert(self, query: str, params: tuple = None) -> int:
-        """Execute INSERT query and return last insert ID."""
-        self._ensure_connected()
+        """
+        Execute INSERT query and return last insert ID.
+
+        Borrows a connection from the pool, executes the insert with commit,
+        and returns the connection to the pool when done.
+        """
+        connection = None
         cursor = None
         try:
-            cursor = self.connection.cursor()
+            connection = self._get_connection()
+            if connection is None:
+                if os.getenv("ALLOW_DB_FAILURE", "false").lower() == "true":
+                    return 0
+                raise RuntimeError("Database connection unavailable")
+
+            cursor = connection.cursor()
             cursor.execute(query, params)
-            self.connection.commit()
+            connection.commit()
             last_id = cursor.lastrowid
             return last_id
         except Error as e:
-            self.connection.rollback()
-            self.logger.exception("Error executing insert: %s", e)
+            if connection:
+                try:
+                    connection.rollback()
+                except Exception:
+                    # Rollback may fail if connection is already closed - safe to ignore
+                    pass
+            logger.exception("Error executing insert: %s", e)
             raise
         finally:
             if cursor:
                 try:
                     cursor.close()
                 except Exception:
+                    # Cursor may already be closed or in invalid state - safe to ignore
                     pass
+            self._return_connection(connection)
 
     def _execute_update(self, query: str, params: tuple = None) -> int:
-        """Execute UPDATE query and return affected rows."""
-        self._ensure_connected()
+        """
+        Execute UPDATE/DELETE query and return affected rows.
+
+        Borrows a connection from the pool, executes the update with commit,
+        and returns the connection to the pool when done.
+        """
+        connection = None
         cursor = None
         try:
-            cursor = self.connection.cursor()
+            connection = self._get_connection()
+            if connection is None:
+                if os.getenv("ALLOW_DB_FAILURE", "false").lower() == "true":
+                    return 0
+                raise RuntimeError("Database connection unavailable")
+
+            cursor = connection.cursor()
             cursor.execute(query, params)
-            self.connection.commit()
+            connection.commit()
             affected = cursor.rowcount
             return affected
         except Error as e:
-            self.connection.rollback()
-            self.logger.exception("Error executing update: %s", e)
+            if connection:
+                try:
+                    connection.rollback()
+                except Exception:
+                    # Rollback may fail if connection is already closed - safe to ignore
+                    pass
+            logger.exception("Error executing update: %s", e)
             raise
         finally:
             if cursor:
                 try:
                     cursor.close()
                 except Exception:
+                    # Cursor may already be closed or in invalid state - safe to ignore
                     pass
+            self._return_connection(connection)
+
+    def _execute_many(self, query: str, params_list: list) -> int:
+        """
+        Execute a query with multiple parameter sets (bulk insert/update).
+
+        Borrows a connection from the pool, executes the bulk operation with commit,
+        and returns the connection to the pool when done.
+
+        Args:
+            query: SQL query with parameter placeholders
+            params_list: List of tuples, each containing parameters for one execution
+
+        Returns:
+            The lastrowid from the bulk operation (first inserted ID for auto-increment)
+        """
+        connection = None
+        cursor = None
+        try:
+            connection = self._get_connection()
+            if connection is None:
+                if os.getenv("ALLOW_DB_FAILURE", "false").lower() == "true":
+                    return 0
+                raise RuntimeError("Database connection unavailable")
+
+            cursor = connection.cursor()
+            cursor.executemany(query, params_list)
+            connection.commit()
+            return cursor.lastrowid
+        except Error as e:
+            if connection:
+                try:
+                    connection.rollback()
+                except Exception:
+                    # Rollback may fail if connection is already closed - safe to ignore
+                    pass
+            logger.exception("Error executing bulk operation: %s", e)
+            raise
+        finally:
+            if cursor:
+                try:
+                    cursor.close()
+                except Exception:
+                    # Cursor may already be closed or in invalid state - safe to ignore
+                    pass
+            self._return_connection(connection)
+
+    def _execute_transaction(self, operations: list) -> list:
+        """
+        Execute multiple operations in a single transaction.
+
+        Borrows a connection from the pool, executes all operations within
+        a single transaction, commits on success or rolls back on failure,
+        and returns the connection to the pool when done.
+
+        Args:
+            operations: List of tuples (query, params) to execute in order
+
+        Returns:
+            List of lastrowid for each operation
+        """
+        connection = None
+        cursor = None
+        results = []
+        try:
+            connection = self._get_connection()
+            if connection is None:
+                if os.getenv("ALLOW_DB_FAILURE", "false").lower() == "true":
+                    return []
+                raise RuntimeError("Database connection unavailable")
+
+            cursor = connection.cursor()
+            for query, params in operations:
+                cursor.execute(query, params)
+                results.append(cursor.lastrowid)
+
+            connection.commit()
+            return results
+        except Error as e:
+            if connection:
+                try:
+                    connection.rollback()
+                except Exception:
+                    # Rollback may fail if connection is already closed - safe to ignore
+                    pass
+            logger.exception("Error executing transaction: %s", e)
+            raise
+        finally:
+            if cursor:
+                try:
+                    cursor.close()
+                except Exception:
+                    # Cursor may already be closed or in invalid state - safe to ignore
+                    pass
+            self._return_connection(connection)
 
     def close(self):
-        """Close database connection."""
-        try:
-            if self.connection and self.connection.is_connected():
-                self.connection.close()
-        except (AttributeError, Error):
-            # Connection is already closed or in invalid state
-            pass
-        finally:
-            self.connection = None
+        """
+        No-op for backward compatibility.
+
+        Previously closed the dedicated connection. With connection pooling,
+        this is no longer needed as connections are returned to the pool
+        after each operation.
+        """
+        pass
