@@ -21,11 +21,35 @@ from app.services.sse_service import ReservationEventSubtype, SSEService
 
 logger = logging.getLogger(__name__)
 
-_reservation_repo = MySQLReservationRepository()
-_user_repo = MySQLUserRepository()
-_metadata_repo = MySQLUserRestaurantMetadataRepository()
-_history_service = ActivityHistoryService()
-_sse_service = SSEService()
+
+# ---------- Repository/Service Factory Functions ----------
+# Create fresh instances per function call to ensure up-to-date data
+# during active voice calls. This fixes mid-call updates not being detected.
+
+
+def _get_reservation_repo() -> MySQLReservationRepository:
+    """Create fresh reservation repository instance per function call."""
+    return MySQLReservationRepository()
+
+
+def _get_user_repo() -> MySQLUserRepository:
+    """Create fresh user repository instance per function call."""
+    return MySQLUserRepository()
+
+
+def _get_metadata_repo() -> MySQLUserRestaurantMetadataRepository:
+    """Create fresh metadata repository instance per function call."""
+    return MySQLUserRestaurantMetadataRepository()
+
+
+def _get_history_service() -> ActivityHistoryService:
+    """Create fresh history service instance per function call."""
+    return ActivityHistoryService()
+
+
+def _get_sse_service() -> SSEService:
+    """Create fresh SSE service instance per function call."""
+    return SSEService()
 
 
 async def _emit_reservation_sse_event(
@@ -39,7 +63,8 @@ async def _emit_reservation_sse_event(
     Logs errors but does not raise exceptions to avoid affecting other operations.
     """
     try:
-        await _sse_service.emit_reservation_event(
+        sse_service = _get_sse_service()
+        await sse_service.emit_reservation_event(
             restaurant_id=restaurant_id,
             reservation_id=reservation_id,
             subtype=subtype,
@@ -112,8 +137,13 @@ async def create_reservation(**kwargs) -> Dict[str, Any]:
     logger.info("create_reservation invoked restaurant_id=%s party_size=%s", args.restaurant_id, args.party_size)
 
     def _create():
+        # Create fresh repository instances for this operation
+        user_repo = _get_user_repo()
+        metadata_repo = _get_metadata_repo()
+        reservation_repo = _get_reservation_repo()
+
         # 1. Create or update user with customer details
-        user_id = _user_repo.create_or_update_user(
+        user_id = user_repo.create_or_update_user(
             {
                 "name": args.customer_name,
                 "phone_number": args.customer_contact,
@@ -126,7 +156,7 @@ async def create_reservation(**kwargs) -> Dict[str, Any]:
 
         # 1.5. Create user-restaurant metadata mapping (for dashboard user visibility)
         try:
-            _metadata_repo.create_mapping(
+            metadata_repo.create_mapping(
                 user_id=user_id,
                 restaurant_id=int(args.restaurant_id),
                 source="reservation",
@@ -159,7 +189,7 @@ async def create_reservation(**kwargs) -> Dict[str, Any]:
 
         # 5. Create slot booking with expires_at = date_time + 15 minutes
         expires_at = reservation_datetime + timedelta(minutes=15)
-        slot_id = _reservation_repo.create_slot_booking(
+        slot_id = reservation_repo.create_slot_booking(
             restaurant_id=int(args.restaurant_id),
             date_time=reservation_datetime,
             expires_at=expires_at,
@@ -170,7 +200,7 @@ async def create_reservation(**kwargs) -> Dict[str, Any]:
         )
 
         # 6. Create reservation with status = "pending" (restaurant will confirm)
-        reservation_id = _reservation_repo.create_reservation(
+        reservation_id = reservation_repo.create_reservation(
             slot_booking_id=slot_id,
             user_id=user_id,
             confirmation_number=confirmation_number,
@@ -206,7 +236,8 @@ async def create_reservation(**kwargs) -> Dict[str, Any]:
                     reservation["reservation_id"],
                     args.restaurant_id,
                 )
-                history_id = _history_service.log_reservation_created(
+                history_service = _get_history_service()
+                history_id = history_service.log_reservation_created(
                     reservation_id=reservation["reservation_id"],
                     restaurant_id=int(args.restaurant_id),
                     reservation_data={
@@ -265,13 +296,16 @@ async def lookup_reservation(**kwargs) -> Dict[str, Any]:
     logger.info("lookup_reservation invoked customer_contact=%s", args.customer_contact)
 
     def _lookup():
+        user_repo = _get_user_repo()
+        reservation_repo = _get_reservation_repo()
+
         # Find user by phone number
-        user_id = _user_repo.get_user_id_by_phone_or_email(args.customer_contact, None)
+        user_id = user_repo.get_user_id_by_phone_or_email(args.customer_contact, None)
         if not user_id:
             return None
 
         # Get the latest reservation for this user
-        reservation = _reservation_repo.get_latest_by_user(user_id, restaurant_id=args.restaurant_id)
+        reservation = reservation_repo.get_latest_by_user(user_id, restaurant_id=args.restaurant_id)
         return reservation
 
     reservation = await _run_service_call(_lookup)
@@ -324,10 +358,13 @@ async def update_reservation(**kwargs) -> Dict[str, Any]:
     logger.info("update_reservation invoked customer_contact=%s", args.customer_contact)
 
     def _update():
-        user_id = _user_repo.get_user_id_by_phone_or_email(args.customer_contact, None)
+        user_repo = _get_user_repo()
+        reservation_repo = _get_reservation_repo()
+
+        user_id = user_repo.get_user_id_by_phone_or_email(args.customer_contact, None)
         if not user_id:
             return None, None, None
-        reservation = _reservation_repo.get_latest_by_user(user_id, restaurant_id=args.restaurant_id)
+        reservation = reservation_repo.get_latest_by_user(user_id, restaurant_id=args.restaurant_id)
         if not reservation:
             return None, None, None
 
@@ -351,7 +388,7 @@ async def update_reservation(**kwargs) -> Dict[str, Any]:
 
         # Update the reservation with provided fields
         # Status changes (e.g., cancellation) are allowed within the update window
-        _reservation_repo.update_reservation(
+        reservation_repo.update_reservation(
             reservation_id=reservation_id,
             party_size=args.party_size,
             special_request=args.special_request,
@@ -366,10 +403,10 @@ async def update_reservation(**kwargs) -> Dict[str, Any]:
                 parsed_datetime = datetime.fromisoformat(new_datetime.replace("Z", "+00:00"))
             except ValueError:
                 parsed_datetime = datetime.strptime(new_datetime, "%Y-%m-%d %H:%M")
-            _reservation_repo.update_slot_booking_datetime(reservation.get("slot_booking_id"), parsed_datetime)
+            reservation_repo.update_slot_booking_datetime(reservation.get("slot_booking_id"), parsed_datetime)
 
         # Return updated reservation and previous data for history logging
-        updated_reservation = _reservation_repo.get_reservation_by_id(reservation_id)
+        updated_reservation = reservation_repo.get_reservation_by_id(reservation_id)
         return updated_reservation, previous_data, reservation.get("restaurant_id")
 
     result, previous_data, extra = await _run_service_call(_update)
@@ -404,6 +441,7 @@ async def update_reservation(**kwargs) -> Dict[str, Any]:
                     updated.get("id"),
                     restaurant_id,
                 )
+                history_service = _get_history_service()
                 new_data = {
                     "status": updated.get("status"),
                     "party_size": updated.get("party_size"),
@@ -411,7 +449,7 @@ async def update_reservation(**kwargs) -> Dict[str, Any]:
                     "special_request": updated.get("special_request"),
                     "notes": updated.get("notes"),
                 }
-                history_id = _history_service.log_reservation_updated(
+                history_id = history_service.log_reservation_updated(
                     reservation_id=updated.get("id"),
                     restaurant_id=int(restaurant_id),
                     previous_data=previous_data or {},
@@ -467,6 +505,8 @@ async def check_reservation_availability(**kwargs) -> Dict[str, Any]:
 
     def _check():
         try:
+            reservation_repo = _get_reservation_repo()
+
             # Parse dates
             try:
                 start_dt = datetime.fromisoformat(args.date_start_iso.replace("Z", "+00:00"))
@@ -479,7 +519,7 @@ async def check_reservation_availability(**kwargs) -> Dict[str, Any]:
                 end_dt = datetime.strptime(args.date_end_iso, "%Y-%m-%d %H:%M")
 
             # Get locked/reserved slots in this time range
-            locked_slots = _reservation_repo.get_locked_slots(
+            locked_slots = reservation_repo.get_locked_slots(
                 restaurant_id=int(args.restaurant_id),
                 start_date_time=start_dt,
                 end_date_time=end_dt,

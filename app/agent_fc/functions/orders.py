@@ -73,12 +73,39 @@ class UpdateOrderDetailsArgs(BaseModel):
     status: Optional[str] = None  # Allow status changes (e.g., "cancelled") within update window
 
 
-_order_repo = MySQLOrderRepository()
-_user_repo = MySQLUserRepository()
-_menu_repo = MySQLMenuRepository()
-_metadata_repo = MySQLUserRestaurantMetadataRepository()
-_history_service = ActivityHistoryService()
-_sse_service = SSEService()
+# ---------- Repository/Service Factory Functions ----------
+# Create fresh instances per function call to ensure up-to-date data
+# during active voice calls. This fixes mid-call updates not being detected.
+
+
+def _get_order_repo() -> MySQLOrderRepository:
+    """Create fresh order repository instance per function call."""
+    return MySQLOrderRepository()
+
+
+def _get_user_repo() -> MySQLUserRepository:
+    """Create fresh user repository instance per function call."""
+    return MySQLUserRepository()
+
+
+def _get_menu_repo() -> MySQLMenuRepository:
+    """Create fresh menu repository instance per function call."""
+    return MySQLMenuRepository()
+
+
+def _get_metadata_repo() -> MySQLUserRestaurantMetadataRepository:
+    """Create fresh metadata repository instance per function call."""
+    return MySQLUserRestaurantMetadataRepository()
+
+
+def _get_history_service() -> ActivityHistoryService:
+    """Create fresh history service instance per function call."""
+    return ActivityHistoryService()
+
+
+def _get_sse_service() -> SSEService:
+    """Create fresh SSE service instance per function call."""
+    return SSEService()
 
 
 async def _emit_order_sse_event(
@@ -92,7 +119,8 @@ async def _emit_order_sse_event(
     Logs errors but does not raise exceptions to avoid affecting other operations.
     """
     try:
-        await _sse_service.emit_order_event(
+        sse_service = _get_sse_service()
+        await sse_service.emit_order_event(
             restaurant_id=restaurant_id,
             order_id=order_id,
             subtype=subtype,
@@ -141,7 +169,8 @@ async def _populate_missing_prices(restaurant_id: int, items: List[OrderItem]) -
         return
 
     try:
-        menu_items = await _run_service_call(_menu_repo.get_available_items_by_restaurant, restaurant_id)
+        menu_repo = _get_menu_repo()
+        menu_items = await _run_service_call(menu_repo.get_available_items_by_restaurant, restaurant_id)
     except Exception as exc:  # noqa: BLE001 - defensive for agent calls
         logger.warning("Unable to fetch menu for price lookup restaurant_id=%s: %s", restaurant_id, exc)
         return
@@ -188,8 +217,13 @@ async def create_order(**kwargs) -> Dict[str, Any]:
     logger.info("create_order invoked customer_contact=%s items=%s", args.customer_contact, len(args.items))
 
     def _create():
+        # Create fresh repository instances for this operation
+        user_repo = _get_user_repo()
+        metadata_repo = _get_metadata_repo()
+        order_repo = _get_order_repo()
+
         # Ensure user exists/updated
-        user_id = _user_repo.create_or_update_user(
+        user_id = user_repo.create_or_update_user(
             {
                 "name": args.customer_name,
                 "phone_number": args.customer_contact,
@@ -203,7 +237,7 @@ async def create_order(**kwargs) -> Dict[str, Any]:
         # Create user-restaurant metadata mapping (for dashboard user visibility)
         if args.restaurant_id:
             try:
-                _metadata_repo.create_mapping(
+                metadata_repo.create_mapping(
                     user_id=user_id,
                     restaurant_id=int(args.restaurant_id),
                     source="order",
@@ -220,13 +254,13 @@ async def create_order(**kwargs) -> Dict[str, Any]:
             "order_details": [item.model_dump() for item in args.items],
             "customization": args.metadata.get("customization", {}),
         }
-        order_id = _order_repo.create_order(user_id, order_payload)
+        order_id = order_repo.create_order(user_id, order_payload)
         # Store detail rows for relational table
         for item in args.items:
             item_id = item.item_id
             if item_id:
                 for _ in range(max(item.quantity, 1)):
-                    _order_repo.create_order_details(order_id, item_id)
+                    order_repo.create_order_details(order_id, item_id)
         return order_id, user_id
 
     order_id, user_id = await _run_service_call(_create)
@@ -240,7 +274,8 @@ async def create_order(**kwargs) -> Dict[str, Any]:
                     order_id,
                     args.restaurant_id,
                 )
-                history_id = _history_service.log_order_created(
+                history_service = _get_history_service()
+                history_id = history_service.log_order_created(
                     order_id=order_id,
                     restaurant_id=int(args.restaurant_id),
                     order_data={
@@ -291,10 +326,12 @@ async def lookup_order(**kwargs) -> Dict[str, Any]:
     logger.info("lookup_order invoked customer_contact=%s", args.customer_contact)
 
     def _lookup():
-        user_id = _user_repo.get_user_id_by_phone_or_email(args.customer_contact, None)
+        user_repo = _get_user_repo()
+        order_repo = _get_order_repo()
+        user_id = user_repo.get_user_id_by_phone_or_email(args.customer_contact, None)
         if not user_id:
             return None
-        return _order_repo.get_latest_order_by_user(user_id, args.restaurant_id)
+        return order_repo.get_latest_order_by_user(user_id, args.restaurant_id)
 
     order = await _run_service_call(_lookup)
     if not order:
@@ -322,7 +359,8 @@ async def check_items_availability(**kwargs) -> Dict[str, Any]:
         args.restaurant_id,
         len(args.items),
     )
-    menu_items = await _run_service_call(_menu_repo.get_available_items_by_restaurant, args.restaurant_id)
+    menu_repo = _get_menu_repo()
+    menu_items = await _run_service_call(menu_repo.get_available_items_by_restaurant, args.restaurant_id)
     menu_items = _flatten_menu_items(menu_items)
     results = []
     for requested in args.items:
@@ -391,10 +429,13 @@ async def update_order_details(**kwargs) -> Dict[str, Any]:
     logger.info("update_order_details invoked customer_contact=%s", args.customer_contact)
 
     def _update():
-        user_id = _user_repo.get_user_id_by_phone_or_email(args.customer_contact, None)
+        user_repo = _get_user_repo()
+        order_repo = _get_order_repo()
+
+        user_id = user_repo.get_user_id_by_phone_or_email(args.customer_contact, None)
         if not user_id:
             return None, None, None, None
-        order = _order_repo.get_latest_order_by_user(user_id, args.restaurant_id)
+        order = order_repo.get_latest_order_by_user(user_id, args.restaurant_id)
         if not order:
             return None, None, None, None
         order_id = order.get("id")
@@ -416,13 +457,13 @@ async def update_order_details(**kwargs) -> Dict[str, Any]:
 
         order_details = [item.model_dump() for item in args.items]
         total_amount = _calculate_total(args.items)
-        _order_repo.update_order_details(order_id, order_details, args.customization, total_amount)
+        order_repo.update_order_details(order_id, order_details, args.customization, total_amount)
 
         # Update status if provided (e.g., cancellation within update window)
         if args.status:
-            _order_repo.update_order_status(order_id, args.status)
+            order_repo.update_order_status(order_id, args.status)
 
-        updated = _order_repo.get_order_by_id(order_id)
+        updated = order_repo.get_order_by_id(order_id)
 
         return updated, previous_data, order.get("restaurant_id"), order
 
@@ -455,13 +496,14 @@ async def update_order_details(**kwargs) -> Dict[str, Any]:
                     updated_order.get("id"),
                     restaurant_id,
                 )
+                history_service = _get_history_service()
                 new_data = {
                     "status": updated_order.get("status"),
                     "order_details": updated_order.get("order_details"),
                     "customization": updated_order.get("customization"),
                     "total_amount": updated_order.get("total_amount"),
                 }
-                history_id = _history_service.log_order_updated(
+                history_id = history_service.log_order_updated(
                     order_id=updated_order.get("id"),
                     restaurant_id=int(restaurant_id),
                     previous_data=previous_data or {},

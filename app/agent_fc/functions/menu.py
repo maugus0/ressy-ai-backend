@@ -10,8 +10,18 @@ from pydantic import BaseModel, ConfigDict, model_validator
 from app.repositories.mysql_menu_repo import MySQLMenuRepository
 from app.utils.logging_config import get_logger
 
-_menu_repo = MySQLMenuRepository()
 logger = get_logger(__name__)
+
+
+def _get_menu_repo() -> MySQLMenuRepository:
+    """
+    Create a fresh menu repository instance for each function call.
+
+    This ensures fresh database connections from the pool, preventing stale
+    data issues during active voice calls. Each function call gets its own
+    repository instance with a fresh connection.
+    """
+    return MySQLMenuRepository()
 
 
 class ListMenuArgs(BaseModel):
@@ -70,7 +80,8 @@ async def list_menu_items(**kwargs) -> Dict[str, Any]:
     logger.info("list_menu_items invoked restaurant_id=%s", args.restaurant_id)
 
     def _fetch():
-        return _menu_repo.get_available_items_by_restaurant(args.restaurant_id)
+        menu_repo = _get_menu_repo()
+        return menu_repo.get_available_items_by_restaurant(args.restaurant_id)
 
     try:
         items = await _run_repo_call(_fetch)
@@ -95,6 +106,9 @@ async def list_menu_items(**kwargs) -> Dict[str, Any]:
 async def get_menu_item_details(**kwargs) -> Dict[str, Any]:
     """
     Lookup detailed information about a single menu item using its ID, or search for items.
+
+    Creates a fresh repository instance per call to ensure up-to-date menu data
+    during active voice calls (fixes mid-call menu updates not being detected).
     """
     args = GetMenuItemDetailsArgs.model_validate(kwargs)
     item: Optional[Dict[str, Any]] = None
@@ -106,13 +120,15 @@ async def get_menu_item_details(**kwargs) -> Dict[str, Any]:
     )
 
     def _fetch_by_id():
-        found = _menu_repo.get_menu_by_id(args.restaurant_id, args.item_id)
+        menu_repo = _get_menu_repo()
+        found = menu_repo.get_menu_by_id(args.restaurant_id, args.item_id)
         if not found:
-            found = _menu_repo.get_by_id(args.item_id)
+            found = menu_repo.get_by_id(args.item_id)
         return found
 
     def _search():
-        items, _count = _menu_repo.get_paginated_by_restaurant(
+        menu_repo = _get_menu_repo()
+        items, _count = menu_repo.get_paginated_by_restaurant(
             restaurant_id=args.restaurant_id,
             page=1,
             limit=25,

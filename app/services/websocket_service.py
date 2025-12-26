@@ -587,6 +587,101 @@ class WebSocketService:
         state.farewell_started = False
         state.farewell_expected_text = timeout_message
 
+    def _refresh_menu_context(
+        self,
+        context_payload: Dict[str, Any],
+        restaurant_id: Optional[int],
+    ) -> bool:
+        """
+        Refresh menu and specials data in the context payload.
+
+        This ensures the voice agent has up-to-date menu information during active calls.
+        Changes made mid-call (availability, new items, specials) are reflected.
+
+        Returns:
+            True if menu was refreshed successfully, False otherwise.
+        """
+        if not restaurant_id:
+            return False
+
+        try:
+            # Create fresh menu service instance for up-to-date data
+            menu_service = MenuService()
+            menu_items = menu_service.get_available_items_by_restaurant(restaurant_id)
+
+            # Separate specials from regular menu items
+            specials: list[dict[str, Any]] = [item for item in menu_items if item.get("is_special")]
+            regular_menu_items = [item for item in menu_items if not item.get("is_special")]
+
+            # Update context with fresh menu data
+            context_payload["menu"] = self._summarize_menu(regular_menu_items)
+            context_payload["specials"] = self._summarize_specials(specials)
+
+            self.logger.info(
+                "[MenuRefresh] Refreshed menu context for restaurant_id=%s: " "%d menu items, %d specials",
+                restaurant_id,
+                len(regular_menu_items),
+                len(specials),
+            )
+            return True
+
+        except Exception as exc:
+            self.logger.warning(
+                "[MenuRefresh] Failed to refresh menu for restaurant_id=%s: %s",
+                restaurant_id,
+                exc,
+            )
+            return False
+
+    async def _menu_refresh_guard(
+        self,
+        refresh_interval: float,
+        context_payload: Dict[str, Any],
+        restaurant_id: Optional[int],
+        shutdown_event: Optional[asyncio.Event] = None,
+    ) -> None:
+        """
+        Periodically refresh menu context during active calls.
+
+        This ensures the voice agent has access to the latest menu information,
+        including newly added items, updated availability, and current specials.
+        """
+        if refresh_interval <= 0:
+            self.logger.debug("[MenuRefresh] Periodic refresh disabled (interval=0)")
+            return
+
+        try:
+            while True:
+                if shutdown_event and shutdown_event.is_set():
+                    return
+
+                # Wait for the refresh interval
+                try:
+                    if shutdown_event:
+                        await asyncio.wait_for(
+                            shutdown_event.wait(),
+                            timeout=refresh_interval,
+                        )
+                        return  # Shutdown was triggered
+                    else:
+                        await asyncio.sleep(refresh_interval)
+                except asyncio.TimeoutError:
+                    pass  # Normal case - interval elapsed, proceed to refresh
+
+                if shutdown_event and shutdown_event.is_set():
+                    return
+
+                # Refresh menu data in background thread (DB operation)
+                await asyncio.to_thread(
+                    self._refresh_menu_context,
+                    context_payload,
+                    restaurant_id,
+                )
+
+        except asyncio.CancelledError:
+            self.logger.debug("[MenuRefresh] Guard cancelled")
+            return
+
     async def _call_idle_guard(
         self,
         idle_seconds: float,
@@ -1106,6 +1201,7 @@ class WebSocketService:
         deepgram_key_terms: Optional[Any] = None
         call_timeout_task: Optional[asyncio.Task] = None
         call_idle_task: Optional[asyncio.Task] = None
+        menu_refresh_task: Optional[asyncio.Task] = None
 
         twilio_task = asyncio.create_task(
             self.twilio_receiver(
@@ -1201,6 +1297,23 @@ class WebSocketService:
                             )
                         )
 
+                        # Start periodic menu refresh to ensure agent has up-to-date menu data
+                        menu_refresh_interval = float(getattr(settings, "AGENT_MENU_REFRESH_INTERVAL_SECONDS", 45))
+                        restaurant_id_int = None
+                        if call_resources.restaurant_id:
+                            try:
+                                restaurant_id_int = int(call_resources.restaurant_id)
+                            except (TypeError, ValueError):
+                                pass
+                        menu_refresh_task = asyncio.create_task(
+                            self._menu_refresh_guard(
+                                menu_refresh_interval,
+                                call_resources.context_payload,
+                                restaurant_id_int,
+                                shutdown_event,
+                            )
+                        )
+
                         sts_sender_task = asyncio.create_task(self.sts_sender(sts_ws, audio_queue, shutdown_event))
                         sts_receiver_task = asyncio.create_task(
                             self.sts_receiver(
@@ -1237,6 +1350,8 @@ class WebSocketService:
                                 await asyncio.gather(call_timeout_task, return_exceptions=True)
                             if call_idle_task:
                                 await asyncio.gather(call_idle_task, return_exceptions=True)
+                            if menu_refresh_task:
+                                await asyncio.gather(menu_refresh_task, return_exceptions=True)
                         finally:
                             for task in tasks:
                                 if not task.done():
@@ -1250,6 +1365,10 @@ class WebSocketService:
                                 if not call_idle_task.done():
                                     call_idle_task.cancel()
                                 await asyncio.gather(call_idle_task, return_exceptions=True)
+                            if menu_refresh_task:
+                                if not menu_refresh_task.done():
+                                    menu_refresh_task.cancel()
+                                await asyncio.gather(menu_refresh_task, return_exceptions=True)
                     finally:
                         async with self._connections_lock:
                             self._active_deepgram.discard(sts_ws)
@@ -1285,6 +1404,10 @@ class WebSocketService:
                 if not call_idle_task.done():
                     call_idle_task.cancel()
                 await asyncio.gather(call_idle_task, return_exceptions=True)
+            if menu_refresh_task:
+                if not menu_refresh_task.done():
+                    menu_refresh_task.cancel()
+                await asyncio.gather(menu_refresh_task, return_exceptions=True)
 
             async with self._connections_lock:
                 self._active_twilio.discard(twilio_ws)
