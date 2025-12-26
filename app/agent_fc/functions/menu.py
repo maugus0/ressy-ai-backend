@@ -74,17 +74,22 @@ def _summarize_menu_items(items: List[Dict[str, Any]]) -> Tuple[List[str], List[
 
 async def list_menu_items(**kwargs) -> Dict[str, Any]:
     """
-    Return the full available menu for a restaurant with categories and item names.
+    Return the full menu for a restaurant with ALL items (available and unavailable) organized by categories.
+
+    This allows the agent to inform customers about unavailable items when browsing the menu,
+    rather than hiding them completely. The agent should mention unavailable items but clearly
+    indicate they cannot be ordered right now.
     """
     args = ListMenuArgs.model_validate(kwargs)
     logger.info("list_menu_items invoked restaurant_id=%s", args.restaurant_id)
 
     def _fetch():
         menu_repo = _get_menu_repo()
-        return menu_repo.get_available_items_by_restaurant(args.restaurant_id)
+        # Get ALL items (both available and unavailable) to show complete menu
+        return menu_repo.get_menus_by_restaurant(args.restaurant_id)
 
     try:
-        items = await _run_repo_call(_fetch)
+        all_items = await _run_repo_call(_fetch)
     except Exception as exc:  # noqa: BLE001 - defensive for agent calls
         logger.exception("[ERROR] list_menu_items failed restaurant_id=%s: %s", args.restaurant_id, exc)
         return {
@@ -93,13 +98,28 @@ async def list_menu_items(**kwargs) -> Dict[str, Any]:
             "message": "Unable to load menu right now.",
         }
 
-    categories, summaries = _summarize_menu_items(items or [])
-    status = "FOUND" if summaries else "EMPTY"
+    # Separate items by availability
+    available_items = [item for item in (all_items or []) if item.get("is_available")]
+    unavailable_items = [item for item in (all_items or []) if not item.get("is_available")]
+
+    # Summarize both lists
+    categories_available, summaries_available = _summarize_menu_items(available_items)
+    categories_unavailable, summaries_unavailable = _summarize_menu_items(unavailable_items)
+
+    # Combine unique categories from both lists
+    all_categories = list(dict.fromkeys(categories_available + categories_unavailable))
+
+    status = "FOUND" if (summaries_available or summaries_unavailable) else "EMPTY"
+
     return {
         "status": status,
         "restaurant_id": args.restaurant_id,
-        "categories": categories,
-        "items": summaries,
+        "categories": all_categories,
+        "items_available": summaries_available,
+        "items_unavailable": summaries_unavailable,
+        "total_items": len(summaries_available) + len(summaries_unavailable),
+        "available_count": len(summaries_available),
+        "unavailable_count": len(summaries_unavailable),
     }
 
 

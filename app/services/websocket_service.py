@@ -104,30 +104,58 @@ class WebSocketService:
         # This allows agent to inform customers when items are unavailable instead of saying "trouble checking"
         all_menu_items = self.menu_service.menu_repo.get_menus_by_restaurant(restaurant_id) if restaurant_id else []
 
-        # Separate items by availability and special status
+        # Process items in a single pass: separate by availability and build category structures
+        # This minimizes iterations for better performance
         available_items: list[dict[str, Any]] = []
         unavailable_items: list[dict[str, Any]] = []
         specials: list[dict[str, Any]] = []
+        menu_by_category: Dict[str, list[dict[str, Any]]] = {}
+        unavailable_by_category: Dict[str, list[dict[str, Any]]] = {}
 
         for item in all_menu_items:
+            item_id = item.get("id")
+            item_name = item.get("item_name")
+            if not item_name:  # Skip items without names
+                continue
+
             item_dict = {
-                "item_id": item.get("id"),
-                "name": item.get("item_name"),
+                "item_id": item_id,
+                "name": item_name,
                 "description": item.get("item_desc"),
                 "price": float(item.get("price", 0)) if item.get("price") is not None else 0.0,
                 "category": item.get("category"),
                 "sub_category": item.get("sub_category"),
             }
 
-            # Check if special
-            if item.get("is_special"):
+            # Check availability (handle both boolean and int 0/1 from MySQL)
+            is_available = item.get("is_available")
+            is_available_bool = is_available is True or (is_available is not None and int(is_available) == 1)
+
+            # Check if special (handle both boolean and int 0/1 from MySQL)
+            is_special = item.get("is_special")
+            is_special_bool = is_special is True or (is_special is not None and int(is_special) == 1)
+
+            if is_special_bool:
                 specials.append(item_dict)
 
-            # Separate by availability
-            if item.get("is_available"):
+            # Build category structures and separate lists in one pass
+            category = item.get("category") or "Uncategorized"
+            item_summary = {
+                "item_id": item_id,
+                "name": item_name,
+                "price": item_dict["price"],
+            }
+
+            if is_available_bool:
                 available_items.append(item_dict)
+                if category not in menu_by_category:
+                    menu_by_category[category] = []
+                menu_by_category[category].append(item_summary)
             else:
                 unavailable_items.append(item_dict)
+                if category not in unavailable_by_category:
+                    unavailable_by_category[category] = []
+                unavailable_by_category[category].append(item_summary)
 
         faqs = self.faq_service.list_faqs(restaurant_id) if restaurant_id else []
 
@@ -149,6 +177,17 @@ class WebSocketService:
         if not isinstance(service_options, dict):
             service_options = {}
 
+        # Create combined structure showing all items per category with availability status
+        # This makes it easier for the agent to see both available and unavailable items together
+        all_items_by_category: Dict[str, Dict[str, list[dict[str, Any]]]] = {}
+        all_categories = set(menu_by_category.keys()) | set(unavailable_by_category.keys())
+
+        for category in all_categories:
+            all_items_by_category[category] = {
+                "available": menu_by_category.get(category, []),
+                "unavailable": unavailable_by_category.get(category, []),
+            }
+
         context = {
             "restaurant_profile": {
                 "id": restaurant_id,
@@ -166,6 +205,13 @@ class WebSocketService:
                 "delivery": service_options.get("delivery", False),
                 "reservations": service_options.get("reservations", True),
             },
+            # Menu organized by category - PRIMARY structure for agent to use
+            # Each category contains both "available" and "unavailable" arrays
+            "menu_by_category": all_items_by_category,
+            # Separate structures for backward compatibility and explicit access
+            "menu_available_by_category": menu_by_category,
+            "menu_unavailable_by_category": unavailable_by_category,
+            # Legacy structure (kept for backward compatibility)
             "menu": self._summarize_menu(available_items),
             "menu_unavailable": self._summarize_menu(unavailable_items),
             "specials": self._summarize_specials(specials),
@@ -481,11 +527,6 @@ class WebSocketService:
             name="check_items_availability",
             handler=orders.check_items_availability,
             arg_model=orders.CheckItemsAvailabilityArgs,
-        )
-        registry.register(
-            name="list_menu_items",
-            handler=menu.list_menu_items,
-            arg_model=menu.ListMenuArgs,
         )
         registry.register(
             name="get_menu_item_details",
