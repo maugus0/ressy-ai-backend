@@ -86,7 +86,9 @@ def _pick_message(message_set: list[str]) -> str:
     return random.choice(message_set)
 
 
-_sse_service = SSEService()
+def _get_sse_service() -> SSEService:
+    """Create fresh SSE service instance per function call."""
+    return SSEService()
 
 
 async def _emit_escalation_sse_event(
@@ -97,7 +99,8 @@ async def _emit_escalation_sse_event(
 ) -> None:
     """Broadcast escalation to SSE subscribers; keep failures from affecting the call flow."""
     try:
-        await _sse_service.emit_escalation_user_requested(
+        sse_service = _get_sse_service()
+        await sse_service.emit_escalation_user_requested(
             restaurant_id=restaurant_id,
             caller_phone=caller_phone,
             reason=reason,

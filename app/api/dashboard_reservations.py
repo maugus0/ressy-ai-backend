@@ -25,9 +25,24 @@ security = HTTPBearer(
 router = APIRouter(
     dependencies=[Depends(security)],  # Apply security to all endpoints in this router
 )
-reservation_service = ReservationService()
-sse_service = SSEService()
-history_service = ActivityHistoryService()
+
+
+# ---------- Service dependencies ----------
+
+
+def get_reservation_service() -> ReservationService:
+    """Dependency to get a fresh reservation service instance per request."""
+    return ReservationService()
+
+
+def get_sse_service() -> SSEService:
+    """Dependency to get SSE service instance."""
+    return SSEService()
+
+
+def get_history_service() -> ActivityHistoryService:
+    """Dependency to get activity history service instance."""
+    return ActivityHistoryService()
 
 
 # ---------- Background task helpers ----------
@@ -42,9 +57,11 @@ async def _emit_reservation_sse_event(
     """
     Background task to emit SSE reservation events.
     Logs errors but does not raise exceptions to avoid affecting other operations.
+    Creates its own SSE service instance since background tasks run outside request context.
     """
     try:
-        await sse_service.emit_reservation_event(
+        sse_svc = SSEService()
+        await sse_svc.emit_reservation_event(
             restaurant_id=restaurant_id,
             reservation_id=reservation_id,
             subtype=subtype,
@@ -208,7 +225,7 @@ def _check_restaurant_access(current_user: dict, restaurant_id: int):
     raise HTTPException(status_code=403, detail="Access denied - unknown user type")
 
 
-def _check_reservation_access(current_user: dict, reservation_id: int):
+def _check_reservation_access(current_user: dict, reservation_id: int, reservation_service: ReservationService):
     """
     Check if the current user has access to the specified reservation.
     Fetches the reservation with its associated restaurant_id from slot_bookings
@@ -220,6 +237,7 @@ def _check_reservation_access(current_user: dict, reservation_id: int):
     Args:
         current_user: JWT claims dict
         reservation_id: The reservation ID to check access for
+        reservation_service: The reservation service instance to use
 
     Returns:
         The reservation dict if access is granted
@@ -305,6 +323,8 @@ async def create_reservation_direct(
     request: CreateReservationDirectRequest,
     background_tasks: BackgroundTasks,
     current_user: dict = Depends(require_role(["admin", "client"])),
+    reservation_service: ReservationService = Depends(get_reservation_service),
+    history_service: ActivityHistoryService = Depends(get_history_service),
 ):
     """Create a confirmed reservation directly from the dashboard."""
     _check_restaurant_access(current_user, restaurant_id)
@@ -403,9 +423,10 @@ async def finalize_reservation(
     reservation_id: int,
     request: FinalizeReservationRequest,
     current_user: dict = Depends(require_role(["admin", "client"])),
+    reservation_service: ReservationService = Depends(get_reservation_service),
 ):
     """Finalize a reservation by changing status from 'pending' to 'confirmed'."""
-    _check_reservation_access(current_user, reservation_id)
+    _check_reservation_access(current_user, reservation_id, reservation_service)
 
     try:
         result = reservation_service.finalize_reservation(
@@ -490,6 +511,7 @@ async def get_restaurant_reservations(
     limit: int = Query(100, ge=1, le=1000, description="Limit results"),
     offset: int = Query(0, ge=0, description="Offset for pagination"),
     current_user: dict = Depends(require_role(["admin", "client"])),
+    reservation_service: ReservationService = Depends(get_reservation_service),
 ):
     """Get reservations for a restaurant with optional filters."""
     _check_restaurant_access(current_user, restaurant_id)
@@ -579,9 +601,11 @@ previous and new values, and a human-readable summary.
 async def get_reservation_dashboard(
     reservation_id: int,
     current_user: dict = Depends(require_role(["admin", "client"])),
+    reservation_service: ReservationService = Depends(get_reservation_service),
+    history_service: ActivityHistoryService = Depends(get_history_service),
 ):
     """Get a reservation by ID with authorization check and history."""
-    reservation = _check_reservation_access(current_user, reservation_id)
+    reservation = _check_reservation_access(current_user, reservation_id, reservation_service)
 
     # Fetch history entries for this reservation
     try:
@@ -674,9 +698,11 @@ async def update_reservation(
     request: UpdateReservationRequest,
     background_tasks: BackgroundTasks,
     current_user: dict = Depends(require_role(["admin", "client"])),
+    reservation_service: ReservationService = Depends(get_reservation_service),
+    history_service: ActivityHistoryService = Depends(get_history_service),
 ):
     """Update reservation and slot booking details."""
-    reservation = _check_reservation_access(current_user, reservation_id)
+    reservation = _check_reservation_access(current_user, reservation_id, reservation_service)
     restaurant_id = reservation.get("restaurant_id")
 
     # Store previous state for history logging
@@ -791,9 +817,11 @@ async def cancel_reservation_dashboard(
     reservation_id: int,
     background_tasks: BackgroundTasks,
     current_user: dict = Depends(require_role(["admin", "client"])),
+    reservation_service: ReservationService = Depends(get_reservation_service),
+    history_service: ActivityHistoryService = Depends(get_history_service),
 ):
     """Cancel a reservation."""
-    reservation = _check_reservation_access(current_user, reservation_id)
+    reservation = _check_reservation_access(current_user, reservation_id, reservation_service)
     restaurant_id = reservation.get("restaurant_id")
     previous_status = reservation.get("status")
 

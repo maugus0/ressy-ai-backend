@@ -61,7 +61,9 @@ def get_function_definitions() -> List[Dict[str, Any]]:
         _definition(
             name="get_menu_item_details",
             description="Retrieve price/description/prep-time details for a specific menu item by item_id, OR search the restaurant menu by search_term. "
-            "For searching, use the base form of the main food item keyword (e.g., convert plurals to singulars like 'tacos' → 'taco', and remove size/flavor modifiers like 'large spicy chicken tacos' → 'chicken taco').",
+            "For searching, use the base form of the main food item keyword (e.g., convert plurals to singulars like 'tacos' → 'taco', and remove size/flavor modifiers like 'large spicy chicken tacos' → 'chicken taco'). "
+            "IMPORTANT: For general menu browsing or listing categories, answer directly from the menu context provided in your system prompt. "
+            "Only use this function when customer asks for specific details (price, description, prep time) about ONE specific item.",
             schema=menu_item_details_schema,
         ),
         _definition(

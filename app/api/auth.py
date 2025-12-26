@@ -5,8 +5,15 @@ from pydantic import BaseModel, EmailStr, Field
 from app.services.auth_service import AuthService
 
 router = APIRouter()
-auth_service = AuthService()
 security = HTTPBearer(scheme_name="HTTPBearer")
+
+
+# ---------- Service dependencies ----------
+
+
+def get_auth_service() -> AuthService:
+    """Dependency to get a fresh auth service instance per request."""
+    return AuthService()
 
 
 class LoginRequest(BaseModel):
@@ -66,7 +73,11 @@ def _extract_request_meta(request: Request) -> tuple[str | None, str | None]:
     description="Authenticate an admin user and receive access tokens. This endpoint is public and does not require authentication.",
     response_description="Returns access token, refresh token, user information, role, and permissions.",
 )
-async def admin_login(body: LoginRequest, request: Request):
+async def admin_login(
+    body: LoginRequest,
+    request: Request,
+    auth_service: AuthService = Depends(get_auth_service),
+):
     """
     Admin login endpoint for RessyAI platform admin users (CRM).
 
@@ -101,7 +112,11 @@ async def admin_login(body: LoginRequest, request: Request):
     description="Authenticate a restaurant admin/client user and receive access tokens. This endpoint is public and does not require authentication.",
     response_description="Returns access token, refresh token, user information, restaurant details, role, and permissions.",
 )
-async def client_login(body: LoginRequest, request: Request):
+async def client_login(
+    body: LoginRequest,
+    request: Request,
+    auth_service: AuthService = Depends(get_auth_service),
+):
     """
     Restaurant admin/client login endpoint for restaurant staff and managers.
 
@@ -138,7 +153,11 @@ async def client_login(body: LoginRequest, request: Request):
     description="Exchange a refresh token for a new access token and refresh token pair. Implements token rotation for enhanced security.",
     response_description="Returns new access token and refresh token pair.",
 )
-async def refresh_tokens(body: RefreshRequest, request: Request):
+async def refresh_tokens(
+    body: RefreshRequest,
+    request: Request,
+    auth_service: AuthService = Depends(get_auth_service),
+):
     """
     Refresh token rotation endpoint for obtaining new access tokens.
 
@@ -165,7 +184,10 @@ async def refresh_tokens(body: RefreshRequest, request: Request):
     description="Logout the current user session. Revokes the session identified by the access token's session ID.",
     response_description="Returns a success message confirming logout.",
 )
-async def logout(credentials: HTTPAuthorizationCredentials = Depends(security)):
+async def logout(
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    auth_service: AuthService = Depends(get_auth_service),
+):
     """
     Logout endpoint to revoke the current user session.
 

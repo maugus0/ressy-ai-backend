@@ -19,7 +19,9 @@ from fastapi.testclient import TestClient
 os.environ.setdefault("ALLOW_DB_FAILURE", "true")
 os.environ.setdefault("USE_MOCK_DATA", "true")
 
+from app.api.sse import get_sse_service  # noqa: E402
 from app.main import app  # noqa: E402
+from app.services.sse_service import SSEService  # noqa: E402
 from app.utils.jwt_util import JWTUtil  # noqa: E402
 
 # Test JWT keys (same as test_auth_flows.py)
@@ -91,8 +93,6 @@ def jwt_util():
 @pytest.fixture(autouse=True)
 def patch_jwt_util_in_sse():
     """Patch the JWTUtil instance in the SSE module to use test keys."""
-    from unittest.mock import MagicMock, patch
-
     # Create a JWTUtil with test keys
     mock_config = MagicMock()
     mock_config.JWT_PRIVATE_KEY = TEST_PRIVATE_KEY
@@ -149,11 +149,10 @@ def restaurant_token(jwt_util, restaurant_user):
 class TestSSEAuthentication:
     """Test SSE endpoint authentication via query parameter and header."""
 
-    @patch("app.api.sse.sse_service")
-    def test_authentication_via_query_parameter_succeeds(self, mock_sse_service, client, admin_token):
+    def test_authentication_via_query_parameter_succeeds(self, client, admin_token):
         """Test that authentication via query parameter works correctly."""
-        # Mock SSE service connect to raise an exception after auth passes
-        # This allows us to verify auth succeeded without hanging on streaming
+        # Create a mock SSE service
+        mock_sse_service = MagicMock(spec=SSEService)
         mock_connection = MagicMock()
         mock_sse_service.connect = AsyncMock(return_value=mock_connection)
 
@@ -162,6 +161,9 @@ class TestSSEAuthentication:
             raise StopAsyncIteration()
 
         mock_sse_service.event_stream = mock_stream
+
+        # Override the dependency
+        app.dependency_overrides[get_sse_service] = lambda: mock_sse_service
 
         # Use a short timeout - if auth fails we get 401/403 immediately
         # If auth succeeds, connection starts but we stop it quickly
@@ -177,10 +179,13 @@ class TestSSEAuthentication:
         except Exception:
             # Timeout/connection error is acceptable - means auth passed and connection started
             pass
+        finally:
+            # Clean up dependency override
+            app.dependency_overrides.pop(get_sse_service, None)
 
-    @patch("app.api.sse.sse_service")
-    def test_authentication_via_header_succeeds(self, mock_sse_service, client, admin_token):
+    def test_authentication_via_header_succeeds(self, client, admin_token):
         """Test that authentication via Authorization header still works (backward compatibility)."""
+        mock_sse_service = MagicMock(spec=SSEService)
         mock_connection = MagicMock()
         mock_sse_service.connect = AsyncMock(return_value=mock_connection)
 
@@ -188,6 +193,8 @@ class TestSSEAuthentication:
             raise StopAsyncIteration()
 
         mock_sse_service.event_stream = mock_stream
+
+        app.dependency_overrides[get_sse_service] = lambda: mock_sse_service
 
         try:
             response = client.get(
@@ -203,10 +210,12 @@ class TestSSEAuthentication:
         except Exception:
             # Timeout is acceptable - means auth passed
             pass
+        finally:
+            app.dependency_overrides.pop(get_sse_service, None)
 
-    @patch("app.api.sse.sse_service")
-    def test_query_parameter_takes_priority_over_header(self, mock_sse_service, client, admin_token, restaurant_token):
+    def test_query_parameter_takes_priority_over_header(self, client, admin_token, restaurant_token):
         """Test that query parameter token takes priority when both are provided."""
+        mock_sse_service = MagicMock(spec=SSEService)
         mock_connection = MagicMock()
         mock_sse_service.connect = AsyncMock(return_value=mock_connection)
 
@@ -214,6 +223,8 @@ class TestSSEAuthentication:
             raise StopAsyncIteration()
 
         mock_sse_service.event_stream = mock_stream
+
+        app.dependency_overrides[get_sse_service] = lambda: mock_sse_service
 
         try:
             # Provide admin token in query, restaurant token in header
@@ -232,6 +243,8 @@ class TestSSEAuthentication:
         except Exception:
             # Timeout is acceptable
             pass
+        finally:
+            app.dependency_overrides.pop(get_sse_service, None)
 
     def test_no_authentication_returns_401(self, client):
         """Test that missing both query parameter and header returns 401."""
@@ -280,9 +293,9 @@ class TestSSEAuthentication:
 
         assert response.status_code == 401, "Should return 401 for expired token"
 
-    @patch("app.api.sse.sse_service")
-    def test_restaurant_user_can_access_own_restaurant(self, mock_sse_service, client, restaurant_token):
+    def test_restaurant_user_can_access_own_restaurant(self, client, restaurant_token):
         """Test that restaurant user can access events for their own restaurant."""
+        mock_sse_service = MagicMock(spec=SSEService)
         mock_connection = MagicMock()
         mock_sse_service.connect = AsyncMock(return_value=mock_connection)
 
@@ -290,6 +303,8 @@ class TestSSEAuthentication:
             raise StopAsyncIteration()
 
         mock_sse_service.event_stream = mock_stream
+
+        app.dependency_overrides[get_sse_service] = lambda: mock_sse_service
 
         try:
             # Restaurant user (restaurant_id=1) accessing their own restaurant
@@ -302,6 +317,8 @@ class TestSSEAuthentication:
         except Exception:
             # Timeout is acceptable
             pass
+        finally:
+            app.dependency_overrides.pop(get_sse_service, None)
 
     def test_restaurant_user_cannot_access_other_restaurant(self, client, restaurant_token):
         """Test that restaurant user cannot access events for other restaurants."""
@@ -314,9 +331,9 @@ class TestSSEAuthentication:
         assert response.status_code == 403, "Should return 403 for unauthorized restaurant access"
         assert "own restaurant" in response.json()["detail"].lower()
 
-    @patch("app.api.sse.sse_service")
-    def test_admin_can_access_any_restaurant(self, mock_sse_service, client, admin_token):
+    def test_admin_can_access_any_restaurant(self, client, admin_token):
         """Test that admin can access events for any restaurant."""
+        mock_sse_service = MagicMock(spec=SSEService)
         mock_connection = MagicMock()
         mock_sse_service.connect = AsyncMock(return_value=mock_connection)
 
@@ -324,6 +341,8 @@ class TestSSEAuthentication:
             raise StopAsyncIteration()
 
         mock_sse_service.event_stream = mock_stream
+
+        app.dependency_overrides[get_sse_service] = lambda: mock_sse_service
 
         try:
             # Admin accessing any restaurant
@@ -336,3 +355,5 @@ class TestSSEAuthentication:
         except Exception:
             # Timeout is acceptable
             pass
+        finally:
+            app.dependency_overrides.pop(get_sse_service, None)

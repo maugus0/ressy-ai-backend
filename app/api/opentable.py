@@ -11,7 +11,14 @@ from app.middleware.auth_middleware import get_current_active_user
 from app.services.opentable_service import OpenTableService
 
 router = APIRouter()
-opentable_service = OpenTableService()
+
+
+# ---------- Service dependencies ----------
+
+
+def get_opentable_service() -> OpenTableService:
+    """Dependency to get a fresh OpenTable service instance per request."""
+    return OpenTableService()
 
 
 # Pydantic models for request validation
@@ -61,6 +68,7 @@ async def get_availability(
     include_credit_card_results: Optional[bool] = Query(None, description="Include credit card results"),
     include_experiences: Optional[bool] = Query(None, description="Include experiences"),
     current_user: dict = Depends(get_current_active_user),
+    opentable_service: OpenTableService = Depends(get_opentable_service),
 ):
     """
     Get table availability for a restaurant from OpenTable API.
@@ -97,7 +105,11 @@ async def get_availability(
 # ---------- LOCK SLOT ----------
 @router.post("/booking/{restaurant_id}/{rid}/slot_locks", summary="Lock a booking slot")
 async def lock_slot(
-    restaurant_id: int, rid: int, request: LockSlotRequest, current_user: dict = Depends(get_current_active_user)
+    restaurant_id: int,
+    rid: int,
+    request: LockSlotRequest,
+    current_user: dict = Depends(get_current_active_user),
+    opentable_service: OpenTableService = Depends(get_opentable_service),
 ):
     """
     Lock a booking slot for a reservation.
@@ -131,6 +143,7 @@ async def create_reservation(
     rid: int,
     request: CreateReservationRequest,
     current_user: dict = Depends(get_current_active_user),
+    opentable_service: OpenTableService = Depends(get_opentable_service),
 ):
     """
     Create a reservation.
@@ -171,6 +184,7 @@ async def update_reservation(
     confirmation_id: int,
     request: UpdateReservationRequest,
     current_user: dict = Depends(get_current_active_user),
+    opentable_service: OpenTableService = Depends(get_opentable_service),
 ):
     """
     Update an existing reservation.
@@ -202,7 +216,11 @@ async def update_reservation(
 # ---------- CANCEL RESERVATION ----------
 @router.put("/booking/{restaurant_id}/{rid}/reservations/{confirmation_id}/cancel", summary="Cancel a reservation")
 async def cancel_reservation(
-    restaurant_id: int, rid: int, confirmation_id: int, current_user: dict = Depends(get_current_active_user)
+    restaurant_id: int,
+    rid: int,
+    confirmation_id: int,
+    current_user: dict = Depends(get_current_active_user),
+    opentable_service: OpenTableService = Depends(get_opentable_service),
 ):
     """
     Cancel a reservation.

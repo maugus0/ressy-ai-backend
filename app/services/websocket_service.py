@@ -56,6 +56,34 @@ class WebSocketService:
         self._connections_lock = asyncio.Lock()
         self._filler_manager = FillerManager()
 
+    @staticmethod
+    def _normalize_boolean(value: Any) -> bool:
+        """
+        Normalize a value to a boolean, handling MySQL TINYINT (0/1) and Python booleans.
+
+        Handles:
+        - True/False (Python boolean)
+        - 0/1 (MySQL TINYINT)
+        - None (defaults to False)
+        - Other types (safely defaults to False)
+
+        Args:
+            value: The value to normalize (can be bool, int, None, or other)
+
+        Returns:
+            bool: Normalized boolean value
+        """
+        if isinstance(value, bool):
+            return value
+        if value is None:
+            return False
+        try:
+            # Handle MySQL TINYINT (0/1) and other numeric types
+            return int(value) == 1
+        except (TypeError, ValueError):
+            # Handle edge cases (non-numeric strings, etc.) - default to False
+            return False
+
     def _group_items_by_category(self, items: list[dict[str, Any]]) -> Dict[str, list[dict[str, Any]]]:
         """Bucket menu items by category with only id + name."""
         grouped: Dict[str, list[dict[str, Any]]] = {}
@@ -100,10 +128,72 @@ class WebSocketService:
             restaurant_id = int(restaurant_id)
         restaurant = restaurant_record or {}
 
-        menu_items = self.menu_service.get_available_items_by_restaurant(restaurant_id) if restaurant_id else []
-        specials: list[dict[str, Any]] = [item for item in menu_items if item.get("is_special")]
-        regular_menu_items = [item for item in menu_items if not item.get("is_special")]
+        # Get ALL menu items (both available and unavailable) to send to agent
+        # This allows agent to inform customers when items are unavailable instead of saying "trouble checking"
+        all_menu_items = self.menu_service.menu_repo.get_menus_by_restaurant(restaurant_id) if restaurant_id else []
+
+        # Process items in a single pass: separate by availability and build category structures
+        # This minimizes iterations for better performance
+        available_items: list[dict[str, Any]] = []
+        unavailable_items: list[dict[str, Any]] = []
+        specials: list[dict[str, Any]] = []
+        menu_by_category: Dict[str, list[dict[str, Any]]] = {}
+        unavailable_by_category: Dict[str, list[dict[str, Any]]] = {}
+
+        for item in all_menu_items:
+            item_id = item.get("id")
+            item_name = item.get("item_name")
+            if not item_name:  # Skip items without names
+                continue
+
+            item_dict = {
+                "item_id": item_id,
+                "name": item_name,
+                "description": item.get("item_desc"),
+                "price": float(item.get("price", 0)) if item.get("price") is not None else 0.0,
+                "category": item.get("category"),
+                "sub_category": item.get("sub_category"),
+            }
+
+            # Check availability (handle both boolean and int 0/1 from MySQL)
+            is_available_bool = self._normalize_boolean(item.get("is_available"))
+
+            # Check if special (handle both boolean and int 0/1 from MySQL)
+            is_special_bool = self._normalize_boolean(item.get("is_special"))
+
+            if is_special_bool:
+                specials.append(item_dict)
+
+            # Build category structures and separate lists in one pass
+            category = item.get("category") or "Uncategorized"
+            item_summary = {
+                "item_id": item_id,
+                "name": item_name,
+                "price": item_dict["price"],
+            }
+
+            if is_available_bool:
+                available_items.append(item_dict)
+                if category not in menu_by_category:
+                    menu_by_category[category] = []
+                menu_by_category[category].append(item_summary)
+            else:
+                unavailable_items.append(item_dict)
+                if category not in unavailable_by_category:
+                    unavailable_by_category[category] = []
+                unavailable_by_category[category].append(item_summary)
+
         faqs = self.faq_service.list_faqs(restaurant_id) if restaurant_id else []
+
+        # Log menu context loading
+        if restaurant_id:
+            self.logger.info(
+                "[MenuContext] Loaded for restaurant_id=%s: %d available, %d unavailable, %d specials",
+                restaurant_id,
+                len(available_items),
+                len(unavailable_items),
+                len(specials),
+            )
 
         restaurant_name = restaurant.get("name")
         opening_time = restaurant.get("opening_time")
@@ -112,6 +202,17 @@ class WebSocketService:
         service_options = restaurant.get("service_options") or {}
         if not isinstance(service_options, dict):
             service_options = {}
+
+        # Create combined structure showing all items per category with availability status
+        # This makes it easier for the agent to see both available and unavailable items together
+        all_items_by_category: Dict[str, Dict[str, list[dict[str, Any]]]] = {}
+        all_categories = set(menu_by_category.keys()) | set(unavailable_by_category.keys())
+
+        for category in all_categories:
+            all_items_by_category[category] = {
+                "available": menu_by_category.get(category, []),
+                "unavailable": unavailable_by_category.get(category, []),
+            }
 
         context = {
             "restaurant_profile": {
@@ -130,7 +231,15 @@ class WebSocketService:
                 "delivery": service_options.get("delivery", False),
                 "reservations": service_options.get("reservations", True),
             },
-            "menu": self._summarize_menu(regular_menu_items),
+            # Menu organized by category - PRIMARY structure for agent to use
+            # Each category contains both "available" and "unavailable" arrays
+            "menu_by_category": all_items_by_category,
+            # Separate structures for backward compatibility and explicit access
+            "menu_available_by_category": menu_by_category,
+            "menu_unavailable_by_category": unavailable_by_category,
+            # Legacy structure (kept for backward compatibility)
+            "menu": self._summarize_menu(available_items),
+            "menu_unavailable": self._summarize_menu(unavailable_items),
             "specials": self._summarize_specials(specials),
             "faqs": faqs,
             "function_defaults": {
