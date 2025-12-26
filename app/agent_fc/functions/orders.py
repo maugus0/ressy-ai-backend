@@ -130,6 +130,34 @@ async def _emit_order_sse_event(
         logger.error(f"Failed to emit SSE event for order {order_id} ({subtype.value}): {sse_error}")
 
 
+def _normalize_boolean(value: Any) -> bool:
+    """
+    Normalize a value to a boolean, handling MySQL TINYINT (0/1) and Python booleans.
+
+    Handles:
+    - True/False (Python boolean)
+    - 0/1 (MySQL TINYINT)
+    - None (defaults to False)
+    - Other types (safely defaults to False)
+
+    Args:
+        value: The value to normalize (can be bool, int, None, or other)
+
+    Returns:
+        bool: Normalized boolean value
+    """
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return False
+    try:
+        # Handle MySQL TINYINT (0/1) and other numeric types
+        return int(value) == 1
+    except (TypeError, ValueError):
+        # Handle edge cases (non-numeric strings, etc.) - default to False
+        return False
+
+
 async def _run_service_call(func, *args, **kwargs):
     if inspect.iscoroutinefunction(func):
         return await func(*args, **kwargs)
@@ -380,13 +408,14 @@ async def check_items_availability(**kwargs) -> Dict[str, Any]:
     for requested in args.items:
         match = _match_menu_item(all_menu_items, requested)
         if match:
-            is_available = match.get("is_available", True)
+            # Normalize availability to boolean (handles MySQL TINYINT 0/1 and Python booleans)
+            is_available_bool = _normalize_boolean(match.get("is_available"))
             item_id = match.get("id")
             price = match.get("price")
             category = match.get("category")
             item_name = match.get("item_name") or match.get("name") or requested.name
 
-            if is_available:
+            if is_available_bool:
                 results.append(
                     {
                         "requested_item": requested.name,

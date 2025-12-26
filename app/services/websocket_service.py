@@ -56,6 +56,34 @@ class WebSocketService:
         self._connections_lock = asyncio.Lock()
         self._filler_manager = FillerManager()
 
+    @staticmethod
+    def _normalize_boolean(value: Any) -> bool:
+        """
+        Normalize a value to a boolean, handling MySQL TINYINT (0/1) and Python booleans.
+
+        Handles:
+        - True/False (Python boolean)
+        - 0/1 (MySQL TINYINT)
+        - None (defaults to False)
+        - Other types (safely defaults to False)
+
+        Args:
+            value: The value to normalize (can be bool, int, None, or other)
+
+        Returns:
+            bool: Normalized boolean value
+        """
+        if isinstance(value, bool):
+            return value
+        if value is None:
+            return False
+        try:
+            # Handle MySQL TINYINT (0/1) and other numeric types
+            return int(value) == 1
+        except (TypeError, ValueError):
+            # Handle edge cases (non-numeric strings, etc.) - default to False
+            return False
+
     def _group_items_by_category(self, items: list[dict[str, Any]]) -> Dict[str, list[dict[str, Any]]]:
         """Bucket menu items by category with only id + name."""
         grouped: Dict[str, list[dict[str, Any]]] = {}
@@ -128,12 +156,10 @@ class WebSocketService:
             }
 
             # Check availability (handle both boolean and int 0/1 from MySQL)
-            is_available = item.get("is_available")
-            is_available_bool = is_available is True or (is_available is not None and int(is_available) == 1)
+            is_available_bool = self._normalize_boolean(item.get("is_available"))
 
             # Check if special (handle both boolean and int 0/1 from MySQL)
-            is_special = item.get("is_special")
-            is_special_bool = is_special is True or (is_special is not None and int(is_special) == 1)
+            is_special_bool = self._normalize_boolean(item.get("is_special"))
 
             if is_special_bool:
                 specials.append(item_dict)

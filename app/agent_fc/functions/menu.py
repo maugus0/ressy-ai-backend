@@ -46,6 +46,34 @@ class GetMenuItemDetailsArgs(BaseModel):
         return self
 
 
+def _normalize_boolean(value: Any) -> bool:
+    """
+    Normalize a value to a boolean, handling MySQL TINYINT (0/1) and Python booleans.
+
+    Handles:
+    - True/False (Python boolean)
+    - 0/1 (MySQL TINYINT)
+    - None (defaults to False)
+    - Other types (safely defaults to False)
+
+    Args:
+        value: The value to normalize (can be bool, int, None, or other)
+
+    Returns:
+        bool: Normalized boolean value
+    """
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return False
+    try:
+        # Handle MySQL TINYINT (0/1) and other numeric types
+        return int(value) == 1
+    except (TypeError, ValueError):
+        # Handle edge cases (non-numeric strings, etc.) - default to False
+        return False
+
+
 async def _run_repo_call(func, *args, **kwargs):
     return await asyncio.to_thread(func, *args, **kwargs)
 
@@ -98,9 +126,9 @@ async def list_menu_items(**kwargs) -> Dict[str, Any]:
             "message": "Unable to load menu right now.",
         }
 
-    # Separate items by availability
-    available_items = [item for item in (all_items or []) if item.get("is_available")]
-    unavailable_items = [item for item in (all_items or []) if not item.get("is_available")]
+    # Separate items by availability (using consistent boolean normalization)
+    available_items = [item for item in (all_items or []) if _normalize_boolean(item.get("is_available"))]
+    unavailable_items = [item for item in (all_items or []) if not _normalize_boolean(item.get("is_available"))]
 
     # Summarize both lists
     categories_available, summaries_available = _summarize_menu_items(available_items)
