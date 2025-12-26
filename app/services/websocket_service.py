@@ -483,6 +483,11 @@ class WebSocketService:
             arg_model=orders.CheckItemsAvailabilityArgs,
         )
         registry.register(
+            name="list_menu_items",
+            handler=menu.list_menu_items,
+            arg_model=menu.ListMenuArgs,
+        )
+        registry.register(
             name="get_menu_item_details",
             handler=menu.get_menu_item_details,
             arg_model=menu.GetMenuItemDetailsArgs,

@@ -31,6 +31,7 @@ def get_function_definitions() -> List[Dict[str, Any]]:
     check_items_schema = orders.CheckItemsAvailabilityArgs.model_json_schema()
     res_check_avail_schema = reservations.CheckAvailabilityArgs.model_json_schema()
     update_order_details_schema = orders.UpdateOrderDetailsArgs.model_json_schema()
+    list_menu_schema = menu.ListMenuArgs.model_json_schema()
     menu_item_details_schema = menu.GetMenuItemDetailsArgs.model_json_schema()
     filler_schema = conversation.AgentFillerArgs.model_json_schema()
     end_call_schema = conversation.EndCallArgs.model_json_schema()
@@ -57,6 +58,16 @@ def get_function_definitions() -> List[Dict[str, Any]]:
             description="Check availability of menu items for pickup order requests. ALWAYS use this before creating/updating the final order. "
             "If the intent is determined, no need to confirm with user again, call the subsequent agent function right after a successful response from this function call.",
             schema=check_items_schema,
+        ),
+        _definition(
+            name="list_menu_items",
+            description=(
+                "List all available menu items organized by categories. "
+                "Use this when the customer asks to 'see the menu', 'browse items', "
+                "'tell me what you have', 'what's on the menu', or wants an overview of available food. "
+                "Returns categories and item names for graceful menu presentation."
+            ),
+            schema=list_menu_schema,
         ),
         _definition(
             name="get_menu_item_details",
