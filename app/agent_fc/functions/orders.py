@@ -344,15 +344,28 @@ def _flatten_menu_items(menus: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
 
 def _match_menu_item(menu_items: List[Dict[str, Any]], request_item: OrderItem) -> Optional[Dict[str, Any]]:
+    """Match a requested item against menu items by ID or name."""
     for item in menu_items:
+        # Match by item_id if provided
         if request_item.item_id and item.get("id") == request_item.item_id:
             return item
-        if item.get("name") and request_item.name.lower() == str(item.get("name")).lower():
-            return item
+        # Match by name (check both "item_name" and "name" fields)
+        item_name = item.get("item_name") or item.get("name")
+        if item_name and request_item.name:
+            if str(item_name).lower() == str(request_item.name).lower():
+                return item
     return None
 
 
 async def check_items_availability(**kwargs) -> Dict[str, Any]:
+    """
+    Check availability of menu items.
+
+    Returns clear status for each item:
+    - AVAILABLE: Item exists and is available
+    - UNAVAILABLE: Item exists but is currently unavailable
+    - UNKNOWN_ITEM: Item not found in menu
+    """
     args = CheckItemsAvailabilityArgs.model_validate(kwargs)
     logger.info(
         "check_items_availability invoked restaurant_id=%s item_count=%s",
@@ -360,27 +373,45 @@ async def check_items_availability(**kwargs) -> Dict[str, Any]:
         len(args.items),
     )
     menu_repo = _get_menu_repo()
-    menu_items = await _run_service_call(menu_repo.get_available_items_by_restaurant, args.restaurant_id)
-    menu_items = _flatten_menu_items(menu_items)
+    # Get ALL items (both available and unavailable) to properly check status
+    all_menu_items = await _run_service_call(menu_repo.get_menus_by_restaurant, args.restaurant_id)
+    all_menu_items = _flatten_menu_items(all_menu_items)
     results = []
     for requested in args.items:
-        match = _match_menu_item(menu_items, requested)
+        match = _match_menu_item(all_menu_items, requested)
         if match:
             is_available = match.get("is_available", True)
-            results.append(
-                {
-                    "requested_item": requested.name,
-                    "status": "AVAILABLE" if is_available else "UNAVAILABLE",
-                    "item_id": match.get("id"),
-                    "price": str(match.get("price")),
-                    "category": match.get("category"),
-                },
-            )
+            item_id = match.get("id")
+            price = match.get("price")
+            category = match.get("category")
+            item_name = match.get("item_name") or match.get("name") or requested.name
+
+            if is_available:
+                results.append(
+                    {
+                        "requested_item": requested.name,
+                        "status": "AVAILABLE",
+                        "item_id": item_id,
+                        "price": str(price) if price is not None else "0",
+                        "category": category,
+                        "message": f"{item_name} is available for ${price if price else 0}.",
+                    },
+                )
+            else:
+                results.append(
+                    {
+                        "requested_item": requested.name,
+                        "status": "UNAVAILABLE",
+                        "item_id": item_id,
+                        "message": f"{item_name} is currently unavailable.",
+                    },
+                )
         else:
             results.append(
                 {
                     "requested_item": requested.name,
                     "status": "UNKNOWN_ITEM",
+                    "message": f"{requested.name} is not on our menu.",
                 },
             )
 

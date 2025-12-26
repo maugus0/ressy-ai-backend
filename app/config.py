@@ -88,10 +88,6 @@ class Settings:
         "I'm still here, but I'll need to wrap up this call. If you need anything else, please call back.",
     )
 
-    # Menu context refresh interval (seconds) during active voice calls
-    # Set to 0 to disable periodic refresh (agent functions still get fresh data per call)
-    AGENT_MENU_REFRESH_INTERVAL_SECONDS = int(os.getenv("AGENT_MENU_REFRESH_INTERVAL_SECONDS", "45"))
-
     # Public base URL (reachable by Twilio) used for outbound-call testing webhooks.
     # Example: https://api.example.com
     PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "http://localhost:5001")
