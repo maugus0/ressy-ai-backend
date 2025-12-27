@@ -3,6 +3,7 @@ MySQL Call Repository for call session operations.
 """
 
 import json
+from datetime import datetime
 from typing import Dict, List, Optional
 
 from app.repositories.mysql_base import MySQLBaseRepository
@@ -264,11 +265,39 @@ class MySQLCallRepository(MySQLBaseRepository):
             where_clauses.append("restaurant_id = %s")
             params.append(str(restaurant_id))
         if date_from:
+            # Normalize date format: if only date is provided (YYYY-MM-DD), add time component
+            # Validate date format before normalization to prevent SQL injection
+            normalized_date_from = date_from
+            try:
+                # Try parsing as date-only format first
+                if len(date_from) == 10 and date_from.count("-") == 2:
+                    datetime.strptime(date_from, "%Y-%m-%d")
+                    normalized_date_from = f"{date_from} 00:00:00"
+                else:
+                    # Validate as datetime format
+                    datetime.strptime(date_from, "%Y-%m-%d %H:%M:%S")
+            except ValueError:
+                # If date format is invalid, log and use as-is (will fail at DB level)
+                self.logger.warning(f"Invalid date_from format: {date_from}")
             where_clauses.append("started_at >= %s")
-            params.append(date_from)
+            params.append(normalized_date_from)
         if date_to:
+            # Normalize date format: if only date is provided (YYYY-MM-DD), add time component to end of day
+            # Validate date format before normalization to prevent SQL injection
+            normalized_date_to = date_to
+            try:
+                # Try parsing as date-only format first
+                if len(date_to) == 10 and date_to.count("-") == 2:
+                    datetime.strptime(date_to, "%Y-%m-%d")
+                    normalized_date_to = f"{date_to} 23:59:59"
+                else:
+                    # Validate as datetime format
+                    datetime.strptime(date_to, "%Y-%m-%d %H:%M:%S")
+            except ValueError:
+                # If date format is invalid, log and use as-is (will fail at DB level)
+                self.logger.warning(f"Invalid date_to format: {date_to}")
             where_clauses.append("started_at <= %s")
-            params.append(date_to)
+            params.append(normalized_date_to)
 
         where_sql = " AND ".join(where_clauses)
 
@@ -320,12 +349,72 @@ class MySQLCallRepository(MySQLBaseRepository):
         """
         day_of_week_rows = self._execute_query(day_of_week_query, tuple(params))
 
+        # Calculate conversion rates: orders and reservations created within 1 hour of call start
+        # Match by user_id (from Calls.user_id to Orders.user_id) and restaurant_id
+        # Only count conversions where user_id can be cast to non-negative integer and restaurant_id matches
+        conversion_params = list(params)
+        # Build WHERE clause with table-qualified column names for JOIN queries
+        # Build directly from the same conditions to avoid fragile string replacement
+        conversion_where_clauses = ["1=1"]
+        if restaurant_id:
+            conversion_where_clauses.append("c.restaurant_id = %s")
+        if date_from:
+            conversion_where_clauses.append("c.started_at >= %s")
+        if date_to:
+            conversion_where_clauses.append("c.started_at <= %s")
+        conversion_where = " AND ".join(conversion_where_clauses)
+
+        orders_conversion_query = f"""
+            SELECT COUNT(DISTINCT c.id) AS converted_calls
+            FROM Calls c
+            INNER JOIN Orders o ON (
+                c.user_id REGEXP '^[1-9][0-9]*$|^0$'
+                AND c.restaurant_id IS NOT NULL
+                AND o.user_id = CAST(c.user_id AS UNSIGNED)
+                AND o.restaurant_id = CAST(c.restaurant_id AS UNSIGNED)
+                AND o.created_at >= c.started_at
+                AND o.created_at <= DATE_ADD(c.started_at, INTERVAL 1 HOUR)
+                AND o.deleted_at IS NULL
+            )
+            WHERE {conversion_where}
+        """
+        orders_result = self._execute_query(orders_conversion_query, tuple(conversion_params))
+        orders_converted = int(orders_result[0].get("converted_calls", 0)) if orders_result else 0
+
+        reservations_conversion_query = f"""
+            SELECT COUNT(DISTINCT c.id) AS converted_calls
+            FROM Calls c
+            INNER JOIN Reservations r ON (
+                c.user_id REGEXP '^[1-9][0-9]*$|^0$'
+                AND c.restaurant_id IS NOT NULL
+                AND r.user_id = CAST(c.user_id AS UNSIGNED)
+                AND r.created_at >= c.started_at
+                AND r.created_at <= DATE_ADD(c.started_at, INTERVAL 1 HOUR)
+            )
+            INNER JOIN Slot_Bookings sb ON (
+                sb.id = r.slot_booking_id
+                AND sb.restaurant_id = CAST(c.restaurant_id AS UNSIGNED)
+            )
+            WHERE {conversion_where}
+        """
+        reservations_result = self._execute_query(reservations_conversion_query, tuple(conversion_params))
+        reservations_converted = int(reservations_result[0].get("converted_calls", 0)) if reservations_result else 0
+
+        total_calls = int(totals_row.get("total_calls") or 0)
+        total_converted = orders_converted + reservations_converted
+        conversion_rate = (total_converted / total_calls * 100) if total_calls > 0 else 0.0
+
         return {
-            "total_calls": int(totals_row.get("total_calls") or 0),
+            "total_calls": total_calls,
             "average_call_duration": float(totals_row.get("avg_duration") or 0),
             "total_duration": float(totals_row.get("total_duration") or 0),
             "status_breakdown": status_breakdown,
             "time_of_day_distribution": time_of_day_rows,
             "top_restaurants": top_restaurants_rows,
             "calls_by_day_of_week": day_of_week_rows,
+            "conversion_rates": {
+                "orders": orders_converted,
+                "reservations": reservations_converted,
+                "rate": round(conversion_rate, 2),
+            },
         }

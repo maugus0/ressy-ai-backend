@@ -39,7 +39,7 @@ class Settings:
     DEEPGRAM_THINK_TEMPERATURE = float(os.getenv("DEEPGRAM_THINK_TEMPERATURE", "0.15"))
     DEEPGRAM_SPEAK_MODEL = os.getenv("DEEPGRAM_SPEAK_MODEL", "aura-2-harmonia-en")
     DEEPGRAM_AGENT_GREETING = os.getenv(
-        "DEEPGRAM_AGENT_GREETING", "Hi! Thank you for calling {RESTAURANT_NAME}. How can I help you today?"
+        "DEEPGRAM_AGENT_GREETING", "Hi, this is Ressy! Thanks for calling {RESTAURANT_NAME}. How can I help you today?"
     )
     RESTAURANT_TIMEZONE = os.getenv("RESTAURANT_TIMEZONE", "America/Vancouver")
 

@@ -27,15 +27,47 @@ logger = logging.getLogger(__name__)
 
 
 class ClientAnalyticsService:
-    """Service for generating restaurant analytics for client dashboards."""
+    """
+    Service for generating restaurant analytics for client dashboards.
+    """
 
     def __init__(self):
-        self.call_repo = MySQLCallRepository()
-        self.order_repo = MySQLOrderRepository()
-        self.reservation_repo = MySQLReservationRepository()
-        self.menu_repo = MySQLMenuRepository()
-        self.faq_repo = MySQLFAQRepository()
-        self.user_repo = MySQLUserRepository()
+        # Initialize repository instances once; they use connection pooling so
+        # reusing them avoids unnecessary allocations without causing stale data.
+        self._call_repo = MySQLCallRepository()
+        self._order_repo = MySQLOrderRepository()
+        self._reservation_repo = MySQLReservationRepository()
+        self._menu_repo = MySQLMenuRepository()
+        self._faq_repo = MySQLFAQRepository()
+        self._user_repo = MySQLUserRepository()
+
+    # ---------- Repository Factory Methods ----------
+    # Return long-lived repository instances; connection pooling ensures each
+    # operation uses a fresh database connection as needed.
+
+    def _get_call_repo(self) -> MySQLCallRepository:
+        """Get the call repository instance."""
+        return self._call_repo
+
+    def _get_order_repo(self) -> MySQLOrderRepository:
+        """Get the order repository instance."""
+        return self._order_repo
+
+    def _get_reservation_repo(self) -> MySQLReservationRepository:
+        """Get the reservation repository instance."""
+        return self._reservation_repo
+
+    def _get_menu_repo(self) -> MySQLMenuRepository:
+        """Get the menu repository instance."""
+        return self._menu_repo
+
+    def _get_faq_repo(self) -> MySQLFAQRepository:
+        """Get the FAQ repository instance."""
+        return self._faq_repo
+
+    def _get_user_repo(self) -> MySQLUserRepository:
+        """Get the user repository instance."""
+        return self._user_repo
 
     def _get_today_start(self) -> datetime:
         """Get the start of today with consistent timezone handling (UTC)."""
@@ -115,7 +147,8 @@ class ClientAnalyticsService:
             stats = self._get_call_stats(restaurant_id, today_str)
 
             # Get call analytics with time distribution
-            analytics = self.call_repo.get_call_analytics(
+            call_repo = self._get_call_repo()
+            analytics = call_repo.get_call_analytics(
                 restaurant_id=str(restaurant_id),
             )
 
@@ -194,12 +227,13 @@ class ClientAnalyticsService:
 
     def _get_call_stats(self, restaurant_id: int, today_str: str) -> Dict[str, Any]:
         """Get call statistics for a restaurant."""
-        analytics = self.call_repo.get_call_analytics(restaurant_id=str(restaurant_id))
+        call_repo = self._get_call_repo()
+        analytics = call_repo.get_call_analytics(restaurant_id=str(restaurant_id))
         total_calls = analytics.get("total_calls", 0)
         avg_duration = analytics.get("average_call_duration", 0)
 
         # Get today's calls
-        today_analytics = self.call_repo.get_call_analytics(
+        today_analytics = call_repo.get_call_analytics(
             restaurant_id=str(restaurant_id),
             date_from=today_str,
         )
@@ -213,15 +247,16 @@ class ClientAnalyticsService:
 
     def _get_reservation_stats(self, restaurant_id: int, today: datetime) -> Dict[str, Any]:
         """Get reservation statistics for a restaurant using efficient database queries."""
+        reservation_repo = self._get_reservation_repo()
         # Use efficient aggregate query for status counts
-        status_counts = self.reservation_repo.get_reservation_counts_by_status(restaurant_id)
+        status_counts = reservation_repo.get_reservation_counts_by_status(restaurant_id)
 
         # Calculate total from status counts
         total = sum(status_counts.values())
 
         # Get today's reservation count using database filtering
         today_end = today + timedelta(days=1)
-        today_count = self.reservation_repo.count_reservations_by_restaurant(
+        today_count = reservation_repo.count_reservations_by_restaurant(
             restaurant_id=restaurant_id,
             start_date=today,
             end_date=today_end,
@@ -239,23 +274,22 @@ class ClientAnalyticsService:
 
     def _get_order_stats(self, restaurant_id: int, today: datetime) -> Dict[str, Any]:
         """Get order statistics for a restaurant using efficient database queries."""
+        order_repo = self._get_order_repo()
         # Total orders
-        total = self.order_repo.count_orders_by_restaurant(restaurant_id)
+        total = order_repo.count_orders_by_restaurant(restaurant_id)
 
         # Today's orders
-        today_count = self.order_repo.count_orders_by_restaurant(
+        today_count = order_repo.count_orders_by_restaurant(
             restaurant_id,
             start_date=today,
         )
 
         # Orders by status - single query instead of 5 separate queries
-        status_counts = self.order_repo.get_order_counts_by_status(restaurant_id)
+        status_counts = order_repo.get_order_counts_by_status(restaurant_id)
 
         # Get revenue using efficient SQL SUM aggregation
-        total_revenue = self.order_repo.calculate_revenue_by_restaurant(restaurant_id, status="completed")
-        revenue_today = self.order_repo.calculate_revenue_by_restaurant(
-            restaurant_id, status="completed", start_date=today
-        )
+        total_revenue = order_repo.calculate_revenue_by_restaurant(restaurant_id, status="completed")
+        revenue_today = order_repo.calculate_revenue_by_restaurant(restaurant_id, status="completed", start_date=today)
 
         return {
             "total": total,
@@ -271,8 +305,9 @@ class ClientAnalyticsService:
 
     def _get_menu_stats(self, restaurant_id: int) -> Dict[str, Any]:
         """Get menu statistics for a restaurant."""
+        menu_repo = self._get_menu_repo()
         # Get all menu items
-        all_items = self.menu_repo.get_menus_by_restaurant(restaurant_id)
+        all_items = menu_repo.get_menus_by_restaurant(restaurant_id)
         total = len(all_items)
 
         available = 0
@@ -297,12 +332,14 @@ class ClientAnalyticsService:
 
     def _get_faq_stats(self, restaurant_id: int) -> Dict[str, Any]:
         """Get FAQ statistics for a restaurant."""
-        faqs = self.faq_repo.get_by_restaurant(restaurant_id)
+        faq_repo = self._get_faq_repo()
+        faqs = faq_repo.get_by_restaurant(restaurant_id)
         return {"total": len(faqs)}
 
     def _get_user_stats(self, restaurant_id: int) -> Dict[str, Any]:
         """Get user/customer statistics for a restaurant."""
-        count = self.user_repo.count_users_by_restaurant(restaurant_id)
+        user_repo = self._get_user_repo()
+        count = user_repo.count_users_by_restaurant(restaurant_id)
         return {"total": count}
 
     def _get_recent_activity(self, restaurant_id: int, limit: int = 10) -> List[Dict[str, Any]]:
@@ -310,7 +347,8 @@ class ClientAnalyticsService:
         activities: List[Dict[str, Any]] = []
 
         # Get recent calls
-        calls = self.call_repo.get_calls_by_restaurant(str(restaurant_id), limit=limit)
+        call_repo = self._get_call_repo()
+        calls = call_repo.get_calls_by_restaurant(str(restaurant_id), limit=limit)
         for call in calls:
             activities.append(
                 {
@@ -323,7 +361,8 @@ class ClientAnalyticsService:
             )
 
         # Get recent reservations
-        reservations = self.reservation_repo.get_reservations_by_restaurant(
+        reservation_repo = self._get_reservation_repo()
+        reservations = reservation_repo.get_reservations_by_restaurant(
             restaurant_id=restaurant_id,
             limit=limit,
             offset=0,
@@ -342,7 +381,8 @@ class ClientAnalyticsService:
             )
 
         # Get recent orders
-        orders = self.order_repo.get_orders_by_restaurant(
+        order_repo = self._get_order_repo()
+        orders = order_repo.get_orders_by_restaurant(
             restaurant_id=restaurant_id,
             limit=limit,
             offset=0,
@@ -369,11 +409,12 @@ class ClientAnalyticsService:
 
     def _get_todays_schedule(self, restaurant_id: int, today: datetime) -> List[Dict[str, Any]]:
         """Get today's reservation schedule using database-level filtering."""
+        reservation_repo = self._get_reservation_repo()
         today_end = today + timedelta(days=1)
 
         # Use database filtering for today's reservations with confirmed/pending status
         # First get confirmed reservations
-        confirmed_reservations = self.reservation_repo.get_reservations_by_restaurant(
+        confirmed_reservations = reservation_repo.get_reservations_by_restaurant(
             restaurant_id=restaurant_id,
             status="confirmed",
             start_date=today,
@@ -383,7 +424,7 @@ class ClientAnalyticsService:
         )
 
         # Then get pending reservations
-        pending_reservations = self.reservation_repo.get_reservations_by_restaurant(
+        pending_reservations = reservation_repo.get_reservations_by_restaurant(
             restaurant_id=restaurant_id,
             status="pending",
             start_date=today,
@@ -429,7 +470,8 @@ class ClientAnalyticsService:
 
     def _get_pending_orders(self, restaurant_id: int) -> List[Dict[str, Any]]:
         """Get pending orders for a restaurant."""
-        orders = self.order_repo.get_orders_by_restaurant(
+        order_repo = self._get_order_repo()
+        orders = order_repo.get_orders_by_restaurant(
             restaurant_id=restaurant_id,
             status="pending",
             limit=20,

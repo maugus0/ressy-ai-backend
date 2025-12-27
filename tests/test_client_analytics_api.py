@@ -46,12 +46,57 @@ class FakeAnalyticsService(ClientAnalyticsService):
         user_repo: InMemoryUserRepository,
     ):
         # Don't call super().__init__() - we're replacing all repos
-        self.call_repo = call_repo
-        self.order_repo = order_repo
-        self.reservation_repo = reservation_repo
-        self.menu_repo = menu_repo
-        self.faq_repo = faq_repo
-        self.user_repo = user_repo
+        # Store repos as instance variables for factory methods to return
+        self._call_repo = call_repo
+        self._order_repo = order_repo
+        self._reservation_repo = reservation_repo
+        self._menu_repo = menu_repo
+        self._faq_repo = faq_repo
+        self._user_repo = user_repo
+
+    # Override factory methods to return in-memory repositories
+    def _get_call_repo(self):
+        return self._call_repo
+
+    def _get_order_repo(self):
+        return self._order_repo
+
+    def _get_reservation_repo(self):
+        return self._reservation_repo
+
+    def _get_menu_repo(self):
+        return self._menu_repo
+
+    def _get_faq_repo(self):
+        return self._faq_repo
+
+    def _get_user_repo(self):
+        return self._user_repo
+
+    # Add properties for backward compatibility with tests that access repos directly
+    @property
+    def call_repo(self):
+        return self._call_repo
+
+    @property
+    def order_repo(self):
+        return self._order_repo
+
+    @property
+    def reservation_repo(self):
+        return self._reservation_repo
+
+    @property
+    def menu_repo(self):
+        return self._menu_repo
+
+    @property
+    def faq_repo(self):
+        return self._faq_repo
+
+    @property
+    def user_repo(self):
+        return self._user_repo
 
 
 @pytest.fixture

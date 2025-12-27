@@ -112,7 +112,7 @@ echo "5️⃣  Running tests..."
 if ALLOW_DB_FAILURE=true USE_MOCK_DATA=true pytest tests/ -v --tb=short > /dev/null 2>&1; then
     success "All tests passed"
 else
-    error "Tests failed. Run: ALLOW_DB_FAILURE=true USE_MOCK_DATA=true pytest tests/ -v"
+    error "Tests failed. Please run the tests locally and fix the issues."
     exit 1
 fi
 
