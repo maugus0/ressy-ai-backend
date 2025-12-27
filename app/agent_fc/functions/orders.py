@@ -66,6 +66,7 @@ class UpdateOrderDetailsArgs(BaseModel):
 
     customer_contact: str
     restaurant_id: int
+    customer_name: Optional[str] = None  # Allow updating customer name during order update
     items: List[OrderItem]
     customization: Dict[str, Any] = Field(default_factory=dict)
     total_amount: Optional[float] = None
@@ -495,6 +496,20 @@ async def update_order_details(**kwargs) -> Dict[str, Any]:
         user_id = user_repo.get_user_id_by_phone_or_email(args.customer_contact, None)
         if not user_id:
             return None, None, None, None
+
+        # Update user's name if provided (consistent with create_order behavior)
+        if args.customer_name:
+            user_repo.create_or_update_user(
+                {
+                    "name": args.customer_name,
+                    "phone_number": args.customer_contact,
+                    "email": None,
+                    "address": None,
+                    "is_spam": False,
+                    "credit_card": None,
+                }
+            )
+
         order = order_repo.get_latest_order_by_user(user_id, args.restaurant_id)
         if not order:
             return None, None, None, None
@@ -563,6 +578,9 @@ async def update_order_details(**kwargs) -> Dict[str, Any]:
                     "customization": updated_order.get("customization"),
                     "total_amount": updated_order.get("total_amount"),
                 }
+                # Include customer_name if it was updated
+                if args.customer_name:
+                    new_data["customer_name"] = args.customer_name
                 history_id = history_service.log_order_updated(
                     order_id=updated_order.get("id"),
                     restaurant_id=int(restaurant_id),
