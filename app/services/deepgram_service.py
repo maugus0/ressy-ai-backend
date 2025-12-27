@@ -50,6 +50,9 @@ class DeepgramService:
         listen_keyterms = key_terms if key_terms is not None else settings.DEEPGRAM_LISTEN_KEYTERMS
         return {
             "type": "Settings",
+            "flags": {
+                "history": settings.DEEPGRAM_HISTORY,
+            },
             "audio": {
                 "input": {
                     "encoding": settings.DEEPGRAM_AUDIO_INPUT_ENCODING or "linear16",
@@ -68,6 +71,10 @@ class DeepgramService:
                         "type": "deepgram",
                         "model": settings.DEEPGRAM_LISTEN_MODEL,
                         "keyterms": listen_keyterms,
+                        # TODO: Try endpointing and utterance-end to fix agent-freeze issue.
+                        # "endpointing": settings.DEEPGRAM_ENDPOINTING_MS,
+                        # "interim_results": settings.DEEPGRAM_INTERIM_RESULTS,
+                        # "utterance_end_ms": settings.DEEPGRAM_UTTERANCE_END_MS,
                     }
                 },
                 "think": {

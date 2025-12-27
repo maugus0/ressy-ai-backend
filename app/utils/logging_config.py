@@ -22,7 +22,7 @@ NOISY_LOGGERS = {
     "uvicorn.access": "INFO",
     "uvicorn.error": "INFO",
     # TODO: add any other noisy loggers you see here when DEBUG enabled.
-    # "urllib3": "WARNING",
+    # "app.repositories.db_pool": "WARNING",
 }
 
 
