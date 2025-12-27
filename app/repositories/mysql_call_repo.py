@@ -264,11 +264,19 @@ class MySQLCallRepository(MySQLBaseRepository):
             where_clauses.append("restaurant_id = %s")
             params.append(str(restaurant_id))
         if date_from:
+            # Normalize date format: if only date is provided (YYYY-MM-DD), add time component
+            normalized_date_from = date_from
+            if len(date_from) == 10 and date_from.count("-") == 2:  # Format: YYYY-MM-DD
+                normalized_date_from = f"{date_from} 00:00:00"
             where_clauses.append("started_at >= %s")
-            params.append(date_from)
+            params.append(normalized_date_from)
         if date_to:
+            # Normalize date format: if only date is provided (YYYY-MM-DD), add time component to end of day
+            normalized_date_to = date_to
+            if len(date_to) == 10 and date_to.count("-") == 2:  # Format: YYYY-MM-DD
+                normalized_date_to = f"{date_to} 23:59:59"
             where_clauses.append("started_at <= %s")
-            params.append(date_to)
+            params.append(normalized_date_to)
 
         where_sql = " AND ".join(where_clauses)
 
@@ -320,12 +328,64 @@ class MySQLCallRepository(MySQLBaseRepository):
         """
         day_of_week_rows = self._execute_query(day_of_week_query, tuple(params))
 
+        # Calculate conversion rates: orders and reservations created within 1 hour of call start
+        # Match by user_id (from Calls.user_id to Orders.user_id) and restaurant_id
+        # Only count conversions where user_id can be cast to integer and restaurant_id matches
+        conversion_params = list(params)
+        # Replace unqualified column names with table-qualified versions for JOIN queries
+        conversion_where = where_sql.replace("restaurant_id", "c.restaurant_id").replace("started_at", "c.started_at")
+        
+        orders_conversion_query = f"""
+            SELECT COUNT(DISTINCT c.id) AS converted_calls
+            FROM Calls c
+            INNER JOIN Orders o ON (
+                c.user_id REGEXP '^[0-9]+$'
+                AND c.restaurant_id IS NOT NULL
+                AND o.user_id = CAST(c.user_id AS UNSIGNED)
+                AND o.restaurant_id = CAST(c.restaurant_id AS UNSIGNED)
+                AND o.created_at >= c.started_at
+                AND o.created_at <= DATE_ADD(c.started_at, INTERVAL 1 HOUR)
+                AND o.deleted_at IS NULL
+            )
+            WHERE {conversion_where}
+        """
+        orders_result = self._execute_query(orders_conversion_query, tuple(conversion_params))
+        orders_converted = int(orders_result[0].get("converted_calls", 0)) if orders_result else 0
+
+        reservations_conversion_query = f"""
+            SELECT COUNT(DISTINCT c.id) AS converted_calls
+            FROM Calls c
+            INNER JOIN Reservations r ON (
+                c.user_id REGEXP '^[0-9]+$'
+                AND c.restaurant_id IS NOT NULL
+                AND r.user_id = CAST(c.user_id AS UNSIGNED)
+                AND r.created_at >= c.started_at
+                AND r.created_at <= DATE_ADD(c.started_at, INTERVAL 1 HOUR)
+            )
+            INNER JOIN Slot_Bookings sb ON (
+                sb.id = r.slot_booking_id
+                AND sb.restaurant_id = CAST(c.restaurant_id AS UNSIGNED)
+            )
+            WHERE {conversion_where}
+        """
+        reservations_result = self._execute_query(reservations_conversion_query, tuple(conversion_params))
+        reservations_converted = int(reservations_result[0].get("converted_calls", 0)) if reservations_result else 0
+
+        total_calls = int(totals_row.get("total_calls") or 0)
+        total_converted = orders_converted + reservations_converted
+        conversion_rate = (total_converted / total_calls * 100) if total_calls > 0 else 0.0
+
         return {
-            "total_calls": int(totals_row.get("total_calls") or 0),
+            "total_calls": total_calls,
             "average_call_duration": float(totals_row.get("avg_duration") or 0),
             "total_duration": float(totals_row.get("total_duration") or 0),
             "status_breakdown": status_breakdown,
             "time_of_day_distribution": time_of_day_rows,
             "top_restaurants": top_restaurants_rows,
             "calls_by_day_of_week": day_of_week_rows,
+            "conversion_rates": {
+                "orders": orders_converted,
+                "reservations": reservations_converted,
+                "rate": round(conversion_rate, 2),
+            },
         }

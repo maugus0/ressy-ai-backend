@@ -381,14 +381,20 @@ class CallService:
             date_from=date_from,
             date_to=date_to,
         )
+        # Ensure we return consistent data structure even if analytics is empty
+        conversion_rates = analytics.get("conversion_rates", {})
         return CallAnalyticsV2(
-            total_calls=analytics.get("total_calls", 0),
-            average_call_duration=analytics.get("average_call_duration", 0.0),
-            status_breakdown=analytics.get("status_breakdown", {}),
-            time_of_day_distribution=analytics.get("time_of_day_distribution", []),
-            top_restaurants=analytics.get("top_restaurants"),
-            calls_by_day_of_week=analytics.get("calls_by_day_of_week"),
-            conversion_rates={"orders": 0, "reservations": 0, "rate": 0},  # TODO: Implementation pending.
+            total_calls=analytics.get("total_calls", 0) or 0,
+            average_call_duration=analytics.get("average_call_duration", 0.0) or 0.0,
+            status_breakdown=analytics.get("status_breakdown", {}) or {},
+            time_of_day_distribution=analytics.get("time_of_day_distribution", []) or [],
+            top_restaurants=analytics.get("top_restaurants") or [],
+            calls_by_day_of_week=analytics.get("calls_by_day_of_week", []) or [],
+            conversion_rates={
+                "orders": conversion_rates.get("orders", 0),
+                "reservations": conversion_rates.get("reservations", 0),
+                "rate": conversion_rates.get("rate", 0.0),
+            },
         )
 
     def export_calls(
