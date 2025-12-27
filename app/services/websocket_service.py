@@ -124,7 +124,7 @@ class WebSocketService:
 
             # Prevent duplicate items (shouldn't happen, but safety check)
             if item_id in seen_item_ids:
-                self.logger.warning(f"Duplicate item_id={item_id} found in menu items, skipping")
+                self.logger.warning("Duplicate item_id=%s found in menu items, skipping", item_id)
                 continue
             seen_item_ids.add(item_id)
 
@@ -214,14 +214,27 @@ class WebSocketService:
                 }
             )
 
+        # Track all special item IDs so we can avoid duplicating them in available/unavailable lists
+        special_item_ids = {s.get("item_id") for s in specials if s.get("item_id") is not None}
+
         all_categories = (
             set(menu_by_category.keys()) | set(unavailable_by_category.keys()) | set(specials_by_category.keys())
         )
 
         for category in all_categories:
+            # Exclude special items from available and unavailable arrays to prevent duplication
+            # Special items are already included in the specials array
+            available_items = [
+                item for item in menu_by_category.get(category, []) if item.get("item_id") not in special_item_ids
+            ]
+            unavailable_items = [
+                item
+                for item in unavailable_by_category.get(category, [])
+                if item.get("item_id") not in special_item_ids
+            ]
             all_items_by_category[category] = {
-                "available": menu_by_category.get(category, []),
-                "unavailable": unavailable_by_category.get(category, []),
+                "available": available_items,
+                "unavailable": unavailable_items,
                 "specials": specials_by_category.get(category, []),  # Special items per category
             }
 
