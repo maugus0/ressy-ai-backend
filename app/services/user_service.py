@@ -17,7 +17,7 @@ class UserService:
         Uses atomic create_or_update_user to prevent duplicate entries.
         """
         user_id = self.user_repo.create_or_update_user(data)
-        return {"message": "User created successfully", "user_id": user_id}
+        return {"message": "User created or updated successfully", "user_id": user_id}
 
     def list_users(self) -> list:
         """List all users."""

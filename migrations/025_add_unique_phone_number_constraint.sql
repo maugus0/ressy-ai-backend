@@ -84,8 +84,14 @@ INNER JOIN User_Duplicates ud ON u.id = ud.duplicate_id;
 -- Step 7: Drop the temporary table
 DROP TEMPORARY TABLE IF EXISTS User_Duplicates;
 
--- Step 8: Add unique constraint on phone_number
--- Note: We allow NULL phone_numbers (multiple NULLs are allowed by MySQL unique constraints)
-ALTER TABLE Users 
-ADD CONSTRAINT unique_phone_number UNIQUE (phone_number);
+-- Step 8: Normalize empty phone_numbers and add constraints
+-- Convert empty-string phone_numbers to NULL so they are treated as "no phone number"
+UPDATE Users
+SET phone_number = NULL
+WHERE phone_number = '';
 
+-- Note: We allow NULL phone_numbers (multiple NULLs are allowed by MySQL unique constraints)
+-- Enforce that non-NULL phone_numbers are not empty strings and are unique
+ALTER TABLE Users 
+    ADD CONSTRAINT chk_phone_number_not_empty CHECK (phone_number IS NULL OR phone_number <> ''),
+    ADD CONSTRAINT unique_phone_number UNIQUE (phone_number);
