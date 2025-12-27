@@ -497,19 +497,6 @@ async def update_order_details(**kwargs) -> Dict[str, Any]:
         if not user_id:
             return None, None, None, None
 
-        # Update user's name if provided (consistent with create_order behavior)
-        if args.customer_name:
-            user_repo.create_or_update_user(
-                {
-                    "name": args.customer_name,
-                    "phone_number": args.customer_contact,
-                    "email": None,
-                    "address": None,
-                    "is_spam": False,
-                    "credit_card": None,
-                }
-            )
-
         order = order_repo.get_latest_order_by_user(user_id, args.restaurant_id)
         if not order:
             return None, None, None, None
@@ -521,6 +508,20 @@ async def update_order_details(**kwargs) -> Dict[str, Any]:
         created_at = order.get("created_at")
         if not _is_within_update_window(created_at):
             return "UPDATE_WINDOW_EXPIRED", None, None, order
+
+        # Update user's name if provided (consistent with create_order behavior)
+        # Only update after validation to ensure it only executes when order update will succeed
+        if args.customer_name:
+            user_repo.create_or_update_user(
+                {
+                    "name": args.customer_name,
+                    "phone_number": args.customer_contact,
+                    "email": None,
+                    "address": None,
+                    "is_spam": False,
+                    "credit_card": None,
+                }
+            )
 
         # Capture previous state for activity history
         previous_data = {

@@ -334,7 +334,7 @@ class MySQLCallRepository(MySQLBaseRepository):
         conversion_params = list(params)
         # Replace unqualified column names with table-qualified versions for JOIN queries
         conversion_where = where_sql.replace("restaurant_id", "c.restaurant_id").replace("started_at", "c.started_at")
-        
+
         orders_conversion_query = f"""
             SELECT COUNT(DISTINCT c.id) AS converted_calls
             FROM Calls c

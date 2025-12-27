@@ -27,15 +27,16 @@ logger = logging.getLogger(__name__)
 
 
 class ClientAnalyticsService:
-    """Service for generating restaurant analytics for client dashboards."""
+    """
+    Service for generating restaurant analytics for client dashboards.
 
-    def __init__(self):
-        # No instance variables - create fresh repository instances per call to ensure fresh data
-        pass
+    This service uses factory methods to create fresh repository instances per function call,
+    ensuring up-to-date data by providing a fresh database connection for each request.
+    This fixes stale data issues that can occur with reused repository instances.
+    """
 
     # ---------- Repository Factory Methods ----------
     # Create fresh instances per function call to ensure up-to-date data
-    # This fixes stale data issues by ensuring each call gets a fresh database connection
 
     def _get_call_repo(self) -> MySQLCallRepository:
         """Create fresh call repository instance per function call."""
