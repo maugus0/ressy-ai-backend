@@ -29,6 +29,8 @@ class FillerManager:
 
     def schedule(self, state: StreamState, sts_ws) -> None:
         self.cancel(state)
+        if not state.awaiting_tool_result:
+            return
         delay = self._delay_seconds()
         if delay <= 0:
             return
@@ -58,6 +60,8 @@ class FillerManager:
             await asyncio.sleep(delay_seconds)
             if state.closing_after_farewell or state.filler_injected:
                 return
+            if not state.awaiting_tool_result:
+                return
             if user_turn_marker is not None and state.last_user_text_time != user_turn_marker:
                 return  # Newer user turn superseded this timer
             if state.last_assistant_text_time and state.last_assistant_text_time >= (user_turn_marker or 0):
@@ -66,7 +70,8 @@ class FillerManager:
                 user_turn_marker or 0
             ):
                 return
-            if state.in_function_chain:
+            if state.agent_speaking:
+                logger.debug("[Filler] Agent speaking; skip filler")
                 return
             message = self._choose_message(state.last_filler_message)
             payload = {"type": "InjectAgentMessage", "message": message}

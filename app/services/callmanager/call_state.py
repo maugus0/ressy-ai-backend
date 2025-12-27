@@ -17,6 +17,7 @@ class StreamState:
     last_user_started_speaking_time: Optional[float] = None
     last_function_response_time: Optional[float] = None
     in_function_chain: bool = False
+    awaiting_tool_result: bool = False
     closing_after_farewell: bool = False
     farewell_expected_text: Optional[str] = None
     farewell_started: bool = False

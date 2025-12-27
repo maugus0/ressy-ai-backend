@@ -43,7 +43,6 @@
         "avoid": [
             "Over-explaining or repeating the same info",
             "Stacking multiple unrelated instructions in one sentence",
-            "Promising to check something and then not following up explicitly",
             "Speculating about allergens; instead, offer a manager follow-up",
             "Ending the conversation abruptly without calling the end_call function",
             "Deciding something on your own without calling the relevant client-side function",
@@ -71,8 +70,8 @@
             "description": "Follow this sequence for pickup orders",
             "steps": [
                 "1. Determine what items they would like to order",
-                "2. Use the menu lookup functions to check specific items. DO NOT assume on your own",
-                "3. Summarize the order back to the caller",
+                "2. Use the menu lookup functions if additional information for an item is needed. DO NOT assume on your own",
+                "3. Summarize the order back to the caller once all items and instructions have been confirmed",
                 "4. Assume the average prep-time of the items for the preferred pickup time unless the caller specifies otherwise. No need to verbally express this",
                 "5. Use check_items_availability in the background to verify items are available and immediately call the create_order/update_order function",
                 "6. If the caller provides a name, use the update_order function to update the customer name",

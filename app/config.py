@@ -31,8 +31,12 @@ class Settings:
     DEEPGRAM_AUDIO_OUTPUT_CONTAINER = os.getenv("DEEPGRAM_AUDIO_OUTPUT_CONTAINER", "none")
 
     # Deepgram Agent Configuration
+    DEEPGRAM_HISTORY = os.getenv("DEEPGRAM_HISTORY", "false").lower() in {"1", "true", "yes", "on"}
     DEEPGRAM_AGENT_LANGUAGE = os.getenv("DEEPGRAM_AGENT_LANGUAGE", "en")
     DEEPGRAM_LISTEN_MODEL = os.getenv("DEEPGRAM_LISTEN_MODEL", "nova-3")
+    DEEPGRAM_ENDPOINTING_MS = int(os.getenv("DEEPGRAM_ENDPOINTING_MS", 700))
+    DEEPGRAM_INTERIM_RESULTS = os.getenv("DEEPGRAM_INTERIM_RESULTS", "true").lower() in {"1", "true", "yes", "on"}
+    DEEPGRAM_UTTERANCE_END_MS = int(os.getenv("DEEPGRAM_UTTERANCE_END_MS", "1400"))
     DEEPGRAM_LISTEN_KEYTERMS = os.getenv("DEEPGRAM_LISTEN_KEYTERMS", "hello,goodbye").split(",")
     DEEPGRAM_THINK_PROVIDER_TYPE = os.getenv("DEEPGRAM_THINK_PROVIDER_TYPE", "open_ai")
     DEEPGRAM_THINK_MODEL = os.getenv("DEEPGRAM_THINK_MODEL", "gpt-4o-mini")
@@ -56,7 +60,7 @@ class Settings:
 
     # Barge-in behavior
     # Minimum gap in seconds after last agent audio chunk before clearing Twilio buffer when user starts speaking
-    BARGE_IN_CLEAR_SECONDS = float(os.getenv("BARGE_IN_CLEAR_SECONDS", "0.2"))
+    BARGE_IN_CLEAR_SECONDS = float(os.getenv("BARGE_IN_CLEAR_SECONDS", "0.15"))
 
     # Telemetry / diagnostics
     # Enable verbose latency logging for call manager pipelines

@@ -403,6 +403,9 @@ class WebSocketService:
                                 "provider": {
                                     "type": "deepgram",
                                     "model": settings.DEEPGRAM_LISTEN_MODEL,
+                                    "endpointing": settings.DEEPGRAM_ENDPOINTING_MS,
+                                    "interim_results": settings.DEEPGRAM_INTERIM_RESULTS,
+                                    "utterance_end_ms": settings.DEEPGRAM_UTTERANCE_END_MS,
                                 }
                             },
                             "think": {
@@ -579,11 +582,11 @@ class WebSocketService:
             handler=reservations.check_reservation_availability,
             arg_model=reservations.CheckAvailabilityArgs,
         )
-        registry.register(
-            name="agent_filler",
-            handler=conversation.agent_filler,
-            arg_model=conversation.AgentFillerArgs,
-        )
+        # registry.register(
+        #     name="agent_filler",
+        #     handler=conversation.agent_filler,
+        #     arg_model=conversation.AgentFillerArgs,
+        # )
         registry.register(
             name="end_call",
             handler=conversation.end_call,
@@ -627,14 +630,56 @@ class WebSocketService:
     def _create_stream_state(self) -> StreamState:
         return StreamState()
 
-    async def _flush_audio_buffer(self, state: StreamState, twilio_ws, streamsid) -> None:
+    def _enqueue_twilio_message(
+        self,
+        twilio_send_queue: Optional[asyncio.Queue],
+        message: str,
+        *,
+        is_audio: bool = False,
+    ) -> bool:
+        if not twilio_send_queue:
+            return False
+        try:
+            twilio_send_queue.put_nowait(message)
+            return True
+        except asyncio.QueueFull:
+            try:
+                twilio_send_queue.get_nowait()
+            except asyncio.QueueEmpty:
+                # Queue drained between checks; nothing to drop.
+                pass
+            try:
+                twilio_send_queue.put_nowait(message)
+                self.logger.debug("Twilio send queue full; dropped oldest frame")
+                return True
+            except asyncio.QueueFull:
+                if is_audio:
+                    self.logger.debug("Twilio send queue full; dropping audio frame")
+                else:
+                    self.logger.debug("Twilio send queue full; dropping message")
+                return False
+
+    async def _flush_audio_buffer(
+        self,
+        state: StreamState,
+        twilio_ws,
+        streamsid,
+        twilio_send_queue: Optional[asyncio.Queue] = None,
+    ) -> None:
         if not state.audio_buffer:
             return
         payload = base64.b64encode(state.audio_buffer).decode("ascii")
         msg = {"event": "media", "streamSid": streamsid, "media": {"payload": payload}}
         try:
-            await twilio_ws.send_text(json.dumps(msg))
-            state.last_agent_audio_time = asyncio.get_event_loop().time()
+            msg_json = json.dumps(msg)
+            if twilio_send_queue:
+                if not self._enqueue_twilio_message(twilio_send_queue, msg_json, is_audio=True):
+                    state.audio_buffer.clear()
+                    return
+                state.last_agent_audio_time = asyncio.get_event_loop().time()
+            else:
+                await twilio_ws.send_text(msg_json)
+                state.last_agent_audio_time = asyncio.get_event_loop().time()
         except Exception as exc:
             self.logger.warning("Error sending buffered audio to Twilio: %s", exc)
         state.audio_buffer.clear()
@@ -752,9 +797,11 @@ class WebSocketService:
         event_type = decoded.get("type")
         if event_type == "AgentStartedSpeaking":
             state.agent_speaking = True
+            state.awaiting_tool_result = False
         elif event_type == "AgentAudioDone":
             state.agent_speaking = False
             state.barge_in_active = False
+            state.awaiting_tool_result = False
         elif event_type == "UserStartedSpeaking":
             state.barge_in_active = True
             state.barge_in_start_time = time.perf_counter()
@@ -763,7 +810,14 @@ class WebSocketService:
         elif event_type == "UserStoppedSpeaking":
             state.barge_in_active = False
 
-    async def _handle_audio_payload(self, decoded: dict[str, Any], state: StreamState, twilio_ws, streamsid) -> None:
+    async def _handle_audio_payload(
+        self,
+        decoded: dict[str, Any],
+        state: StreamState,
+        twilio_ws,
+        streamsid,
+        twilio_send_queue: Optional[asyncio.Queue] = None,
+    ) -> None:
         if decoded.get("type") not in {"ConversationAudio", "AgentAudioDone"}:
             return
         if state.barge_in_active:
@@ -780,16 +834,21 @@ class WebSocketService:
             now = time.perf_counter()
             audio_bytes = base64.b64decode(audio_payload)
             state.audio_buffer.extend(audio_bytes)
-            buffer_size = 3200
+            buffer_size = 2 * 160  # 320 bytes per ~40ms
             while len(state.audio_buffer) >= buffer_size:
                 chunk = state.audio_buffer[:buffer_size]
                 del state.audio_buffer[:buffer_size]
                 payload = base64.b64encode(chunk).decode("ascii")
                 msg = {"event": "media", "streamSid": streamsid, "media": {"payload": payload}}
-                await twilio_ws.send_text(json.dumps(msg))
-                state.last_agent_audio_time = asyncio.get_event_loop().time()
+                msg_json = json.dumps(msg)
+                if twilio_send_queue:
+                    if not self._enqueue_twilio_message(twilio_send_queue, msg_json, is_audio=True):
+                        continue
+                    state.last_agent_audio_time = asyncio.get_event_loop().time()
+                else:
+                    await twilio_ws.send_text(msg_json)
+                    state.last_agent_audio_time = asyncio.get_event_loop().time()
                 log_agent_audio_start_latency(state, now)
-                self.logger.info("✅ Sent ConversationAudio %s bytes to Twilio", len(chunk))
         except Exception as exc:
             self.logger.warning("Error processing ConversationAudio: %s", exc)
 
@@ -808,6 +867,7 @@ class WebSocketService:
             state.last_assistant_text_time = current_time
             state.agent_audio_latency_logged = False
             state.last_assistant_audio_start_time = None
+            state.awaiting_tool_result = False
         state.last_activity_time = current_time
 
     def _store_transcript_entry(self, decoded: dict[str, Any], call_id: Optional[str], state: StreamState) -> None:
@@ -844,6 +904,7 @@ class WebSocketService:
             return
 
         now = time.perf_counter()
+        state.awaiting_tool_result = True
         if state.in_function_chain and state.last_function_response_time:
             latency = now - state.last_function_response_time
             if settings.LATENCY_LOGS_ENABLED:
@@ -854,8 +915,13 @@ class WebSocketService:
                 self.logger.debug("LLM Decision Latency (initial): %.3fs", latency)
             state.in_function_chain = True
 
+        self._filler_manager.schedule(state, sts_ws)
         exec_start = time.perf_counter()
-        router_result = await transport.emit(decoded)
+        try:
+            router_result = await transport.emit(decoded)
+        finally:
+            state.awaiting_tool_result = False
+            self._filler_manager.cancel(state)
         exec_ms = (time.perf_counter() - exec_start) * 1000.0
         if settings.LATENCY_LOGS_ENABLED:
             self.logger.debug("Function Execution Latency: %.2fms", exec_ms)
@@ -882,6 +948,7 @@ class WebSocketService:
         streamsid,
         shutdown_event: Optional[asyncio.Event],
         audio_queue: Optional[asyncio.Queue] = None,
+        twilio_send_queue: Optional[asyncio.Queue] = None,
     ) -> bool:
         if not state.closing_after_farewell:
             return False
@@ -896,7 +963,7 @@ class WebSocketService:
         ):
             state.farewell_started = True
         elif event_type == "AgentAudioDone" and state.farewell_started:
-            await self._flush_audio_buffer(state, twilio_ws, streamsid)
+            await self._flush_audio_buffer(state, twilio_ws, streamsid, twilio_send_queue)
             await self._wait_for_farewell_playback(state)
             await self._graceful_shutdown_call(twilio_ws, sts_ws, shutdown_event, audio_queue)
             state.farewell_shutdown_complete = True
@@ -904,7 +971,12 @@ class WebSocketService:
         return False
 
     async def _handle_binary_audio(
-        self, message: bytes | bytearray | memoryview, state: StreamState, twilio_ws, streamsid
+        self,
+        message: bytes | bytearray | memoryview,
+        state: StreamState,
+        twilio_ws,
+        streamsid,
+        twilio_send_queue: Optional[asyncio.Queue] = None,
     ) -> None:
         now = time.perf_counter()
         try:
@@ -913,28 +985,53 @@ class WebSocketService:
             self.logger.warning("Failed to buffer binary audio payload (%s): %s", type(message), exc)
             return
         # Keep outbound chunks small to reduce playback latency
-        buffer_size = 5 * 160  # 800 bytes per ~100ms
+        buffer_size = 2 * 160  # 320 bytes per ~40ms
         while len(state.audio_buffer) >= buffer_size:
             chunk = state.audio_buffer[:buffer_size]
             del state.audio_buffer[:buffer_size]
             payload = base64.b64encode(chunk).decode("ascii")
             msg = {"event": "media", "streamSid": streamsid, "media": {"payload": payload}}
-            await twilio_ws.send_text(json.dumps(msg))
-            state.last_agent_audio_time = asyncio.get_event_loop().time()
+            msg_json = json.dumps(msg)
+            if twilio_send_queue:
+                if not self._enqueue_twilio_message(twilio_send_queue, msg_json, is_audio=True):
+                    continue
+                state.last_agent_audio_time = asyncio.get_event_loop().time()
+            else:
+                await twilio_ws.send_text(msg_json)
+                state.last_agent_audio_time = asyncio.get_event_loop().time()
             log_agent_audio_start_latency(state, now)
 
-    async def handle_barge_in(self, decoded, twilio_ws, streamsid, last_agent_audio_time):
+    async def handle_barge_in(
+        self,
+        decoded,
+        twilio_ws,
+        streamsid,
+        last_agent_audio_time,
+        twilio_send_queue: Optional[asyncio.Queue] = None,
+    ):
         """Clear Twilio audio only if user starts speaking after a gap."""
         if decoded.get("type") == "UserStartedSpeaking":
             now = asyncio.get_event_loop().time()
-            threshold = float(getattr(settings, "BARGE_IN_CLEAR_SECONDS", 0.5))
+            threshold = float(getattr(settings, "BARGE_IN_CLEAR_SECONDS", 0.15))
             if not last_agent_audio_time or (now - last_agent_audio_time) > threshold:
                 clear_msg = {"event": "clear", "streamSid": streamsid}
-                await twilio_ws.send_text(json.dumps(clear_msg))
+                msg_json = json.dumps(clear_msg)
+                if twilio_send_queue:
+                    self._enqueue_twilio_message(twilio_send_queue, msg_json)
+                else:
+                    await twilio_ws.send_text(msg_json)
 
-    async def handle_text_message(self, decoded, twilio_ws, sts_ws, streamsid, last_agent_audio_time):
+    async def handle_text_message(
+        self,
+        decoded,
+        twilio_ws,
+        sts_ws,
+        streamsid,
+        last_agent_audio_time,
+        twilio_send_queue: Optional[asyncio.Queue] = None,
+    ):
         """Handle text messages and barge-in logic."""
-        await self.handle_barge_in(decoded, twilio_ws, streamsid, last_agent_audio_time)
+        await self.handle_barge_in(decoded, twilio_ws, streamsid, last_agent_audio_time, twilio_send_queue)
 
     async def buffer_flusher(
         self,
@@ -944,7 +1041,7 @@ class WebSocketService:
         buffer_lock: Optional[asyncio.Lock] = None,
     ) -> None:
         """Periodically flush partial inbound audio to keep Deepgram connection active."""
-        flush_interval = 0.3
+        flush_interval = 0.15
         try:
             while True:
                 if shutdown_event and shutdown_event.is_set():
@@ -982,6 +1079,40 @@ class WebSocketService:
             if not shutdown_event or not shutdown_event.is_set():
                 self.logger.warning("buffer_flusher error: %s", exc)
 
+    async def twilio_sender(
+        self,
+        twilio_ws,
+        outbound_queue: asyncio.Queue,
+        shutdown_event: Optional[asyncio.Event] = None,
+    ) -> None:
+        """Drain outbound queue and send to Twilio without blocking upstream loops."""
+        next_send_time = time.monotonic()
+        try:
+            while True:
+                if shutdown_event and shutdown_event.is_set() and outbound_queue.empty():
+                    break
+                try:
+                    message = await asyncio.wait_for(outbound_queue.get(), timeout=0.5)
+                except asyncio.TimeoutError:
+                    continue
+                if message is None:
+                    break
+                try:
+                    now = time.monotonic()
+                    if now < next_send_time:
+                        await asyncio.sleep(next_send_time - now)
+                    await twilio_ws.send_text(message)
+                    now = time.monotonic()
+                    next_send_time = max(next_send_time, now) + 0.04
+                except (WebSocketDisconnect, ConnectionError):
+                    self.logger.info("twilio_sender disconnected")
+                    break
+                except Exception as exc:
+                    self.logger.warning("twilio_sender send error: %s", exc)
+        except asyncio.CancelledError:
+            self.logger.info("twilio_sender cancelled")
+            raise
+
     async def sts_sender(self, sts_ws, audio_queue, shutdown_event: Optional[asyncio.Event] = None):
         """Send audio chunks to Deepgram STS."""
         try:
@@ -1008,6 +1139,7 @@ class WebSocketService:
         transport: Optional[Transport] = None,
         shutdown_event: Optional[asyncio.Event] = None,
         audio_queue: Optional[asyncio.Queue] = None,
+        twilio_send_queue: Optional[asyncio.Queue] = None,
         state: Optional[StreamState] = None,
     ):
         """Receive messages from Deepgram STS and forward to Twilio."""
@@ -1044,11 +1176,12 @@ class WebSocketService:
                     if message_type == "UserStartedSpeaking":
                         state.last_user_started_speaking_time = now
                         self._filler_manager.cancel(state)
+                        state.awaiting_tool_result = False
                     elif message_type == "ConversationText":
                         role = decoded.get("role")
                         self._track_conversation_turn(decoded, state, now)
                         if role == "user":
-                            self._filler_manager.schedule(state, sts_ws)
+                            state.awaiting_tool_result = False
                         elif role == "assistant":
                             self._filler_manager.cancel(state)
                             log_assistant_text_latency(state, now)
@@ -1056,29 +1189,38 @@ class WebSocketService:
                         self._filler_manager.cancel(state)
 
                     farewell_finished = await self._maybe_finish_farewell(
-                        decoded, state, twilio_ws, sts_ws, streamsid, shutdown_event, audio_queue
+                        decoded,
+                        state,
+                        twilio_ws,
+                        sts_ws,
+                        streamsid,
+                        shutdown_event,
+                        audio_queue,
+                        twilio_send_queue,
                     )
                     if farewell_finished:
                         break
 
                     self._update_barge_in_state(decoded, state)
-                    await self._handle_audio_payload(decoded, state, twilio_ws, streamsid)
-                    await self.handle_text_message(decoded, twilio_ws, sts_ws, streamsid, state.last_agent_audio_time)
+                    await self._handle_audio_payload(decoded, state, twilio_ws, streamsid, twilio_send_queue)
+                    await self.handle_text_message(
+                        decoded, twilio_ws, sts_ws, streamsid, state.last_agent_audio_time, twilio_send_queue
+                    )
                     await self._route_function_calls(decoded, state, transport, sts_ws)
                     self._store_transcript_entry(decoded, call_id, state)
 
                     if decoded.get("type") == "AgentAudioDone" and not state.closing_after_farewell:
-                        await self._flush_audio_buffer(state, twilio_ws, streamsid)
+                        await self._flush_audio_buffer(state, twilio_ws, streamsid, twilio_send_queue)
                         continue
 
                 elif isinstance(message, (bytes, bytearray, memoryview)):
-                    await self._handle_binary_audio(message, state, twilio_ws, streamsid)
+                    await self._handle_binary_audio(message, state, twilio_ws, streamsid, twilio_send_queue)
                 else:
                     self.logger.warning("Dropping unexpected Deepgram payload type: %s", type(message))
                     continue
 
             if not state.farewell_shutdown_complete:
-                await self._flush_audio_buffer(state, twilio_ws, streamsid)
+                await self._flush_audio_buffer(state, twilio_ws, streamsid, twilio_send_queue)
         except (websockets.exceptions.ConnectionClosed, websockets.exceptions.ConnectionClosedOK):
             self.logger.info("sts_receiver: Deepgram connection closed")
         except asyncio.CancelledError:
@@ -1107,8 +1249,8 @@ class WebSocketService:
         buffer_lock: Optional[asyncio.Lock] = None,
     ):
         """Receive audio from Twilio and forward to Deepgram."""
-        # Smaller buffer reduces turnaround latency (~0.1s chunks)
-        buffer_size = 5 * 160  # 800 bytes per ~100ms
+        # Smaller buffer reduces turnaround latency (~0.06s chunks)
+        buffer_size = 3 * 160  # 480 bytes per ~60ms
         inbuffer = shared_buffer if shared_buffer is not None else bytearray()
 
         try:
@@ -1203,6 +1345,7 @@ class WebSocketService:
         to_number_queue: asyncio.Queue = asyncio.Queue()
         from_number_queue: asyncio.Queue = asyncio.Queue()
         call_sid_queue: asyncio.Queue = asyncio.Queue()
+        twilio_send_queue: asyncio.Queue = asyncio.Queue(maxsize=1000)
         shutdown_event = asyncio.Event()
         shared_buffer = bytearray()
         buffer_lock = asyncio.Lock()
@@ -1230,6 +1373,7 @@ class WebSocketService:
             )
         )
         flusher_task = asyncio.create_task(self.buffer_flusher(shared_buffer, audio_queue, shutdown_event, buffer_lock))
+        twilio_send_task = asyncio.create_task(self.twilio_sender(twilio_ws, twilio_send_queue, shutdown_event))
 
         try:
             # Use values provided by API first; fall back to Twilio start event if missing.
@@ -1321,6 +1465,7 @@ class WebSocketService:
                                 transport,
                                 shutdown_event,
                                 audio_queue,
+                                twilio_send_queue,
                                 state,
                             )
                         )
@@ -1330,6 +1475,7 @@ class WebSocketService:
                             flusher_task,
                             sts_sender_task,
                             sts_receiver_task,
+                            twilio_send_task,
                         ]
                         try:
                             done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
@@ -1337,6 +1483,10 @@ class WebSocketService:
                             shutdown_event.set()
                             try:
                                 audio_queue.put_nowait(None)
+                            except asyncio.QueueFull:
+                                pass
+                            try:
+                                twilio_send_queue.put_nowait(None)
                             except asyncio.QueueFull:
                                 pass
                             for task in pending:
@@ -1380,12 +1530,16 @@ class WebSocketService:
                 audio_queue.put_nowait(None)
             except asyncio.QueueFull:
                 pass
+            try:
+                twilio_send_queue.put_nowait(None)
+            except asyncio.QueueFull:
+                pass
 
             # Ensure background tasks are stopped
-            for task in (twilio_task, flusher_task):
+            for task in (twilio_task, flusher_task, twilio_send_task):
                 if task and not task.done():
                     task.cancel()
-            await asyncio.gather(twilio_task, flusher_task, return_exceptions=True)
+            await asyncio.gather(twilio_task, flusher_task, twilio_send_task, return_exceptions=True)
             if call_timeout_task:
                 if not call_timeout_task.done():
                     call_timeout_task.cancel()
