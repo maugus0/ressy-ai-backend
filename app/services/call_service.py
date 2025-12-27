@@ -19,15 +19,17 @@ from app.repositories.mysql_call_repo import MySQLCallRepository
 class CallService:
     """
     Service for managing call sessions and analytics.
-
-    This service uses factory methods to create fresh repository instances per function call,
-    ensuring up-to-date data by providing a fresh database connection for each request.
-    This fixes stale data issues that can occur with reused repository instances.
     """
 
+    def __init__(self):
+        # Lazily initialized repository instance; reused to avoid unnecessary allocations.
+        self._call_repo: Optional[MySQLCallRepository] = None
+
     def _get_call_repo(self) -> MySQLCallRepository:
-        """Create fresh call repository instance per function call."""
-        return MySQLCallRepository()
+        """Get the call repository instance, creating it on first use."""
+        if self._call_repo is None:
+            self._call_repo = MySQLCallRepository()
+        return self._call_repo
 
     @staticmethod
     def calculate_call_costs(duration_seconds: int) -> dict:

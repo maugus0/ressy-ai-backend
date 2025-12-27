@@ -3,6 +3,7 @@ MySQL Call Repository for call session operations.
 """
 
 import json
+from datetime import datetime
 from typing import Dict, List, Optional
 
 from app.repositories.mysql_base import MySQLBaseRepository
@@ -265,16 +266,36 @@ class MySQLCallRepository(MySQLBaseRepository):
             params.append(str(restaurant_id))
         if date_from:
             # Normalize date format: if only date is provided (YYYY-MM-DD), add time component
+            # Validate date format before normalization to prevent SQL injection
             normalized_date_from = date_from
-            if len(date_from) == 10 and date_from.count("-") == 2:  # Format: YYYY-MM-DD
-                normalized_date_from = f"{date_from} 00:00:00"
+            try:
+                # Try parsing as date-only format first
+                if len(date_from) == 10 and date_from.count("-") == 2:
+                    datetime.strptime(date_from, "%Y-%m-%d")
+                    normalized_date_from = f"{date_from} 00:00:00"
+                else:
+                    # Validate as datetime format
+                    datetime.strptime(date_from, "%Y-%m-%d %H:%M:%S")
+            except ValueError:
+                # If date format is invalid, log and use as-is (will fail at DB level)
+                self.logger.warning(f"Invalid date_from format: {date_from}")
             where_clauses.append("started_at >= %s")
             params.append(normalized_date_from)
         if date_to:
             # Normalize date format: if only date is provided (YYYY-MM-DD), add time component to end of day
+            # Validate date format before normalization to prevent SQL injection
             normalized_date_to = date_to
-            if len(date_to) == 10 and date_to.count("-") == 2:  # Format: YYYY-MM-DD
-                normalized_date_to = f"{date_to} 23:59:59"
+            try:
+                # Try parsing as date-only format first
+                if len(date_to) == 10 and date_to.count("-") == 2:
+                    datetime.strptime(date_to, "%Y-%m-%d")
+                    normalized_date_to = f"{date_to} 23:59:59"
+                else:
+                    # Validate as datetime format
+                    datetime.strptime(date_to, "%Y-%m-%d %H:%M:%S")
+            except ValueError:
+                # If date format is invalid, log and use as-is (will fail at DB level)
+                self.logger.warning(f"Invalid date_to format: {date_to}")
             where_clauses.append("started_at <= %s")
             params.append(normalized_date_to)
 
@@ -330,16 +351,24 @@ class MySQLCallRepository(MySQLBaseRepository):
 
         # Calculate conversion rates: orders and reservations created within 1 hour of call start
         # Match by user_id (from Calls.user_id to Orders.user_id) and restaurant_id
-        # Only count conversions where user_id can be cast to integer and restaurant_id matches
+        # Only count conversions where user_id can be cast to non-negative integer and restaurant_id matches
         conversion_params = list(params)
-        # Replace unqualified column names with table-qualified versions for JOIN queries
-        conversion_where = where_sql.replace("restaurant_id", "c.restaurant_id").replace("started_at", "c.started_at")
+        # Build WHERE clause with table-qualified column names for JOIN queries
+        # Build directly from the same conditions to avoid fragile string replacement
+        conversion_where_clauses = ["1=1"]
+        if restaurant_id:
+            conversion_where_clauses.append("c.restaurant_id = %s")
+        if date_from:
+            conversion_where_clauses.append("c.started_at >= %s")
+        if date_to:
+            conversion_where_clauses.append("c.started_at <= %s")
+        conversion_where = " AND ".join(conversion_where_clauses)
 
         orders_conversion_query = f"""
             SELECT COUNT(DISTINCT c.id) AS converted_calls
             FROM Calls c
             INNER JOIN Orders o ON (
-                c.user_id REGEXP '^[0-9]+$'
+                c.user_id REGEXP '^[1-9][0-9]*$|^0$'
                 AND c.restaurant_id IS NOT NULL
                 AND o.user_id = CAST(c.user_id AS UNSIGNED)
                 AND o.restaurant_id = CAST(c.restaurant_id AS UNSIGNED)
@@ -356,7 +385,7 @@ class MySQLCallRepository(MySQLBaseRepository):
             SELECT COUNT(DISTINCT c.id) AS converted_calls
             FROM Calls c
             INNER JOIN Reservations r ON (
-                c.user_id REGEXP '^[0-9]+$'
+                c.user_id REGEXP '^[1-9][0-9]*$|^0$'
                 AND c.restaurant_id IS NOT NULL
                 AND r.user_id = CAST(c.user_id AS UNSIGNED)
                 AND r.created_at >= c.started_at

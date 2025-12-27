@@ -29,38 +29,45 @@ logger = logging.getLogger(__name__)
 class ClientAnalyticsService:
     """
     Service for generating restaurant analytics for client dashboards.
-
-    This service uses factory methods to create fresh repository instances per function call,
-    ensuring up-to-date data by providing a fresh database connection for each request.
-    This fixes stale data issues that can occur with reused repository instances.
     """
 
+    def __init__(self):
+        # Initialize repository instances once; they use connection pooling so
+        # reusing them avoids unnecessary allocations without causing stale data.
+        self._call_repo = MySQLCallRepository()
+        self._order_repo = MySQLOrderRepository()
+        self._reservation_repo = MySQLReservationRepository()
+        self._menu_repo = MySQLMenuRepository()
+        self._faq_repo = MySQLFAQRepository()
+        self._user_repo = MySQLUserRepository()
+
     # ---------- Repository Factory Methods ----------
-    # Create fresh instances per function call to ensure up-to-date data
+    # Return long-lived repository instances; connection pooling ensures each
+    # operation uses a fresh database connection as needed.
 
     def _get_call_repo(self) -> MySQLCallRepository:
-        """Create fresh call repository instance per function call."""
-        return MySQLCallRepository()
+        """Get the call repository instance."""
+        return self._call_repo
 
     def _get_order_repo(self) -> MySQLOrderRepository:
-        """Create fresh order repository instance per function call."""
-        return MySQLOrderRepository()
+        """Get the order repository instance."""
+        return self._order_repo
 
     def _get_reservation_repo(self) -> MySQLReservationRepository:
-        """Create fresh reservation repository instance per function call."""
-        return MySQLReservationRepository()
+        """Get the reservation repository instance."""
+        return self._reservation_repo
 
     def _get_menu_repo(self) -> MySQLMenuRepository:
-        """Create fresh menu repository instance per function call."""
-        return MySQLMenuRepository()
+        """Get the menu repository instance."""
+        return self._menu_repo
 
     def _get_faq_repo(self) -> MySQLFAQRepository:
-        """Create fresh FAQ repository instance per function call."""
-        return MySQLFAQRepository()
+        """Get the FAQ repository instance."""
+        return self._faq_repo
 
     def _get_user_repo(self) -> MySQLUserRepository:
-        """Create fresh user repository instance per function call."""
-        return MySQLUserRepository()
+        """Get the user repository instance."""
+        return self._user_repo
 
     def _get_today_start(self) -> datetime:
         """Get the start of today with consistent timezone handling (UTC)."""
