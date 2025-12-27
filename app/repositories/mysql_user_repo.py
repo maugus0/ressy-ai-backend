@@ -13,52 +13,81 @@ class MySQLUserRepository(MySQLBaseRepository):
     def create_or_update_user(self, user_data: Dict) -> int:
         """
         Create or update user based on phone_number or email.
+        Uses atomic INSERT ... ON DUPLICATE KEY UPDATE to prevent race conditions.
         Returns user ID.
-        """
-        # First, try to find existing user
-        user_id = self.get_user_id_by_phone_or_email(user_data.get("phone_number"), user_data.get("email"))
 
-        if user_id:
-            # Update existing user
-            query = """
-                UPDATE Users
-                SET name = %s,
-                    email = %s,
-                    address = %s,
-                    is_spam = %s,
-                    credit_card = %s,
-                    updated_at = NOW()
-                WHERE id = %s
-            """
-            self._execute_update(
-                query,
-                (
-                    user_data.get("name"),
-                    user_data.get("email"),
-                    user_data.get("address"),
-                    user_data.get("is_spam", False),
-                    user_data.get("credit_card"),
-                    user_id,
-                ),
-            )
-            return user_id
-        else:
-            # Create new user
+        If user exists (by phone_number), updates non-null fields.
+        If user doesn't exist, creates new record.
+        """
+        phone_number = user_data.get("phone_number")
+        email = user_data.get("email")
+        name = user_data.get("name")
+        address = user_data.get("address")
+        is_spam = user_data.get("is_spam", False)
+        credit_card = user_data.get("credit_card")
+
+        if phone_number:
+            # Use atomic upsert on phone_number (has unique constraint)
+            # COALESCE ensures we don't overwrite existing non-null values with NULL
             query = """
                 INSERT INTO Users (name, phone_number, email, address, is_spam, credit_card, created_at, updated_at)
                 VALUES (%s, %s, %s, %s, %s, %s, NOW(), NOW())
+                ON DUPLICATE KEY UPDATE
+                    name = COALESCE(VALUES(name), name),
+                    email = COALESCE(VALUES(email), email),
+                    address = COALESCE(VALUES(address), address),
+                    is_spam = VALUES(is_spam),
+                    credit_card = COALESCE(VALUES(credit_card), credit_card),
+                    updated_at = NOW()
             """
-            return self._execute_insert(
+            self._execute_insert(
                 query,
-                (
-                    user_data.get("name"),
-                    user_data.get("phone_number"),
-                    user_data.get("email"),
-                    user_data.get("address"),
-                    user_data.get("is_spam", False),
-                    user_data.get("credit_card"),
-                ),
+                (name, phone_number, email, address, is_spam, credit_card),
             )
+            # Fetch the user ID (either newly created or existing)
+            result = self._execute_query(
+                "SELECT id FROM Users WHERE phone_number = %s LIMIT 1",
+                (phone_number,),
+            )
+            if result:
+                return result[0]["id"]
+
+        # Fall back to email lookup if no phone_number or phone lookup failed
+        if email:
+            # Check if user exists by email
+            existing = self._execute_query(
+                "SELECT id FROM Users WHERE email = %s LIMIT 1",
+                (email,),
+            )
+            if existing:
+                user_id = existing[0]["id"]
+                # Update existing user
+                update_query = """
+                    UPDATE Users
+                    SET name = COALESCE(%s, name),
+                        phone_number = COALESCE(%s, phone_number),
+                        address = COALESCE(%s, address),
+                        is_spam = %s,
+                        credit_card = COALESCE(%s, credit_card),
+                        updated_at = NOW()
+                    WHERE id = %s
+                """
+                self._execute_update(
+                    update_query,
+                    (name, phone_number, address, is_spam, credit_card, user_id),
+                )
+                return user_id
+
+        # No phone_number and no existing email match - create new user
+        # This path is rare (user without phone) but we handle it gracefully
+        insert_query = """
+            INSERT INTO Users (name, phone_number, email, address, is_spam, credit_card, created_at, updated_at)
+            VALUES (%s, %s, %s, %s, %s, %s, NOW(), NOW())
+        """
+        return self._execute_insert(
+            insert_query,
+            (name, phone_number, email, address, is_spam, credit_card),
+        )
 
     def get_user_id_by_phone_or_email(self, phone_number: Optional[str], email: Optional[str]) -> Optional[int]:
         """

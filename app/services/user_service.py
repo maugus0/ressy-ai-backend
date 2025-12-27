@@ -12,9 +12,12 @@ class UserService:
         self.metadata_repo = MySQLUserRestaurantMetadataRepository()
 
     def create_user(self, data: dict) -> dict:
-        """Create a new user."""
-        user_id = self.user_repo.create_user(data)
-        return {"message": "User created successfully", "user_id": user_id}
+        """
+        Create a new user or return existing user if phone_number already exists.
+        Uses atomic create_or_update_user to prevent duplicate entries.
+        """
+        user_id = self.user_repo.create_or_update_user(data)
+        return {"message": "User created or updated successfully", "user_id": user_id}
 
     def list_users(self) -> list:
         """List all users."""
@@ -36,12 +39,14 @@ class UserService:
         """
         Create or associate a user for restaurant dashboard.
 
-        If user already exists (by phone/email):
-        - Check if they're already associated with this restaurant
-        - If not, create the user-restaurant mapping
+        Uses atomic create_or_update_user to prevent race conditions and duplicate entries.
+
+        If user already exists (by phone_number):
+        - Check if they have an explicit metadata mapping to this restaurant
+        - If not, create the user-restaurant mapping and update user data
 
         If user doesn't exist:
-        - Create new user
+        - Create new user atomically
         - Create user-restaurant mapping
 
         Args:
@@ -52,39 +57,29 @@ class UserService:
         Returns:
             Dict with user_id, user details, and whether user was newly created
         """
-        # Check if user already exists
-        existing_user_id = self.user_repo.get_user_id_by_phone_or_email(
-            user_data.get("phone_number"), user_data.get("email")
-        )
+        phone_number = user_data.get("phone_number")
+
+        # Check if user already exists BEFORE the atomic upsert
+        # This lets us determine if user was new or existing
+        existing_user_id = self.user_repo.get_user_id_by_phone_or_email(phone_number, user_data.get("email"))
+
+        is_new_user = existing_user_id is None
 
         if existing_user_id:
-            # User exists - check if already associated with this restaurant
-            already_associated = self.user_repo.user_belongs_to_restaurant(existing_user_id, restaurant_id)
+            # User exists - check if they have an EXPLICIT metadata mapping to this restaurant
+            # We use metadata_repo (not user_repo) because we only want to check explicit mappings,
+            # not implicit associations via calls or reservations. Users should be able to be
+            # explicitly added to a restaurant even if they've previously called/made reservations.
+            already_has_mapping = self.metadata_repo.user_belongs_to_restaurant(existing_user_id, restaurant_id)
 
-            if already_associated:
+            if already_has_mapping:
                 raise ValueError("User is already associated with this restaurant")
 
-            # User exists but not associated - create mapping
-            self.metadata_repo.create_mapping(
-                user_id=existing_user_id,
-                restaurant_id=restaurant_id,
-                source="dashboard",
-                notes=notes,
-            )
+        # Use atomic create_or_update_user to handle race conditions
+        # This ensures we don't create duplicates even under concurrent requests
+        user_id = self.user_repo.create_or_update_user(user_data)
 
-            user = self.user_repo.get_user_by_id(existing_user_id)
-
-            return {
-                "message": "Existing user added to restaurant successfully",
-                "user_id": existing_user_id,
-                "user": user,
-                "is_new_user": False,
-            }
-
-        # User doesn't exist - create new user
-        user_id = self.user_repo.create_user(user_data)
-
-        # Create the user-restaurant metadata mapping
+        # Create the user-restaurant metadata mapping (uses ON DUPLICATE KEY UPDATE internally)
         self.metadata_repo.create_mapping(
             user_id=user_id,
             restaurant_id=restaurant_id,
@@ -94,12 +89,20 @@ class UserService:
 
         user = self.user_repo.get_user_by_id(user_id)
 
-        return {
-            "message": "User created successfully",
-            "user_id": user_id,
-            "user": user,
-            "is_new_user": True,
-        }
+        if is_new_user:
+            return {
+                "message": "User created successfully",
+                "user_id": user_id,
+                "user": user,
+                "is_new_user": True,
+            }
+        else:
+            return {
+                "message": "Existing user added to restaurant successfully",
+                "user_id": user_id,
+                "user": user,
+                "is_new_user": False,
+            }
 
     def list_users_by_restaurant(
         self,
