@@ -18,7 +18,12 @@ from app.repositories.mysql_call_repo import MySQLCallRepository
 
 class CallService:
     def __init__(self):
-        self.call_repo = MySQLCallRepository()
+        # No instance variables - create fresh repository instances per call to ensure fresh data
+        pass
+
+    def _get_call_repo(self) -> MySQLCallRepository:
+        """Create fresh call repository instance per function call."""
+        return MySQLCallRepository()
 
     @staticmethod
     def calculate_call_costs(duration_seconds: int) -> dict:
@@ -51,7 +56,8 @@ class CallService:
         deepgram_session_id: str | None,
         restaurant_id: str | None = None,
     ) -> int:
-        return self.call_repo.create_call_session(user_id, twilio_sid, deepgram_session_id, restaurant_id)
+        call_repo = self._get_call_repo()
+        return call_repo.create_call_session(user_id, twilio_sid, deepgram_session_id, restaurant_id)
 
     def update_call_cost(self, call_id: int, duration_seconds: int) -> None:
         normalized_id = self._safe_int(call_id)
@@ -62,12 +68,14 @@ class CallService:
         costs = self.calculate_call_costs(duration_seconds)
         ressy_cost = costs["ressy_cost"]
 
-        self.call_repo.update_call_cost(normalized_id, duration_seconds, ressy_cost)
+        call_repo = self._get_call_repo()
+        call_repo.update_call_cost(normalized_id, duration_seconds, ressy_cost)
 
     def store_transcript_message(
         self, call_id: int, message_sequence: int, speaker: str, message: str, timestamp: str
     ) -> None:
-        self.call_repo.store_transcript_message(call_id, message_sequence, speaker, message, timestamp)
+        call_repo = self._get_call_repo()
+        call_repo.store_transcript_message(call_id, message_sequence, speaker, message, timestamp)
 
     def update_deepgram_request_id(self, call_id: str | int, deepgram_request_id: str) -> None:
         """Persist Deepgram request ID for a call once it is available."""
@@ -76,20 +84,22 @@ class CallService:
             return
         if not deepgram_request_id:
             return
-        self.call_repo.update_deepgram_request_id(normalized_id, deepgram_request_id)
+        call_repo = self._get_call_repo()
+        call_repo.update_deepgram_request_id(normalized_id, deepgram_request_id)
 
     def get_call_history(
         self, user_id: str, user_role: str, restaurant_id: str | None = None, limit: int = 50
     ) -> List[CallResponse]:
         """Get call history based on user role and filters."""
+        call_repo = self._get_call_repo()
         if restaurant_id:
-            raw_calls = self.call_repo.get_calls_by_restaurant(restaurant_id, limit)
+            raw_calls = call_repo.get_calls_by_restaurant(restaurant_id, limit)
         else:
             # Admins can see all, others limited to their own
             if user_role == "admin":
-                raw_calls = self.call_repo.get_all_calls(limit)
+                raw_calls = call_repo.get_all_calls(limit)
             else:
-                raw_calls = self.call_repo.get_user_calls(user_id, limit)
+                raw_calls = call_repo.get_user_calls(user_id, limit)
 
         normalized: List[CallResponse] = []
         for c in raw_calls:
@@ -115,7 +125,8 @@ class CallService:
         if normalized_id is None:
             return []
 
-        call_row = self.call_repo.get_call_by_id(normalized_id)
+        call_repo = self._get_call_repo()
+        call_row = call_repo.get_call_by_id(normalized_id)
         if not call_row:
             return []
 
@@ -143,7 +154,8 @@ class CallService:
 
     def get_analytics_summary(self, user_id: str) -> AnalyticsResponse:
         """Get analytics summary for a user."""
-        calls = self.call_repo.get_user_calls(user_id, limit=1000)
+        call_repo = self._get_call_repo()
+        calls = call_repo.get_user_calls(user_id, limit=1000)
 
         total_calls = len(calls)
         total_cost = sum(float(call.get("cost", 0)) for call in calls)
@@ -161,7 +173,8 @@ class CallService:
         normalized_id = self._safe_int(call_id)
         if normalized_id is None:
             return
-        self.call_repo.update_call_transcript(normalized_id, conversation)
+        call_repo = self._get_call_repo()
+        call_repo.update_call_transcript(normalized_id, conversation)
 
     def list_calls(
         self,
@@ -178,7 +191,8 @@ class CallService:
         sort_order: str = "desc",
         search_term: Optional[str] = None,
     ) -> CallListPage:
-        rows, total = self.call_repo.list_calls(
+        call_repo = self._get_call_repo()
+        rows, total = call_repo.list_calls(
             restaurant_id=restaurant_id,
             date_from=date_from,
             date_to=date_to,
@@ -220,7 +234,8 @@ class CallService:
         if normalized_id is None:
             return None, False
 
-        call_row = self.call_repo.get_call_by_id(normalized_id)
+        call_repo = self._get_call_repo()
+        call_row = call_repo.get_call_by_id(normalized_id)
         if not call_row:
             return None, False
         if restaurant_scope and str(call_row.get("restaurant_id")) != str(restaurant_scope):
@@ -289,7 +304,8 @@ class CallService:
         if normalized_id is None:
             return None
 
-        call_row = self.call_repo.get_call_by_id(normalized_id)
+        call_repo = self._get_call_repo()
+        call_row = call_repo.get_call_by_id(normalized_id)
         if not call_row:
             return None
 
@@ -344,20 +360,23 @@ class CallService:
         normalized_id = self._safe_int(call_id)
         if normalized_id is None:
             return False
-        deleted = self.call_repo.delete_call(normalized_id)
+        call_repo = self._get_call_repo()
+        deleted = call_repo.delete_call(normalized_id)
         return deleted > 0
 
     def delete_call_transcript(self, call_id: str) -> bool:
         normalized_id = self._safe_int(call_id)
         if normalized_id is None:
             return False
-        updated = self.call_repo.delete_call_transcript(normalized_id)
+        call_repo = self._get_call_repo()
+        updated = call_repo.delete_call_transcript(normalized_id)
         return updated > 0
 
     def get_dashboard_analytics(
         self, restaurant_id: Optional[str] = None, date_from: Optional[str] = None, date_to: Optional[str] = None
     ) -> CallAnalyticsV2:
-        analytics = self.call_repo.get_call_analytics(
+        call_repo = self._get_call_repo()
+        analytics = call_repo.get_call_analytics(
             restaurant_id=restaurant_id,
             date_from=date_from,
             date_to=date_to,

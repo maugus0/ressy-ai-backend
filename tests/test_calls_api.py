@@ -57,7 +57,8 @@ def _make_call_repo():
 def client_with_calls():
     repo = _make_call_repo()
     service = CallService()
-    service.call_repo = repo  # Inject fake repo
+    # Override factory method to return fake repo
+    service._get_call_repo = lambda: repo
 
     app.dependency_overrides[calls.get_call_service] = lambda: service
     app.dependency_overrides[client_calls.get_call_service] = lambda: service
