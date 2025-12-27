@@ -42,7 +42,7 @@ class UserService:
         Uses atomic create_or_update_user to prevent race conditions and duplicate entries.
 
         If user already exists (by phone_number):
-        - Check if they're already associated with this restaurant
+        - Check if they have an explicit metadata mapping to this restaurant
         - If not, create the user-restaurant mapping and update user data
 
         If user doesn't exist:
@@ -61,17 +61,18 @@ class UserService:
 
         # Check if user already exists BEFORE the atomic upsert
         # This lets us determine if user was new or existing
-        existing_user_id = self.user_repo.get_user_id_by_phone_or_email(
-            phone_number, user_data.get("email")
-        )
+        existing_user_id = self.user_repo.get_user_id_by_phone_or_email(phone_number, user_data.get("email"))
 
         is_new_user = existing_user_id is None
 
         if existing_user_id:
-            # User exists - check if already associated with this restaurant
-            already_associated = self.user_repo.user_belongs_to_restaurant(existing_user_id, restaurant_id)
+            # User exists - check if they have an EXPLICIT metadata mapping to this restaurant
+            # We use metadata_repo (not user_repo) because we only want to check explicit mappings,
+            # not implicit associations via calls or reservations. Users should be able to be
+            # explicitly added to a restaurant even if they've previously called/made reservations.
+            already_has_mapping = self.metadata_repo.user_belongs_to_restaurant(existing_user_id, restaurant_id)
 
-            if already_associated:
+            if already_has_mapping:
                 raise ValueError("User is already associated with this restaurant")
 
         # Use atomic create_or_update_user to handle race conditions
