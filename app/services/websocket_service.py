@@ -84,6 +84,16 @@ class WebSocketService:
             # Handle edge cases (non-numeric strings, etc.) - default to False
             return False
 
+    def _summarize_faqs(self, faqs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Summarize FAQs to include only question and answer."""
+        return [
+            {
+                "question": faq.get("question"),
+                "answer": faq.get("answer"),
+            }
+            for faq in faqs
+        ]
+
     def _build_restaurant_context(
         self, caller_phone: Optional[str] = None, restaurant_record: Optional[Dict[str, Any]] = None
     ) -> tuple[Dict[str, Any], Optional[str], Optional[str], Optional[str]]:
@@ -156,11 +166,12 @@ class WebSocketService:
                     unavailable_by_category[category] = []
                 unavailable_by_category[category].append(item_summary)
 
-        # Load FAQs with error handling
+        # Load FAQs with error handling and summarize to include only question and answer
         faqs = []
         if restaurant_id:
             try:
-                faqs = self.faq_service.list_faqs(restaurant_id)
+                raw_faqs = self.faq_service.list_faqs(restaurant_id)
+                faqs = self._summarize_faqs(raw_faqs)
             except Exception as exc:
                 self.logger.warning("Failed to load FAQs for restaurant_id=%s: %s", restaurant_id, exc)
                 faqs = []
