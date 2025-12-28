@@ -5,7 +5,6 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import websockets
 from fastapi import WebSocket, WebSocketDisconnect
@@ -29,6 +28,7 @@ from app.services.menu_service import MenuService
 from app.services.restaurant_service import RestaurantService
 from app.utils import prompt_loader
 from app.utils.logging_config import get_logger
+from app.utils.restaurant_hours import is_restaurant_open_now, resolve_restaurant_timezone
 
 
 @dataclass
@@ -176,17 +176,6 @@ class WebSocketService:
                 self.logger.warning("Failed to load FAQs for restaurant_id=%s: %s", restaurant_id, exc)
                 faqs = []
 
-        # Log menu context loading
-        if restaurant_id:
-            self.logger.info(
-                "[MenuContext] Loaded for restaurant_id=%s: %d available, %d unavailable, %d specials, %d FAQs",
-                restaurant_id,
-                len(available_items),
-                len(unavailable_items),
-                len(specials),
-                len(faqs),
-            )
-
         restaurant_name = restaurant.get("name")
         opening_time = restaurant.get("opening_time")
         closing_time = restaurant.get("closing_time")
@@ -194,6 +183,11 @@ class WebSocketService:
         service_options = restaurant.get("service_options") or {}
         if not isinstance(service_options, dict):
             service_options = {}
+
+        restaurant_tz, timezone_label = resolve_restaurant_timezone(restaurant)
+        now_utc = datetime.now(timezone.utc)
+        now_local = now_utc.astimezone(restaurant_tz)
+        is_open_now = is_restaurant_open_now(restaurant, now_utc=now_utc)
 
         # Create combined structure showing all items per category with availability status
         # This makes it easier for the agent to see both available and unavailable items together
@@ -247,6 +241,7 @@ class WebSocketService:
                 "phone": restaurant.get("phone_number"),
                 "opening_time": opening_time,
                 "closing_time": closing_time,
+                "is_open_now": is_open_now,
                 "prep_time_minutes": restaurant.get("prep_time_minutes", 20),
             },
             "service_options": {
@@ -255,30 +250,18 @@ class WebSocketService:
                 "delivery": service_options.get("delivery", False),
                 "reservations": service_options.get("reservations", True),
             },
-            # Menu organized by category - PRIMARY structure for agent to use
-            # Each category contains "available", "unavailable", and "specials" arrays
             "menu_by_category": all_items_by_category,
             "faqs": faqs,
             "function_defaults": {
                 "restaurant_id": restaurant_id,
                 "restaurant_phone": restaurant_phone_fwd,
             },
-        }
-        restaurant_timezone_name = getattr(settings, "RESTAURANT_TIMEZONE", "America/Vancouver")
-        try:
-            restaurant_tz = ZoneInfo(restaurant_timezone_name)
-            timezone_label = restaurant_timezone_name
-        except ZoneInfoNotFoundError:
-            restaurant_tz = datetime.now().astimezone().tzinfo or timezone.utc
-            timezone_label = restaurant_tz.tzname(None) or "America/Vancouver"
-
-        now_utc = datetime.now(timezone.utc)
-        now_local = now_utc.astimezone(restaurant_tz)
-        context["current_time"] = {
-            "utc_iso": now_utc.isoformat(),
-            "local_iso": now_local.isoformat(),
-            "local_date": now_local.date().isoformat(),
-            "timezone": timezone_label,
+            "current_time": {
+                "utc_iso": now_utc.isoformat(),
+                "local_iso": now_local.isoformat(),
+                "local_date": now_local.date().isoformat(),
+                "timezone": timezone_label,
+            },
         }
         if caller_phone:
             context["caller_profile"] = {
@@ -286,6 +269,18 @@ class WebSocketService:
                 "source": "inbound_call",
             }
             context["function_defaults"]["caller_phone"] = caller_phone
+
+        # Log menu context loading
+        if restaurant_id:
+            self.logger.info(
+                "[MenuContext] Loaded for restaurant_id=%s: %d available, %d unavailable, %d specials, %d FAQs, restaurant-open: %s",
+                restaurant_id,
+                len(available_items),
+                len(unavailable_items),
+                len(specials),
+                len(faqs),
+                is_open_now,
+            )
         return context, restaurant_id, restaurant_phone_fwd, restaurant_name
 
     async def shutdown(self) -> None:
