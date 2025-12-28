@@ -79,6 +79,13 @@ class Settings:
     DEEPGRAM_MULTIPLIER = float(os.getenv("DEEPGRAM_MULTIPLIER", "1.0"))
     RESSY_MULTIPLIER = float(os.getenv("RESSY_MULTIPLIER", "1.0"))
 
+    # Twilio audio pipeline tuning
+    TWILIO_INBOUND_BUFFER_SIZE = int(os.getenv("TWILIO_INBOUND_BUFFER_SIZE", str(3 * 160)))  # bytes
+    TWILIO_INBOUND_FLUSH_INTERVAL = float(os.getenv("TWILIO_INBOUND_FLUSH_INTERVAL", "0.15"))  # seconds
+    TWILIO_OUTBOUND_CHUNK_SIZE = int(os.getenv("TWILIO_OUTBOUND_CHUNK_SIZE", str(2 * 160)))  # bytes
+    TWILIO_OUTBOUND_QUEUE_MAXSIZE = int(os.getenv("TWILIO_OUTBOUND_QUEUE_MAXSIZE", "1000"))
+    TWILIO_OUTBOUND_PACING_SECONDS = float(os.getenv("TWILIO_OUTBOUND_PACING_SECONDS", "0.04"))  # seconds per chunk
+
     # Call limits
     # Maximum duration (seconds) a live call should run before gracefully timing out
     AGENT_CALL_TIMEOUT_SECONDS = int(os.getenv("AGENT_CALL_TIMEOUT_SECONDS", "900"))  # 15 minutes

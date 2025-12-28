@@ -39,7 +39,7 @@ class CreateOrderArgs(BaseModel):
 
     restaurant_id: int
     customer_name: Optional[str] = None
-    customer_contact: Optional[str] = None
+    customer_contact: str
     pickup_time_iso: Optional[str] = None
     items: List[OrderItem]
     notes: Optional[str] = None

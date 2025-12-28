@@ -156,7 +156,7 @@ class MySQLUserRepository(MySQLBaseRepository):
         Users are found through:
         - User_Restaurant_Metadata (direct mapping, e.g., created via dashboard)
         - Reservations (via slot_bookings.restaurant_id)
-        - Calls (via calls.restaurant_id matching user phone number)
+        - Calls (via Calls.user_id matching Users.id)
 
         Args:
             restaurant_id: The restaurant ID to filter users by
@@ -183,14 +183,14 @@ class MySQLUserRepository(MySQLBaseRepository):
             LEFT JOIN User_Restaurant_Metadata urm ON u.id = urm.user_id
             LEFT JOIN Reservations r ON u.id = r.user_id
             LEFT JOIN Slot_Bookings sb ON r.slot_booking_id = sb.id
-            LEFT JOIN Calls c ON u.phone_number = c.user_id
+            LEFT JOIN Calls c ON u.id = c.user_id
             WHERE (
                 urm.restaurant_id = %s
                 OR sb.restaurant_id = %s
                 OR c.restaurant_id = %s
             )
         """
-        params: List = [restaurant_id, restaurant_id, restaurant_id]
+        params: List = [restaurant_id, restaurant_id, str(restaurant_id)]
 
         if search:
             query += """ AND (
@@ -233,7 +233,7 @@ class MySQLUserRepository(MySQLBaseRepository):
             LEFT JOIN User_Restaurant_Metadata urm ON u.id = urm.user_id
             LEFT JOIN Reservations r ON u.id = r.user_id
             LEFT JOIN Slot_Bookings sb ON r.slot_booking_id = sb.id
-            LEFT JOIN Calls c ON u.phone_number = c.user_id
+            LEFT JOIN Calls c ON u.id = c.user_id
             WHERE (
                 urm.restaurant_id = %s
                 OR sb.restaurant_id = %s
@@ -265,18 +265,13 @@ class MySQLUserRepository(MySQLBaseRepository):
         Returns:
             Dict with total_calls, total_orders, total_reservations
         """
-        # Get the user's phone number for matching calls
-        user = self.get_user_by_id(user_id)
-        phone_number = user.get("phone_number") if user else None
-
-        # Count calls (calls use phone_number as user_id)
+        # Count calls (Calls.user_id stores the numeric Users.id)
         calls_query = """
             SELECT COUNT(*) as total
             FROM Calls
             WHERE user_id = %s AND restaurant_id = %s
         """
-        # NOTE: Calls.restaurant_id is stored as VARCHAR in our schema, so we compare against str(restaurant_id).
-        calls_result = self._execute_query(calls_query, (phone_number, str(restaurant_id)))
+        calls_result = self._execute_query(calls_query, (user_id, str(restaurant_id)))
         total_calls = calls_result[0]["total"] if calls_result else 0
 
         # Count orders for this restaurant
@@ -324,35 +319,23 @@ class MySQLUserRepository(MySQLBaseRepository):
             uid: {"total_calls": 0, "total_orders": 0, "total_reservations": 0} for uid in user_ids
         }
 
-        # Get phone numbers for all users (needed for calls lookup)
         placeholders = ", ".join(["%s"] * len(user_ids))
-        phone_query = f"""
-            SELECT id, phone_number
-            FROM Users
-            WHERE id IN ({placeholders})
+        # Batch query for calls (Calls.user_id stores Users.id)
+        calls_query = f"""
+            SELECT user_id, COUNT(*) as total
+            FROM Calls
+            WHERE user_id IN ({placeholders}) AND restaurant_id = %s
+            GROUP BY user_id
         """
-        phone_results = self._execute_query(phone_query, tuple(user_ids))
-        user_id_to_phone = {r["id"]: r["phone_number"] for r in phone_results}
-        phone_to_user_id = {r["phone_number"]: r["id"] for r in phone_results if r["phone_number"]}
-
-        # Batch query for calls (calls use phone_number as user_id column)
-        phone_numbers = [p for p in user_id_to_phone.values() if p]
-        if phone_numbers:
-            phone_placeholders = ", ".join(["%s"] * len(phone_numbers))
-            calls_query = f"""
-                SELECT user_id as phone_number, COUNT(*) as total
-                FROM Calls
-                WHERE user_id IN ({phone_placeholders}) AND restaurant_id = %s
-                GROUP BY user_id
-            """
-            # NOTE: Calls.restaurant_id is stored as VARCHAR in our schema, so we compare against str(restaurant_id).
-            calls_params = tuple(phone_numbers) + (str(restaurant_id),)
-            calls_results = self._execute_query(calls_query, calls_params)
-            for row in calls_results:
-                phone = row["phone_number"]
-                if phone in phone_to_user_id:
-                    uid = phone_to_user_id[phone]
-                    result[uid]["total_calls"] = row["total"]
+        calls_params = tuple(user_ids) + (str(restaurant_id),)
+        calls_results = self._execute_query(calls_query, calls_params)
+        for row in calls_results:
+            try:
+                uid = int(row["user_id"])
+            except (TypeError, ValueError):
+                uid = row["user_id"]
+            if uid in result:
+                result[uid]["total_calls"] = row["total"]
 
         # Batch query for orders for this restaurant
         orders_query = f"""
@@ -391,7 +374,7 @@ class MySQLUserRepository(MySQLBaseRepository):
         Checks:
         - User_Restaurant_Metadata (direct mapping)
         - Reservations (via slot_bookings)
-        - Calls (via phone number)
+        - Calls (via user_id; stored restaurant_id is VARCHAR)
 
         Args:
             user_id: User ID
@@ -399,10 +382,6 @@ class MySQLUserRepository(MySQLBaseRepository):
         Returns:
             List of restaurant_ids the user is associated with
         """
-        # Get user's phone number for call matching
-        user = self.get_user_by_id(user_id)
-        phone_number = user.get("phone_number") if user else None
-
         query = """
             SELECT DISTINCT restaurant_id FROM (
                 -- From metadata table
@@ -420,14 +399,14 @@ class MySQLUserRepository(MySQLBaseRepository):
 
                 UNION
 
-                -- From calls (restaurant_id is VARCHAR in Calls table)
+                -- From calls
                 SELECT CAST(restaurant_id AS UNSIGNED) as restaurant_id
                 FROM Calls
                 WHERE user_id = %s AND restaurant_id IS NOT NULL
             ) AS combined
             WHERE restaurant_id IS NOT NULL
         """
-        results = self._execute_query(query, (user_id, user_id, phone_number))
+        results = self._execute_query(query, (user_id, user_id, user_id))
         return [int(r["restaurant_id"]) for r in results if r.get("restaurant_id")]
 
     def user_belongs_to_restaurant(self, user_id: int, restaurant_id: int) -> bool:
@@ -442,10 +421,6 @@ class MySQLUserRepository(MySQLBaseRepository):
         Returns:
             True if user is associated with the restaurant
         """
-        # Get user's phone number for call matching
-        user = self.get_user_by_id(user_id)
-        phone_number = user.get("phone_number") if user else None
-
         query = """
             SELECT 1 FROM (
                 -- Check metadata table
@@ -472,7 +447,7 @@ class MySQLUserRepository(MySQLBaseRepository):
         """
         results = self._execute_query(
             query,
-            (user_id, restaurant_id, user_id, restaurant_id, phone_number, str(restaurant_id)),
+            (user_id, restaurant_id, user_id, restaurant_id, user_id, str(restaurant_id)),
         )
         return len(results) > 0
 
