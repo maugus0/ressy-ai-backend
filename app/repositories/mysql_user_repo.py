@@ -29,15 +29,17 @@ class MySQLUserRepository(MySQLBaseRepository):
         if phone_number:
             # Use atomic upsert on phone_number (has unique constraint)
             # COALESCE ensures we don't overwrite existing non-null values with NULL
+            # NOTE: Using row alias syntax (AS new_row) instead of deprecated VALUES() function
+            # VALUES() was deprecated in MySQL 8.0.20 and removed in MySQL 9.0
             query = """
                 INSERT INTO Users (name, phone_number, email, address, is_spam, credit_card, created_at, updated_at)
-                VALUES (%s, %s, %s, %s, %s, %s, NOW(), NOW())
+                VALUES (%s, %s, %s, %s, %s, %s, NOW(), NOW()) AS new_row
                 ON DUPLICATE KEY UPDATE
-                    name = COALESCE(VALUES(name), name),
-                    email = COALESCE(VALUES(email), email),
-                    address = COALESCE(VALUES(address), address),
-                    is_spam = VALUES(is_spam),
-                    credit_card = COALESCE(VALUES(credit_card), credit_card),
+                    name = COALESCE(new_row.name, Users.name),
+                    email = COALESCE(new_row.email, Users.email),
+                    address = COALESCE(new_row.address, Users.address),
+                    is_spam = new_row.is_spam,
+                    credit_card = COALESCE(new_row.credit_card, Users.credit_card),
                     updated_at = NOW()
             """
             self._execute_insert(

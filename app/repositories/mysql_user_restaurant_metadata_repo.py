@@ -30,13 +30,15 @@ class MySQLUserRestaurantMetadataRepository(MySQLBaseRepository):
         Returns:
             Mapping ID
         """
+        # NOTE: Using row alias syntax (AS new_row) instead of deprecated VALUES() function
+        # VALUES() was deprecated in MySQL 8.0.20 and removed in MySQL 9.0
         query = """
             INSERT INTO User_Restaurant_Metadata
             (user_id, restaurant_id, source, notes, created_at, updated_at)
-            VALUES (%s, %s, %s, %s, NOW(), NOW())
+            VALUES (%s, %s, %s, %s, NOW(), NOW()) AS new_row
             ON DUPLICATE KEY UPDATE
-                source = VALUES(source),
-                notes = COALESCE(VALUES(notes), notes),
+                source = new_row.source,
+                notes = COALESCE(new_row.notes, User_Restaurant_Metadata.notes),
                 updated_at = NOW()
         """
         return self._execute_insert(query, (user_id, restaurant_id, source, notes))
