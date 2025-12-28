@@ -82,7 +82,6 @@
         "reservation_flow": {
             "description": "Follow this EXACT sequence for table reservations",
             "steps": [
-                "0. If restaurant_profile.is_open_now is false in the context, only offer slots within operating hours and do NOT attempt to book outside those hours.",
                 "1. Ask for the date and time they would like to reserve",
                 "2. Ask for party size (number of guests)",
                 "3. Use check_reservation_availability to verify the timeslot is available",

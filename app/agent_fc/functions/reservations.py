@@ -10,16 +10,20 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, ConfigDict
 
+from app.agent_fc.functions.common_restaurant import load_restaurant
 from app.config import settings
 from app.repositories.mysql_reservation_repo import MySQLReservationRepository
-from app.repositories.mysql_restaurant_repo import MySQLRestaurantRepository
 from app.repositories.mysql_user_repo import MySQLUserRepository
 from app.repositories.mysql_user_restaurant_metadata_repo import (
     MySQLUserRestaurantMetadataRepository,
 )
 from app.services.activity_history_service import ActivityHistoryService
 from app.services.sse_service import ReservationEventSubtype, SSEService
-from app.utils.restaurant_hours import is_datetime_within_operating_hours, resolve_restaurant_timezone
+from app.utils.restaurant_hours import (
+    format_operating_window,
+    is_datetime_within_operating_hours,
+    resolve_restaurant_timezone,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -32,11 +36,6 @@ logger = logging.getLogger(__name__)
 def _get_reservation_repo() -> MySQLReservationRepository:
     """Create fresh reservation repository instance per function call."""
     return MySQLReservationRepository()
-
-
-def _get_restaurant_repo() -> MySQLRestaurantRepository:
-    """Create fresh restaurant repository instance per function call."""
-    return MySQLRestaurantRepository()
 
 
 def _get_user_repo() -> MySQLUserRepository:
@@ -132,7 +131,8 @@ def _parse_datetime_str(value: str) -> datetime:
     try:
         return datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError:
-        return datetime.strptime(value, "%Y-%m-%d %H:%M")
+        naive = datetime.strptime(value, "%Y-%m-%d %H:%M")
+        return naive.replace(tzinfo=timezone.utc)
 
 
 def _coerce_datetime(value: Any) -> Optional[datetime]:
@@ -145,16 +145,6 @@ def _coerce_datetime(value: Any) -> Optional[datetime]:
         except ValueError:
             return None
     return None
-
-
-async def _load_restaurant(restaurant_id: int) -> Optional[Dict[str, Any]]:
-    """Fetch restaurant details for open-hours checks."""
-    restaurant_repo = _get_restaurant_repo()
-    try:
-        return await _run_service_call(restaurant_repo.get_by_id, int(restaurant_id))
-    except Exception as exc:  # noqa: BLE001 - defensive for agent calls
-        logger.warning("Unable to fetch restaurant for open-hours check restaurant_id=%s: %s", restaurant_id, exc)
-        return None
 
 
 def _generate_confirmation_number() -> str:
@@ -173,7 +163,7 @@ async def create_reservation(**kwargs) -> Dict[str, Any]:
     """
     args = CreateReservationArgs.model_validate(kwargs)
     logger.info("create_reservation invoked restaurant_id=%s party_size=%s", args.restaurant_id, args.party_size)
-    restaurant = await _load_restaurant(args.restaurant_id)
+    restaurant = await load_restaurant(args.restaurant_id)
     if not restaurant:
         return {
             "status": "FAILED",
@@ -192,8 +182,7 @@ async def create_reservation(**kwargs) -> Dict[str, Any]:
             "status": "OUT_OF_HOURS",
             "message": (
                 "The requested reservation time is outside the restaurant's operating hours. "
-                f"Please choose a time between {restaurant.get('opening_time')} and {restaurant.get('closing_time')} "
-                f"({tz_label})."
+                f"Please choose a time between {format_operating_window(restaurant)} ({tz_label})."
             ),
         }
 
@@ -410,7 +399,7 @@ async def update_reservation(**kwargs) -> Dict[str, Any]:
     """
     args = UpdateReservationArgs.model_validate(kwargs)
     logger.info("update_reservation invoked customer_contact=%s", args.customer_contact)
-    restaurant = await _load_restaurant(args.restaurant_id)
+    restaurant = await load_restaurant(args.restaurant_id)
     if not restaurant:
         return {
             "status": "FAILED",
@@ -513,8 +502,7 @@ async def update_reservation(**kwargs) -> Dict[str, Any]:
             "status": "OUT_OF_HOURS",
             "message": (
                 "The requested reservation time is outside the restaurant's operating hours. "
-                f"Please choose a time between {restaurant.get('opening_time')} and {restaurant.get('closing_time')} "
-                f"({tz_label})."
+                f"Please choose a time between {format_operating_window(restaurant)} ({tz_label})."
             ),
         }
 
@@ -604,7 +592,7 @@ async def check_reservation_availability(**kwargs) -> Dict[str, Any]:
         args.restaurant_id,
         args.party_size,
     )
-    restaurant = await _load_restaurant(args.restaurant_id)
+    restaurant = await load_restaurant(args.restaurant_id)
     if not restaurant:
         return {
             "status": "FAILED",

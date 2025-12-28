@@ -2,7 +2,7 @@ import logging
 from datetime import datetime
 from datetime import time as dt_time
 from datetime import timedelta, timezone
-from typing import Any, Optional, Tuple
+from typing import Any, Optional, Tuple, Union
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from app.config import settings
@@ -28,7 +28,7 @@ def _parse_operating_time(value: Any) -> Optional[dt_time]:
         return None
 
 
-def resolve_restaurant_timezone(restaurant: dict) -> Tuple[timezone, str]:
+def resolve_restaurant_timezone(restaurant: dict) -> Tuple[Union[ZoneInfo, timezone], str]:
     """Resolve the restaurant's timezone object and label with sensible fallbacks."""
     default_timezone = getattr(settings, "RESTAURANT_TIMEZONE", "America/Vancouver")
     timezone_name = str(restaurant.get("timezone") or restaurant.get("time_zone") or default_timezone).strip()
@@ -39,7 +39,7 @@ def resolve_restaurant_timezone(restaurant: dict) -> Tuple[timezone, str]:
         tz = ZoneInfo(timezone_name)
         label = timezone_name
     except ZoneInfoNotFoundError:
-        logger.warning(f"Invalid timezone label in configuration {timezone_name}. Using system timezone.")
+        logger.warning("Invalid timezone label in configuration %s. Using system timezone.", timezone_name)
         tz = datetime.now().astimezone().tzinfo or timezone.utc
         label = tz.tzname(None) or default_timezone
     return tz, label
@@ -57,7 +57,11 @@ def _is_time_within(open_time: dt_time, close_time: dt_time, current_time: dt_ti
 
 
 def is_restaurant_open_now(restaurant: dict, now_utc: Optional[datetime] = None) -> bool:
-    """Determine if the restaurant is open at the given UTC time (default: current)."""
+    """
+    Determine if the restaurant is open at the given UTC time (default: current).
+
+    Assumes the UTC instant provided represents the current moment; converts to restaurant tz for evaluation.
+    """
     opening_time = _parse_operating_time(restaurant.get("opening_time"))
     closing_time = _parse_operating_time(restaurant.get("closing_time"))
 
@@ -74,7 +78,12 @@ def is_restaurant_open_now(restaurant: dict, now_utc: Optional[datetime] = None)
 
 
 def is_datetime_within_operating_hours(restaurant: dict, target_dt: datetime) -> bool:
-    """Check if a proposed datetime falls within the restaurant's operating hours."""
+    """
+    Check if a proposed datetime falls within the restaurant's operating hours.
+
+    Assumes a naive datetime is already in the restaurant's local time. If tz-aware,
+    it will be converted to the restaurant's timezone before evaluation.
+    """
     opening_time = _parse_operating_time(restaurant.get("opening_time"))
     closing_time = _parse_operating_time(restaurant.get("closing_time"))
 
@@ -83,6 +92,7 @@ def is_datetime_within_operating_hours(restaurant: dict, target_dt: datetime) ->
 
     tz, _ = resolve_restaurant_timezone(restaurant)
     if target_dt.tzinfo is None:
+        # Caller is responsible for providing naive times in local restaurant time.
         target_local = target_dt.replace(tzinfo=tz)
     else:
         target_local = target_dt.astimezone(tz)
@@ -92,3 +102,17 @@ def is_datetime_within_operating_hours(restaurant: dict, target_dt: datetime) ->
         local_time = local_time.replace(tzinfo=None)
 
     return _is_time_within(opening_time, closing_time, local_time)
+
+
+def format_operating_window(restaurant: dict) -> str:
+    """Return a human-friendly operating window string, defaulting to raw values if parsing fails."""
+    try:
+        open_time = _parse_operating_time(restaurant.get("opening_time"))
+        close_time = _parse_operating_time(restaurant.get("closing_time"))
+        if open_time and close_time:
+            # Use locale-independent formatting; %-I not on Windows, so use %I and strip leading zero.
+            return f"{open_time.strftime('%I:%M %p').lstrip('0')} - {close_time.strftime('%I:%M %p').lstrip('0')}"
+    except Exception:
+        # Fallback to raw values if parsing/formatting fails.
+        pass
+    return f"{restaurant.get('opening_time')} - {restaurant.get('closing_time')}"

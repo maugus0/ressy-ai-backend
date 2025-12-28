@@ -10,17 +10,17 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.agent_fc.functions.common_restaurant import load_restaurant
 from app.config import settings
 from app.repositories.mysql_menu_repo import MySQLMenuRepository
 from app.repositories.mysql_order_repo import MySQLOrderRepository
-from app.repositories.mysql_restaurant_repo import MySQLRestaurantRepository
 from app.repositories.mysql_user_repo import MySQLUserRepository
 from app.repositories.mysql_user_restaurant_metadata_repo import (
     MySQLUserRestaurantMetadataRepository,
 )
 from app.services.activity_history_service import ActivityHistoryService
 from app.services.sse_service import OrderEventSubtype, SSEService
-from app.utils.restaurant_hours import is_restaurant_open_now
+from app.utils.restaurant_hours import format_operating_window, is_restaurant_open_now
 
 logger = logging.getLogger(__name__)
 
@@ -84,11 +84,6 @@ class UpdateOrderDetailsArgs(BaseModel):
 def _get_order_repo() -> MySQLOrderRepository:
     """Create fresh order repository instance per function call."""
     return MySQLOrderRepository()
-
-
-def _get_restaurant_repo() -> MySQLRestaurantRepository:
-    """Create fresh restaurant repository instance per function call."""
-    return MySQLRestaurantRepository()
 
 
 def _get_user_repo() -> MySQLUserRepository:
@@ -172,16 +167,6 @@ async def _run_service_call(func, *args, **kwargs):
     return await asyncio.to_thread(func, *args, **kwargs)
 
 
-async def _load_restaurant(restaurant_id: int) -> Optional[Dict[str, Any]]:
-    """Fetch restaurant details for open-hours checks."""
-    restaurant_repo = _get_restaurant_repo()
-    try:
-        return await _run_service_call(restaurant_repo.get_by_id, int(restaurant_id))
-    except Exception as exc:  # noqa: BLE001 - defensive for agent calls
-        logger.warning("Unable to fetch restaurant for open-hours check restaurant_id=%s: %s", restaurant_id, exc)
-        return None
-
-
 def _summarize_items(items: List[OrderItem]) -> List[Dict[str, Any]]:
     return [
         {
@@ -258,7 +243,7 @@ async def _populate_missing_prices(restaurant_id: int, items: List[OrderItem]) -
 
 async def create_order(**kwargs) -> Dict[str, Any]:
     args = CreateOrderArgs.model_validate(kwargs)
-    restaurant = await _load_restaurant(args.restaurant_id)
+    restaurant = await load_restaurant(args.restaurant_id)
     if not restaurant:
         return {
             "status": "FAILED",
@@ -269,7 +254,7 @@ async def create_order(**kwargs) -> Dict[str, Any]:
             "status": "CLOSED",
             "message": (
                 "The restaurant is currently closed. Please place your order during operating hours "
-                f"({restaurant.get('opening_time')} - {restaurant.get('closing_time')})."
+                f"({format_operating_window(restaurant)})."
             ),
         }
     await _populate_missing_prices(args.restaurant_id, args.items)
@@ -432,7 +417,7 @@ async def check_items_availability(**kwargs) -> Dict[str, Any]:
         args.restaurant_id,
         len(args.items),
     )
-    restaurant = await _load_restaurant(args.restaurant_id)
+    restaurant = await load_restaurant(args.restaurant_id)
     if not restaurant:
         return {
             "status": "FAILED",
@@ -443,7 +428,7 @@ async def check_items_availability(**kwargs) -> Dict[str, Any]:
             "status": "CLOSED",
             "message": (
                 "The restaurant is currently closed. Please check back during operating hours "
-                f"({restaurant.get('opening_time')} - {restaurant.get('closing_time')})."
+                f"({format_operating_window(restaurant)})."
             ),
         }
     menu_repo = _get_menu_repo()
@@ -531,7 +516,7 @@ def _is_within_update_window(created_at: Any) -> bool:
 
 async def update_order_details(**kwargs) -> Dict[str, Any]:
     args = UpdateOrderDetailsArgs.model_validate(kwargs)
-    restaurant = await _load_restaurant(args.restaurant_id)
+    restaurant = await load_restaurant(args.restaurant_id)
     if not restaurant:
         return {
             "status": "FAILED",
@@ -542,7 +527,7 @@ async def update_order_details(**kwargs) -> Dict[str, Any]:
             "status": "CLOSED",
             "message": (
                 "The restaurant is currently closed. Order updates are only available during operating hours "
-                f"({restaurant.get('opening_time')} - {restaurant.get('closing_time')})."
+                f"({format_operating_window(restaurant)})."
             ),
         }
     await _populate_missing_prices(args.restaurant_id, args.items)
