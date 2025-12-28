@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, ConfigDict
 
+from app.agent_fc.functions.common_restaurant import load_restaurant
 from app.config import settings
 from app.repositories.mysql_reservation_repo import MySQLReservationRepository
 from app.repositories.mysql_user_repo import MySQLUserRepository
@@ -18,6 +19,11 @@ from app.repositories.mysql_user_restaurant_metadata_repo import (
 )
 from app.services.activity_history_service import ActivityHistoryService
 from app.services.sse_service import ReservationEventSubtype, SSEService
+from app.utils.restaurant_hours import (
+    format_operating_window,
+    is_datetime_within_operating_hours,
+    resolve_restaurant_timezone,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -120,6 +126,27 @@ async def _run_service_call(func, *args, **kwargs):
     return await asyncio.to_thread(func, *args, **kwargs)
 
 
+def _parse_datetime_str(value: str) -> datetime:
+    """Parse ISO-ish datetime strings used by the agent."""
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        naive = datetime.strptime(value, "%Y-%m-%d %H:%M")
+        return naive.replace(tzinfo=timezone.utc)
+
+
+def _coerce_datetime(value: Any) -> Optional[datetime]:
+    """Convert DB or payload datetime representations to datetime."""
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, str):
+        try:
+            return _parse_datetime_str(value)
+        except ValueError:
+            return None
+    return None
+
+
 def _generate_confirmation_number() -> str:
     """Generate a unique confirmation number for a reservation."""
     return f"RES-{uuid.uuid4().hex[:8].upper()}"
@@ -136,6 +163,28 @@ async def create_reservation(**kwargs) -> Dict[str, Any]:
     """
     args = CreateReservationArgs.model_validate(kwargs)
     logger.info("create_reservation invoked restaurant_id=%s party_size=%s", args.restaurant_id, args.party_size)
+    restaurant = await load_restaurant(args.restaurant_id)
+    if not restaurant:
+        return {
+            "status": "FAILED",
+            "message": "Unable to load restaurant information right now. Please try again shortly.",
+        }
+    try:
+        reservation_datetime = _parse_datetime_str(args.datetime_iso)
+    except ValueError:
+        return {
+            "status": "FAILED",
+            "message": "Invalid reservation time format. Please provide a valid date and time.",
+        }
+    if not is_datetime_within_operating_hours(restaurant, reservation_datetime):
+        tz_label = resolve_restaurant_timezone(restaurant)[1]
+        return {
+            "status": "OUT_OF_HOURS",
+            "message": (
+                "The requested reservation time is outside the restaurant's operating hours. "
+                f"Please choose a time between {format_operating_window(restaurant)} ({tz_label})."
+            ),
+        }
 
     def _create():
         # Create fresh repository instances for this operation
@@ -166,13 +215,6 @@ async def create_reservation(**kwargs) -> Dict[str, Any]:
         except Exception as meta_err:
             # Log but don't fail reservation creation if metadata mapping fails
             logger.warning("Failed to create user-restaurant metadata: %s", meta_err)
-
-        # 2. Parse the datetime
-        try:
-            reservation_datetime = datetime.fromisoformat(args.datetime_iso.replace("Z", "+00:00"))
-        except ValueError:
-            # Fallback to a simpler format
-            reservation_datetime = datetime.strptime(args.datetime_iso, "%Y-%m-%d %H:%M")
 
         # 3. Generate confirmation number and reservation token
         confirmation_number = _generate_confirmation_number()
@@ -357,6 +399,21 @@ async def update_reservation(**kwargs) -> Dict[str, Any]:
     """
     args = UpdateReservationArgs.model_validate(kwargs)
     logger.info("update_reservation invoked customer_contact=%s", args.customer_contact)
+    restaurant = await load_restaurant(args.restaurant_id)
+    if not restaurant:
+        return {
+            "status": "FAILED",
+            "message": "Unable to load restaurant information right now. Please try again shortly.",
+        }
+    new_datetime: Optional[datetime] = None
+    if args.datetime_iso:
+        try:
+            new_datetime = _parse_datetime_str(args.datetime_iso)
+        except ValueError:
+            return {
+                "status": "FAILED",
+                "message": "Invalid reservation time format. Please provide a valid date and time.",
+            }
 
     def _update():
         user_repo = _get_user_repo()
@@ -377,6 +434,12 @@ async def update_reservation(**kwargs) -> Dict[str, Any]:
         created_at = reservation.get("created_at")
         if not _is_within_update_window(created_at):
             return "UPDATE_WINDOW_EXPIRED", None, reservation
+
+        candidate_datetime = new_datetime or _coerce_datetime(reservation.get("date_time"))
+        if candidate_datetime is None:
+            return "INVALID_DATETIME", None, reservation
+        if not is_datetime_within_operating_hours(restaurant, candidate_datetime):
+            return "OUT_OF_HOURS", None, reservation
 
         # Update user's name if provided (align with order update behavior)
         if args.customer_name:
@@ -412,13 +475,8 @@ async def update_reservation(**kwargs) -> Dict[str, Any]:
         )
 
         # If datetime is being changed, update the slot booking
-        new_datetime = args.datetime_iso
         if new_datetime and reservation.get("slot_booking_id"):
-            try:
-                parsed_datetime = datetime.fromisoformat(new_datetime.replace("Z", "+00:00"))
-            except ValueError:
-                parsed_datetime = datetime.strptime(new_datetime, "%Y-%m-%d %H:%M")
-            reservation_repo.update_slot_booking_datetime(reservation.get("slot_booking_id"), parsed_datetime)
+            reservation_repo.update_slot_booking_datetime(reservation.get("slot_booking_id"), new_datetime)
 
         # Return updated reservation and previous data for history logging
         updated_reservation = reservation_repo.get_reservation_by_id(reservation_id)
@@ -436,6 +494,22 @@ async def update_reservation(**kwargs) -> Dict[str, Any]:
                 "and can no longer be modified. Please contact the restaurant directly "
                 "for any changes."
             ),
+        }
+
+    if result == "OUT_OF_HOURS":
+        tz_label = resolve_restaurant_timezone(restaurant)[1]
+        return {
+            "status": "OUT_OF_HOURS",
+            "message": (
+                "The requested reservation time is outside the restaurant's operating hours. "
+                f"Please choose a time between {format_operating_window(restaurant)} ({tz_label})."
+            ),
+        }
+
+    if result == "INVALID_DATETIME":
+        return {
+            "status": "FAILED",
+            "message": "Unable to process the reservation time provided. Please try again with a valid time.",
         }
 
     if not result:
@@ -518,21 +592,24 @@ async def check_reservation_availability(**kwargs) -> Dict[str, Any]:
         args.restaurant_id,
         args.party_size,
     )
+    restaurant = await load_restaurant(args.restaurant_id)
+    if not restaurant:
+        return {
+            "status": "FAILED",
+            "message": "Unable to load restaurant information right now. Please try again shortly.",
+        }
+    try:
+        start_dt = _parse_datetime_str(args.date_start_iso)
+        end_dt = _parse_datetime_str(args.date_end_iso)
+    except ValueError:
+        return {
+            "status": "FAILED",
+            "message": "Invalid date range format. Please provide valid start and end times.",
+        }
 
     def _check():
         try:
             reservation_repo = _get_reservation_repo()
-
-            # Parse dates
-            try:
-                start_dt = datetime.fromisoformat(args.date_start_iso.replace("Z", "+00:00"))
-            except ValueError:
-                start_dt = datetime.strptime(args.date_start_iso, "%Y-%m-%d %H:%M")
-
-            try:
-                end_dt = datetime.fromisoformat(args.date_end_iso.replace("Z", "+00:00"))
-            except ValueError:
-                end_dt = datetime.strptime(args.date_end_iso, "%Y-%m-%d %H:%M")
 
             # Get locked/reserved slots in this time range
             locked_slots = reservation_repo.get_locked_slots(
@@ -550,7 +627,7 @@ async def check_reservation_availability(**kwargs) -> Dict[str, Any]:
             # Generate slots every 30 minutes between start and end
             current = start_dt
             while current <= end_dt:
-                if current not in locked_times:
+                if current not in locked_times and is_datetime_within_operating_hours(restaurant, current):
                     available_slots.append(
                         {
                             "datetime": current.isoformat(),
@@ -559,6 +636,7 @@ async def check_reservation_availability(**kwargs) -> Dict[str, Any]:
                     )
                 current += timedelta(minutes=30)
 
+            available = len(available_slots) > 0
             return {
                 "restaurant_id": args.restaurant_id,
                 "party_size": args.party_size,
@@ -566,9 +644,18 @@ async def check_reservation_availability(**kwargs) -> Dict[str, Any]:
                     "start": args.date_start_iso,
                     "end": args.date_end_iso,
                 },
-                "available": len(available_slots) > 0,
+                "available": available,
                 "available_slots": available_slots[:10],  # Return up to 10 slots
                 "locked_slot_count": len(locked_slots),
+                "message": (
+                    None
+                    if available
+                    else (
+                        "The requested times are outside operating hours. "
+                        f"Please choose a time between {format_operating_window(restaurant)} "
+                        f"({resolve_restaurant_timezone(restaurant)[1]})."
+                    )
+                ),
             }
         except Exception as exc:
             logger.exception("[ERROR] check_reservation_availability failed: %s", exc)
