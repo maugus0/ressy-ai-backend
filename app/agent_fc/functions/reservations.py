@@ -648,7 +648,13 @@ async def check_reservation_availability(**kwargs) -> Dict[str, Any]:
                 "available_slots": available_slots[:10],  # Return up to 10 slots
                 "locked_slot_count": len(locked_slots),
                 "message": (
-                    None if available else ("No available slots within operating hours. Please try a different time.")
+                    None
+                    if available
+                    else (
+                        "The requested times are outside operating hours. "
+                        f"Please choose a time between {format_operating_window(restaurant)} "
+                        f"({resolve_restaurant_timezone(restaurant)[1]})."
+                    )
                 ),
             }
         except Exception as exc:
