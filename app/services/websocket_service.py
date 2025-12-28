@@ -851,7 +851,7 @@ class WebSocketService:
             now = time.perf_counter()
             audio_bytes = base64.b64decode(audio_payload)
             state.audio_buffer.extend(audio_bytes)
-            buffer_size = 2 * 160  # 320 bytes per ~40ms
+            buffer_size = getattr(settings, "TWILIO_OUTBOUND_CHUNK_SIZE", 2 * 160)
             while len(state.audio_buffer) >= buffer_size:
                 chunk = state.audio_buffer[:buffer_size]
                 del state.audio_buffer[:buffer_size]
@@ -1002,7 +1002,7 @@ class WebSocketService:
             self.logger.warning("Failed to buffer binary audio payload (%s): %s", type(message), exc)
             return
         # Keep outbound chunks small to reduce playback latency
-        buffer_size = 2 * 160  # 320 bytes per ~40ms
+        buffer_size = getattr(settings, "TWILIO_OUTBOUND_CHUNK_SIZE", 2 * 160)
         while len(state.audio_buffer) >= buffer_size:
             chunk = state.audio_buffer[:buffer_size]
             del state.audio_buffer[:buffer_size]
@@ -1058,7 +1058,7 @@ class WebSocketService:
         buffer_lock: Optional[asyncio.Lock] = None,
     ) -> None:
         """Periodically flush partial inbound audio to keep Deepgram connection active."""
-        flush_interval = 0.15
+        flush_interval = getattr(settings, "TWILIO_INBOUND_FLUSH_INTERVAL", 0.15)
         try:
             while True:
                 if shutdown_event and shutdown_event.is_set():
@@ -1103,6 +1103,7 @@ class WebSocketService:
         shutdown_event: Optional[asyncio.Event] = None,
     ) -> None:
         """Drain outbound queue and send to Twilio without blocking upstream loops."""
+        chunk_interval = max(getattr(settings, "TWILIO_OUTBOUND_PACING_SECONDS", 0.04), 0.0)
         next_send_time = time.monotonic()
         try:
             while True:
@@ -1120,7 +1121,7 @@ class WebSocketService:
                         await asyncio.sleep(next_send_time - now)
                     await twilio_ws.send_text(message)
                     now = time.monotonic()
-                    next_send_time = max(next_send_time, now) + 0.04
+                    next_send_time = max(next_send_time, now) + chunk_interval
                 except (WebSocketDisconnect, ConnectionError):
                     self.logger.info("twilio_sender disconnected")
                     break
@@ -1267,7 +1268,7 @@ class WebSocketService:
     ):
         """Receive audio from Twilio and forward to Deepgram."""
         # Smaller buffer reduces turnaround latency (~0.06s chunks)
-        buffer_size = 3 * 160  # 480 bytes per ~60ms
+        buffer_size = getattr(settings, "TWILIO_INBOUND_BUFFER_SIZE", 3 * 160)  # bytes
         inbuffer = shared_buffer if shared_buffer is not None else bytearray()
 
         try:
@@ -1362,7 +1363,9 @@ class WebSocketService:
         to_number_queue: asyncio.Queue = asyncio.Queue()
         from_number_queue: asyncio.Queue = asyncio.Queue()
         call_sid_queue: asyncio.Queue = asyncio.Queue()
-        twilio_send_queue: asyncio.Queue = asyncio.Queue(maxsize=1000)
+        twilio_send_queue: asyncio.Queue = asyncio.Queue(
+            maxsize=getattr(settings, "TWILIO_OUTBOUND_QUEUE_MAXSIZE", 1000)
+        )
         shutdown_event = asyncio.Event()
         shared_buffer = bytearray()
         buffer_lock = asyncio.Lock()

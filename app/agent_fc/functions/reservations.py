@@ -81,7 +81,7 @@ class CreateReservationArgs(BaseModel):
     party_size: int
     datetime_iso: str
     customer_name: Optional[str] = None
-    customer_contact: Optional[str] = None
+    customer_contact: str
     occasion: Optional[str] = None
     special_request: Optional[str] = None
     notes: Optional[str] = None
@@ -91,6 +91,7 @@ class UpdateReservationArgs(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     customer_contact: str
+    customer_name: Optional[str] = None
     restaurant_id: int
     party_size: Optional[int] = None
     datetime_iso: Optional[str] = None
@@ -377,6 +378,19 @@ async def update_reservation(**kwargs) -> Dict[str, Any]:
         if not _is_within_update_window(created_at):
             return "UPDATE_WINDOW_EXPIRED", None, reservation
 
+        # Update user's name if provided (align with order update behavior)
+        if args.customer_name:
+            user_repo.create_or_update_user(
+                {
+                    "name": args.customer_name,
+                    "phone_number": args.customer_contact,
+                    "email": None,
+                    "address": None,
+                    "is_spam": False,
+                    "credit_card": None,
+                }
+            )
+
         # Capture previous state for activity history
         previous_data = {
             "status": reservation.get("status"),
@@ -384,6 +398,7 @@ async def update_reservation(**kwargs) -> Dict[str, Any]:
             "date_time": str(reservation.get("date_time")) if reservation.get("date_time") else None,
             "special_request": reservation.get("special_request"),
             "notes": reservation.get("notes"),
+            "name": reservation.get("name"),
         }
 
         # Update the reservation with provided fields
@@ -448,6 +463,7 @@ async def update_reservation(**kwargs) -> Dict[str, Any]:
                     "date_time": str(updated.get("date_time")) if updated.get("date_time") else None,
                     "special_request": updated.get("special_request"),
                     "notes": updated.get("notes"),
+                    "name": updated.get("name"),
                 }
                 history_id = history_service.log_reservation_updated(
                     reservation_id=updated.get("id"),
