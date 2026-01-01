@@ -25,6 +25,8 @@ class ClientRestaurantResponse(BaseModel):
     address: str | None = None
     phone_number: str | None = None
     twilio_phone_number: str | None = None
+    forward_escalations: bool | None = None
+    escalation_phone_number: str | None = None
     forward_minutes: int | None = None
     backward_minutes: int | None = None
     is_credit_card_required_for_reservation: bool | None = None
@@ -41,6 +43,10 @@ class ClientUpdateRestaurantRequest(BaseModel):
     name: str | None = Field(None, max_length=255, description="Restaurant name")
     address: str | None = Field(None, description="Street address")
     phone_number: str | None = Field(None, max_length=20, description="Public phone number")
+    forward_escalations: bool | None = Field(None, description="Forward escalations to a live phone number")
+    escalation_phone_number: str | None = Field(
+        None, max_length=20, description="Phone number to forward escalation calls"
+    )
     forward_minutes: int | None = Field(None, ge=0, description="Forward booking window in minutes")
     backward_minutes: int | None = Field(None, ge=0, description="Backward booking window in minutes")
     is_credit_card_required_for_reservation: bool | None = Field(
@@ -64,7 +70,7 @@ class ClientUpdateRestaurantRequest(BaseModel):
             raise ValueError("name cannot be empty")
         return cleaned
 
-    @field_validator("address", "phone_number", mode="before")
+    @field_validator("address", "phone_number", "escalation_phone_number", mode="before")
     @classmethod
     def trim_optional_strings(cls, value: Any) -> Any:  # noqa: ANN401 - pydantic hook allows Any
         if isinstance(value, str):
@@ -97,6 +103,8 @@ router = APIRouter(
                             "address": "123 Main St, Springfield",
                             "phone_number": "+15551234567",
                             "twilio_phone_number": "+15557654321",
+                            "forward_escalations": True,
+                            "escalation_phone_number": "+15550001111",
                             "forward_minutes": 45,
                             "backward_minutes": 15,
                             "is_credit_card_required_for_reservation": False,
@@ -124,7 +132,7 @@ async def get_restaurant(
     "/restaurant",
     status_code=status.HTTP_200_OK,
     summary="Update restaurant (Client)",
-    description="Update the authenticated restaurant. All fields are optional; server-side validation still applies. Sensitive integration fields cannot be updated via this endpoint.",
+    description="Update the authenticated restaurant. All fields are optional; server-side validation still applies. Sensitive integration fields cannot be updated via this endpoint. `forward_escalations` requires `escalation_phone_number`.",
     response_model=ClientRestaurantResponse,
     response_description="Updated restaurant details.",
     openapi_extra={
@@ -133,7 +141,12 @@ async def get_restaurant(
             "content": {
                 "application/json": {
                     "schema": ClientUpdateRestaurantRequest.model_json_schema(),
-                    "example": {"name": "Updated Restaurant", "forward_minutes": 30},
+                    "example": {
+                        "name": "Updated Restaurant",
+                        "forward_minutes": 30,
+                        "forward_escalations": True,
+                        "escalation_phone_number": "+15550001111",
+                    },
                 }
             },
         },
@@ -148,6 +161,8 @@ async def get_restaurant(
                             "address": "123 Main St, Springfield",
                             "phone_number": "+15551234567",
                             "twilio_phone_number": "+15557654321",
+                            "forward_escalations": True,
+                            "escalation_phone_number": "+15550001111",
                             "forward_minutes": 30,
                             "backward_minutes": 15,
                             "is_credit_card_required_for_reservation": False,

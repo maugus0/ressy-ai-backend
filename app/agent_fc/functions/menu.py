@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from pydantic import BaseModel, ConfigDict, model_validator
 
+from app.agent_fc.functions.function_context import split_call_context
 from app.repositories.mysql_menu_repo import MySQLMenuRepository
 from app.utils.logging_config import get_logger
 
@@ -108,8 +109,10 @@ async def list_menu_items(**kwargs) -> Dict[str, Any]:
     rather than hiding them completely. The agent should mention unavailable items but clearly
     indicate they cannot be ordered right now.
     """
-    args = ListMenuArgs.model_validate(kwargs)
-    logger.info("list_menu_items invoked restaurant_id=%s", args.restaurant_id)
+    context, model_kwargs = split_call_context(kwargs, ListMenuArgs)
+    args = ListMenuArgs.model_validate(model_kwargs)
+    call_sid = context.get("call_sid")
+    logger.info("list_menu_items invoked restaurant_id=%s call_sid=%s", args.restaurant_id, call_sid)
 
     def _fetch():
         menu_repo = _get_menu_repo()
@@ -119,7 +122,12 @@ async def list_menu_items(**kwargs) -> Dict[str, Any]:
     try:
         all_items = await _run_repo_call(_fetch)
     except Exception as exc:  # noqa: BLE001 - defensive for agent calls
-        logger.exception("[ERROR] list_menu_items failed restaurant_id=%s: %s", args.restaurant_id, exc)
+        logger.exception(
+            "[ERROR] list_menu_items failed restaurant_id=%s call_sid=%s: %s",
+            args.restaurant_id,
+            call_sid,
+            exc,
+        )
         return {
             "status": "ERROR",
             "restaurant_id": args.restaurant_id,
@@ -158,13 +166,16 @@ async def get_menu_item_details(**kwargs) -> Dict[str, Any]:
     Creates a fresh repository instance per call to ensure up-to-date menu data
     during active voice calls (fixes mid-call menu updates not being detected).
     """
-    args = GetMenuItemDetailsArgs.model_validate(kwargs)
+    context, model_kwargs = split_call_context(kwargs, GetMenuItemDetailsArgs)
+    args = GetMenuItemDetailsArgs.model_validate(model_kwargs)
+    call_sid = context.get("call_sid")
     item: Optional[Dict[str, Any]] = None
     logger.info(
-        "get_menu_item_details invoked restaurant_id=%s item_id=%s search_term=%s",
+        "get_menu_item_details invoked restaurant_id=%s item_id=%s search_term=%s call_sid=%s",
         args.restaurant_id,
         args.item_id,
         args.search_term,
+        call_sid,
     )
 
     def _fetch_by_id():
@@ -211,10 +222,11 @@ async def get_menu_item_details(**kwargs) -> Dict[str, Any]:
             }
     except Exception as exc:
         logger.exception(
-            "[ERROR] get_menu_item_details failed restaurant_id=%s item_id=%s search_term=%s: %s",
+            "[ERROR] get_menu_item_details failed restaurant_id=%s item_id=%s search_term=%s call_sid=%s: %s",
             args.restaurant_id,
             args.item_id,
             args.search_term,
+            call_sid,
             exc,
         )
         return {

@@ -27,6 +27,8 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
                     forward_minutes,
                     backward_minutes,
                     is_credit_card_required_for_reservation,
+                    forward_escalations,
+                    escalation_phone_number,
                     opening_time,
                     closing_time,
                     created_at,
@@ -42,6 +44,10 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
                     result["opening_time"] = "09:00:00"
                 if "closing_time" not in result or result.get("closing_time") is None:
                     result["closing_time"] = "22:00:00"
+                if "forward_escalations" not in result:
+                    result["forward_escalations"] = False
+                if "escalation_phone_number" not in result:
+                    result["escalation_phone_number"] = None
                 return result
             return None
         except Exception:
@@ -69,6 +75,8 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
                 result = results[0]
                 result["opening_time"] = "09:00:00"
                 result["closing_time"] = "22:00:00"
+                result["forward_escalations"] = False
+                result["escalation_phone_number"] = None
                 return result
             return None
 
@@ -92,6 +100,8 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
                     forward_minutes,
                     backward_minutes,
                     is_credit_card_required_for_reservation,
+                    forward_escalations,
+                    escalation_phone_number,
                     opening_time,
                     closing_time,
                     created_at,
@@ -108,6 +118,10 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
                     result["opening_time"] = "09:00:00"
                 if "closing_time" not in result or result.get("closing_time") is None:
                     result["closing_time"] = "22:00:00"
+                if "forward_escalations" not in result:
+                    result["forward_escalations"] = False
+                if "escalation_phone_number" not in result:
+                    result["escalation_phone_number"] = None
                 return result
             return None
         except Exception:
@@ -136,6 +150,8 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
                 result = results[0]
                 result["opening_time"] = "09:00:00"
                 result["closing_time"] = "22:00:00"
+                result["forward_escalations"] = False
+                result["escalation_phone_number"] = None
                 return result
             return None
 
@@ -158,6 +174,8 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
                     forward_minutes,
                     backward_minutes,
                     is_credit_card_required_for_reservation,
+                    forward_escalations,
+                    escalation_phone_number,
                     opening_time,
                     closing_time,
                     created_at,
@@ -174,6 +192,10 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
                     result["opening_time"] = "09:00:00"
                 if "closing_time" not in result or result.get("closing_time") is None:
                     result["closing_time"] = "22:00:00"
+                if "forward_escalations" not in result:
+                    result["forward_escalations"] = False
+                if "escalation_phone_number" not in result:
+                    result["escalation_phone_number"] = None
                 return result
             return None
         except Exception:
@@ -202,6 +224,8 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
                 result = results[0]
                 result["opening_time"] = "09:00:00"
                 result["closing_time"] = "22:00:00"
+                result["forward_escalations"] = False
+                result["escalation_phone_number"] = None
                 return result
             return None
 
@@ -215,9 +239,10 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
                 name, address, phone_number, twilio_phone_number,
                 twilio_details, deepgram_details, open_table_details,
                 forward_minutes, backward_minutes, is_credit_card_required_for_reservation,
+                forward_escalations, escalation_phone_number,
                 opening_time, closing_time,
                 created_at, updated_at
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
         """
         restaurant_id = self._execute_insert(
             query,
@@ -232,6 +257,8 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
                 data.get("forward_minutes", 0),
                 data.get("backward_minutes", 0),
                 data.get("is_credit_card_required_for_reservation", False),
+                data.get("forward_escalations", False),
+                data.get("escalation_phone_number"),
                 data.get("opening_time"),
                 data.get("closing_time"),
             ),
@@ -284,6 +311,8 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
                 forward_minutes,
                 backward_minutes,
                 is_credit_card_required_for_reservation,
+                forward_escalations,
+                escalation_phone_number,
                 opening_time,
                 closing_time,
                 created_at,
@@ -358,6 +387,12 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
         if "is_credit_card_required_for_reservation" in data:
             update_fields.append("is_credit_card_required_for_reservation = %s")
             params.append(data["is_credit_card_required_for_reservation"])
+        if "forward_escalations" in data:
+            update_fields.append("forward_escalations = %s")
+            params.append(data["forward_escalations"])
+        if "escalation_phone_number" in data:
+            update_fields.append("escalation_phone_number = %s")
+            params.append(data["escalation_phone_number"])
         if "opening_time" in data:
             update_fields.append("opening_time = %s")
             params.append(data["opening_time"])

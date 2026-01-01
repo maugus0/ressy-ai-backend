@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, ConfigDict
 
 from app.agent_fc.functions.common_restaurant import load_restaurant
+from app.agent_fc.functions.function_context import split_call_context
 from app.config import settings
 from app.repositories.mysql_reservation_repo import MySQLReservationRepository
 from app.repositories.mysql_user_repo import MySQLUserRepository
@@ -161,8 +162,15 @@ async def create_reservation(**kwargs) -> Dict[str, Any]:
     2. Create slot booking and reservation in a single transaction
     3. Return reservation details with pending status (restaurant will confirm)
     """
-    args = CreateReservationArgs.model_validate(kwargs)
-    logger.info("create_reservation invoked restaurant_id=%s party_size=%s", args.restaurant_id, args.party_size)
+    context, model_kwargs = split_call_context(kwargs, CreateReservationArgs)
+    args = CreateReservationArgs.model_validate(model_kwargs)
+    call_sid = context.get("call_sid")
+    logger.info(
+        "create_reservation invoked restaurant_id=%s party_size=%s call_sid=%s",
+        args.restaurant_id,
+        args.party_size,
+        call_sid,
+    )
     restaurant = await load_restaurant(args.restaurant_id)
     if not restaurant:
         return {
@@ -214,7 +222,7 @@ async def create_reservation(**kwargs) -> Dict[str, Any]:
             )
         except Exception as meta_err:
             # Log but don't fail reservation creation if metadata mapping fails
-            logger.warning("Failed to create user-restaurant metadata: %s", meta_err)
+            logger.warning("Failed to create user-restaurant metadata call_sid=%s: %s", call_sid, meta_err)
 
         # 3. Generate confirmation number and reservation token
         confirmation_number = _generate_confirmation_number()
@@ -294,7 +302,9 @@ async def create_reservation(**kwargs) -> Dict[str, Any]:
                 logger.info("Activity history logged for reservation creation: history_id=%s", history_id)
             except Exception as history_error:
                 logger.exception(
-                    "[ERROR] Failed to log history for voice agent reservation creation: %s", history_error
+                    "[ERROR] Failed to log history for voice agent reservation creation call_sid=%s: %s",
+                    call_sid,
+                    history_error,
                 )
 
         await _run_service_call(_log_history)
@@ -335,8 +345,10 @@ async def lookup_reservation(**kwargs) -> Dict[str, Any]:
     Look up the latest reservation for a caller using their phone number.
     Similar to lookup_order but for reservations.
     """
-    args = LookupReservationArgs.model_validate(kwargs)
-    logger.info("lookup_reservation invoked customer_contact=%s", args.customer_contact)
+    context, model_kwargs = split_call_context(kwargs, LookupReservationArgs)
+    args = LookupReservationArgs.model_validate(model_kwargs)
+    call_sid = context.get("call_sid")
+    logger.info("lookup_reservation invoked customer_contact=%s call_sid=%s", args.customer_contact, call_sid)
 
     def _lookup():
         user_repo = _get_user_repo()
@@ -397,8 +409,10 @@ async def update_reservation(**kwargs) -> Dict[str, Any]:
     """
     Update the latest reservation for a caller using their phone number.
     """
-    args = UpdateReservationArgs.model_validate(kwargs)
-    logger.info("update_reservation invoked customer_contact=%s", args.customer_contact)
+    context, model_kwargs = split_call_context(kwargs, UpdateReservationArgs)
+    args = UpdateReservationArgs.model_validate(model_kwargs)
+    call_sid = context.get("call_sid")
+    logger.info("update_reservation invoked customer_contact=%s call_sid=%s", args.customer_contact, call_sid)
     restaurant = await load_restaurant(args.restaurant_id)
     if not restaurant:
         return {
@@ -548,9 +562,17 @@ async def update_reservation(**kwargs) -> Dict[str, Any]:
                 )
                 logger.info("Activity history logged for reservation update: history_id=%s", history_id)
             else:
-                logger.warning("Cannot log history - restaurant_id is None for reservation %s", updated.get("id"))
+                logger.warning(
+                    "Cannot log history - restaurant_id is None for reservation %s call_sid=%s",
+                    updated.get("id"),
+                    call_sid,
+                )
         except Exception as history_error:
-            logger.exception("[ERROR] Failed to log history for voice agent reservation update: %s", history_error)
+            logger.exception(
+                "[ERROR] Failed to log history for voice agent reservation update call_sid=%s: %s",
+                call_sid,
+                history_error,
+            )
 
     await _run_service_call(_log_history)
 
@@ -586,11 +608,14 @@ async def check_reservation_availability(**kwargs) -> Dict[str, Any]:
     This checks for locked/reserved slots in the given time range to determine
     if the restaurant can accommodate the party.
     """
-    args = CheckAvailabilityArgs.model_validate(kwargs)
+    context, model_kwargs = split_call_context(kwargs, CheckAvailabilityArgs)
+    args = CheckAvailabilityArgs.model_validate(model_kwargs)
+    call_sid = context.get("call_sid")
     logger.info(
-        "check_reservation_availability invoked restaurant_id=%s party_size=%s",
+        "check_reservation_availability invoked restaurant_id=%s party_size=%s call_sid=%s",
         args.restaurant_id,
         args.party_size,
+        call_sid,
     )
     restaurant = await load_restaurant(args.restaurant_id)
     if not restaurant:

@@ -97,7 +97,7 @@ class WebSocketService:
     def _build_restaurant_context(
         self, caller_phone: Optional[str] = None, restaurant_record: Optional[Dict[str, Any]] = None
     ) -> tuple[Dict[str, Any], Optional[str], Optional[str], Optional[str]]:
-        restaurant_phone_fwd = restaurant_record.get("phone_number") if restaurant_record else None
+        restaurant_phone_fwd = restaurant_record.get("escalation_phone_number") if restaurant_record else None
         restaurant_id = restaurant_record.get("id") if restaurant_record else None
         if isinstance(restaurant_id, str) and restaurant_id.isdigit():
             restaurant_id = int(restaurant_id)
@@ -238,7 +238,7 @@ class WebSocketService:
                 "name": restaurant_name,
                 "cuisine": restaurant.get("cuisine_type"),
                 "address": restaurant.get("full_address") or restaurant.get("address"),
-                "phone": restaurant.get("phone_number"),
+                "phone": restaurant.get("escalation_phone_number"),
                 "opening_time": opening_time,
                 "closing_time": closing_time,
                 "is_open_now": is_open_now,
@@ -547,7 +547,7 @@ class WebSocketService:
         self.logger.warning("No caller phone or provided user_id; defaulting to user_id=0 for call logging")
         return "0"
 
-    def _build_function_router(self, sts_ws) -> Transport:
+    def _build_function_router(self, sts_ws) -> tuple[Transport, FunctionCallRouter]:
         registry = FunctionRegistry()
         registry.register(
             name="create_order",
@@ -617,7 +617,7 @@ class WebSocketService:
             settings=get_fc_settings(),
         )
         transport.on_message(router.handle_frame)
-        return transport
+        return transport, router
 
     def _create_call_session(
         self,
@@ -1448,10 +1448,19 @@ class WebSocketService:
                         config_message_json = json.dumps(config_message)
                         await sts_ws.send(config_message_json)
 
-                        transport = self._build_function_router(sts_ws)
+                        transport, router = self._build_function_router(sts_ws)
                         resolved_user_id = self._resolve_user_id(caller_number, user_id)
                         call_id = self._create_call_session(
                             resolved_user_id, call_resources.restaurant_id, call_sid, None
+                        )
+                        router.set_default_arguments(
+                            {
+                                "user_id": resolved_user_id,
+                                "call_id": call_id,
+                                "restaurant_id": call_resources.restaurant_id,
+                                "customer_contact": caller_number,
+                                "call_sid": call_sid,
+                            }
                         )
 
                         timeout_seconds = float(getattr(settings, "AGENT_CALL_TIMEOUT_SECONDS", 900))

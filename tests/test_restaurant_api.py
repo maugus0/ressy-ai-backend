@@ -70,6 +70,15 @@ def test_update_restaurant_hours(client_with_overrides):
     assert update_resp.json()["closing_time"] == "20:00:00"
 
 
+def test_forward_escalations_requires_number_on_update(client_with_overrides):
+    client = client_with_overrides
+    create_resp = client.post("/api/v1/restaurants/", json={"name": "Escalation Update"})
+    rid = create_resp.json()["id"]
+
+    update_resp = client.put(f"/api/v1/restaurants/{rid}", json={"forward_escalations": True})
+    assert update_resp.status_code == 400
+
+
 def test_invalid_hours_rejected(client_with_overrides):
     client = client_with_overrides
     resp = client.post("/api/v1/restaurants/", json={"name": "Bad", "opening_time": "25:00:00"})
@@ -90,3 +99,9 @@ def test_duplicate_twilio_rejected(client_with_overrides):
     assert first.status_code == 201
     dup = client.post("/api/v1/restaurants/", json={"name": "Two", "twilio_phone_number": "+12223334444"})
     assert dup.status_code == 400
+
+
+def test_forward_escalations_requires_number_on_create(client_with_overrides):
+    client = client_with_overrides
+    resp = client.post("/api/v1/restaurants/", json={"name": "Escalations", "forward_escalations": True})
+    assert resp.status_code == 400

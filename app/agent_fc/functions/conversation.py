@@ -4,11 +4,15 @@ from __future__ import annotations
 
 import asyncio
 import random
-from typing import Literal
+from typing import Literal, Optional
 
 from pydantic import BaseModel, ConfigDict
 
+from app.agent_fc.functions.common_restaurant import load_restaurant
+from app.agent_fc.functions.function_context import split_call_context
 from app.agent_fc.responses import AgentFunctionResult, AgentSideEffect
+from app.services.call_service import CallService
+from app.services.escalation_service import EscalationService
 from app.services.sse_service import SSEService
 from app.utils.logging_config import get_logger
 
@@ -96,6 +100,7 @@ async def _emit_escalation_sse_event(
     caller_phone: str,
     reason: str,
     urgency: Literal["standard", "urgent"],
+    call_sid: Optional[str] = None,
 ) -> None:
     """Broadcast escalation to SSE subscribers; keep failures from affecting the call flow."""
     try:
@@ -107,14 +112,16 @@ async def _emit_escalation_sse_event(
             data={"urgency": urgency},
         )
     except Exception as exc:  # noqa: BLE001 - defensive
-        logger.warning("Failed to emit escalation SSE event: %s", exc)
+        logger.warning("Failed to emit escalation SSE event call_sid=%s: %s", call_sid, exc)
 
 
 async def agent_filler(**kwargs) -> AgentFunctionResult:
-    args = AgentFillerArgs.model_validate(kwargs)
+    context, model_kwargs = split_call_context(kwargs, AgentFillerArgs)
+    args = AgentFillerArgs.model_validate(model_kwargs)
+    call_sid = context.get("call_sid")
     options = FILLER_LIBRARY.get(args.filler_type) or FILLER_LIBRARY["general"]
     message = _pick_message(options)
-    logger.info("agent_filler invoked filler_type=%s", args.filler_type)
+    logger.info("agent_filler invoked filler_type=%s call_sid=%s", args.filler_type, call_sid)
     return AgentFunctionResult(
         content={"status": "QUEUED", "filler_type": args.filler_type},
         side_effects=[
@@ -124,9 +131,11 @@ async def agent_filler(**kwargs) -> AgentFunctionResult:
 
 
 async def end_call(**kwargs) -> AgentFunctionResult:
-    args = EndCallArgs.model_validate(kwargs)
+    context, model_kwargs = split_call_context(kwargs, EndCallArgs)
+    args = EndCallArgs.model_validate(model_kwargs)
+    call_sid = context.get("call_sid")
     message = FAREWELL_LIBRARY.get(args.farewell_style, FAREWELL_LIBRARY["general"])
-    logger.info("end_call invoked style=%s", args.farewell_style)
+    logger.info("end_call invoked style=%s call_sid=%s", args.farewell_style, call_sid)
     return AgentFunctionResult(
         content={"status": "CLOSING", "farewell_style": args.farewell_style},
         side_effects=[
@@ -137,14 +146,61 @@ async def end_call(**kwargs) -> AgentFunctionResult:
 
 
 async def escalate_to_human(**kwargs) -> AgentFunctionResult:
-    args = EscalateToHumanArgs.model_validate(kwargs)
-    logger.info("escalate_to_human invoked urgency=%s reason=%s", args.urgency, args.reason)
-    message = "I’m looping in a team member to assist you now. You'll receive a call back from them shortly. Thank you for your patience."
+    context, model_kwargs = split_call_context(kwargs, EscalateToHumanArgs)
+    args = EscalateToHumanArgs.model_validate(model_kwargs)
+    call_sid = context.get("call_sid")
+    call_id = context.get("call_id")
+    user_id = context.get("user_id")
+    logger.info("escalate_to_human invoked urgency=%s reason=%s call_sid=%s", args.urgency, args.reason, call_sid)
+
+    restaurant = await load_restaurant(args.restaurant_id)
+    forward_escalations = False
+    escalation_phone_number = None
+    if restaurant:
+        try:
+            forward_escalations = bool(int(restaurant.get("forward_escalations", 0)))
+        except (TypeError, ValueError):
+            forward_escalations = False
+        escalation_phone_number = restaurant.get("escalation_phone_number")
+
+    escalation_service = EscalationService()
+    try:
+        escalation_service.create_escalation(
+            {
+                "call_id": call_id,
+                "user_id": user_id,
+                "restaurant_id": str(args.restaurant_id),
+                "twilio_call_sid": call_sid,
+                "caller_phone": args.customer_contact,
+                "escalation_phone_number": escalation_phone_number,
+                "urgency": args.urgency,
+                "reason": args.reason,
+                "status": "raised",
+            }
+        )
+    except Exception as exc:  # noqa: BLE001 - defensive
+        logger.warning("Failed to persist escalation call_sid=%s: %s", call_sid, exc)
+
+    if call_id:
+        try:
+            CallService().mark_escalated(call_id)
+        except Exception as exc:  # noqa: BLE001 - defensive
+            logger.warning("Failed to mark call escalated call_id=%s call_sid=%s: %s", call_id, call_sid, exc)
+
+    should_forward = forward_escalations and bool(escalation_phone_number)
+    if should_forward:
+        message = "Please hold while I connect you to a team member."
+    else:
+        message = (
+            "I'm looping in a team member to assist you now. You'll receive a call back from them shortly. "
+            "Thank you for your patience."
+        )
     content = {
         "status": "HUMAN_ESCALATION_REQUESTED",
         "urgency": args.urgency,
         "reason": args.reason,
         "customer_contact": args.customer_contact,
+        "forwarding": should_forward,
     }
     asyncio.create_task(
         _emit_escalation_sse_event(
@@ -152,11 +208,10 @@ async def escalate_to_human(**kwargs) -> AgentFunctionResult:
             caller_phone=args.customer_contact,
             reason=args.reason,
             urgency=args.urgency,
+            call_sid=call_sid,
         )
     )
-    return AgentFunctionResult(
-        content=content,
-        side_effects=[
-            AgentSideEffect({"type": "InjectAgentMessage", "message": message}),
-        ],
-    )
+    side_effects = [AgentSideEffect({"type": "InjectAgentMessage", "message": message})]
+    if should_forward:
+        side_effects.append(AgentSideEffect({"type": "close"}, delay_seconds=0.5))
+    return AgentFunctionResult(content=content, side_effects=side_effects)
