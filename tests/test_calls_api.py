@@ -137,3 +137,26 @@ def test_admin_analytics_requires_dates(client_with_calls):
     ok = client.get("/api/v1/admin/calls/analytics?date_from=2024-01-01&date_to=2024-01-31")
     assert ok.status_code == 200
     assert ok.json()["total_calls"] == 2
+
+
+def test_update_call_cost_preserves_escalated_status():
+    repo = InMemoryCallRepository(
+        calls=[
+            {
+                "id": 3,
+                "restaurant_id": "10",
+                "user_id": "+14155551234",
+                "caller_phone": "+14155551234",
+                "call_duration": 0,
+                "call_status": "escalated",
+                "started_at": "2024-03-01T12:00:00Z",
+                "call_transcript": None,
+            }
+        ]
+    )
+    service = CallService()
+    service._get_call_repo = lambda: repo
+
+    service.update_call_cost(call_id=3, duration_seconds=120)
+
+    assert repo._calls[3]["call_status"] == "escalated"

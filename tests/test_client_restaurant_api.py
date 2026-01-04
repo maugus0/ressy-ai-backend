@@ -46,3 +46,9 @@ def test_get_and_update_own_restaurant(client_with_overrides):
     assert update.json()["name"] == "Updated Place"
     # ensure repo updated
     assert repo.get_by_id(1)["forward_minutes"] == 15
+
+
+def test_client_forward_escalations_requires_number(client_with_overrides):
+    client, _repo = client_with_overrides
+    update = client.put("/api/v1/client/restaurant", json={"forward_escalations": True})
+    assert update.status_code == 400

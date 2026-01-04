@@ -40,7 +40,7 @@ class MySQLCallRepository(MySQLBaseRepository):
 
     def update_call_cost(self, call_id: int, duration_seconds: int, ressy_cost: float) -> None:
         """
-        Update call cost and duration, mark as completed.
+        Update call cost and duration, mark as completed unless the call was escalated.
 
         Note: The ressy_cost parameter should be calculated using CallService.calculate_call_costs()
         to ensure consistency. This stores ressy_cost in the database for historical reference.
@@ -63,7 +63,7 @@ class MySQLCallRepository(MySQLBaseRepository):
             UPDATE Calls
             SET call_duration = %s,
                 cost = %s,
-                call_status = 'completed',
+                call_status = CASE WHEN call_status = 'escalated' THEN 'escalated' ELSE 'completed' END,
                 ended_at = NOW(),
                 updated_at = NOW()
             WHERE id = %s
@@ -72,6 +72,20 @@ class MySQLCallRepository(MySQLBaseRepository):
         self.logger.info(
             "[MySQL] Updated call: call_id=%s, duration=%ss, ressy_cost=$%.6f", call_id, duration_seconds, ressy_cost
         )
+
+    def update_call_status(self, call_id: int, status: str) -> bool:
+        """
+        Update call status without mutating duration or cost.
+        """
+        query = """
+            UPDATE Calls
+            SET call_status = %s,
+                updated_at = NOW()
+            WHERE id = %s
+        """
+        affected = self._execute_update(query, (status, call_id))
+        self.logger.info("[MySQL] Updated call status: call_id=%s, status=%s", call_id, status)
+        return affected > 0
 
     def update_deepgram_request_id(self, call_id: int, deepgram_request_id: str) -> None:
         """

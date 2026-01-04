@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.agent_fc.functions.common_restaurant import load_restaurant
+from app.agent_fc.functions.function_context import split_call_context
 from app.config import settings
 from app.repositories.mysql_menu_repo import MySQLMenuRepository
 from app.repositories.mysql_order_repo import MySQLOrderRepository
@@ -242,7 +243,9 @@ async def _populate_missing_prices(restaurant_id: int, items: List[OrderItem]) -
 
 
 async def create_order(**kwargs) -> Dict[str, Any]:
-    args = CreateOrderArgs.model_validate(kwargs)
+    context, model_kwargs = split_call_context(kwargs, CreateOrderArgs)
+    args = CreateOrderArgs.model_validate(model_kwargs)
+    call_sid = context.get("call_sid")
     restaurant = await load_restaurant(args.restaurant_id)
     if not restaurant:
         return {
@@ -259,7 +262,12 @@ async def create_order(**kwargs) -> Dict[str, Any]:
         }
     await _populate_missing_prices(args.restaurant_id, args.items)
     total_amount = _calculate_total(args.items)
-    logger.info("create_order invoked customer_contact=%s items=%s", args.customer_contact, len(args.items))
+    logger.info(
+        "create_order invoked customer_contact=%s items=%s call_sid=%s",
+        args.customer_contact,
+        len(args.items),
+        call_sid,
+    )
 
     def _create():
         # Create fresh repository instances for this operation
@@ -290,7 +298,7 @@ async def create_order(**kwargs) -> Dict[str, Any]:
                 )
             except Exception as meta_err:
                 # Log but don't fail order creation if metadata mapping fails
-                logger.warning("Failed to create user-restaurant metadata: %s", meta_err)
+                logger.warning("Failed to create user-restaurant metadata call_sid=%s: %s", call_sid, meta_err)
 
         order_payload = {
             "restaurant_id": int(args.restaurant_id) if args.restaurant_id else None,
@@ -333,9 +341,15 @@ async def create_order(**kwargs) -> Dict[str, Any]:
                 )
                 logger.info("Activity history logged for order creation: history_id=%s", history_id)
             else:
-                logger.warning("Cannot log history - restaurant_id is None for order %s", order_id)
+                logger.warning(
+                    "Cannot log history - restaurant_id is None for order %s call_sid=%s", order_id, call_sid
+                )
         except Exception as history_error:
-            logger.exception("[ERROR] Failed to log history for voice agent order creation: %s", history_error)
+            logger.exception(
+                "[ERROR] Failed to log history for voice agent order creation call_sid=%s: %s",
+                call_sid,
+                history_error,
+            )
 
     await _run_service_call(_log_history)
 
@@ -367,8 +381,10 @@ async def create_order(**kwargs) -> Dict[str, Any]:
 
 
 async def lookup_order(**kwargs) -> Dict[str, Any]:
-    args = LookupOrderArgs.model_validate(kwargs)
-    logger.info("lookup_order invoked customer_contact=%s", args.customer_contact)
+    context, model_kwargs = split_call_context(kwargs, LookupOrderArgs)
+    args = LookupOrderArgs.model_validate(model_kwargs)
+    call_sid = context.get("call_sid")
+    logger.info("lookup_order invoked customer_contact=%s call_sid=%s", args.customer_contact, call_sid)
 
     def _lookup():
         user_repo = _get_user_repo()
@@ -411,11 +427,14 @@ async def check_items_availability(**kwargs) -> Dict[str, Any]:
     - UNAVAILABLE: Item exists but is currently unavailable
     - UNKNOWN_ITEM: Item not found in menu
     """
-    args = CheckItemsAvailabilityArgs.model_validate(kwargs)
+    context, model_kwargs = split_call_context(kwargs, CheckItemsAvailabilityArgs)
+    args = CheckItemsAvailabilityArgs.model_validate(model_kwargs)
+    call_sid = context.get("call_sid")
     logger.info(
-        "check_items_availability invoked restaurant_id=%s item_count=%s",
+        "check_items_availability invoked restaurant_id=%s item_count=%s call_sid=%s",
         args.restaurant_id,
         len(args.items),
+        call_sid,
     )
     restaurant = await load_restaurant(args.restaurant_id)
     if not restaurant:
@@ -515,7 +534,9 @@ def _is_within_update_window(created_at: Any) -> bool:
 
 
 async def update_order_details(**kwargs) -> Dict[str, Any]:
-    args = UpdateOrderDetailsArgs.model_validate(kwargs)
+    context, model_kwargs = split_call_context(kwargs, UpdateOrderDetailsArgs)
+    args = UpdateOrderDetailsArgs.model_validate(model_kwargs)
+    call_sid = context.get("call_sid")
     restaurant = await load_restaurant(args.restaurant_id)
     if not restaurant:
         return {
@@ -531,7 +552,7 @@ async def update_order_details(**kwargs) -> Dict[str, Any]:
             ),
         }
     await _populate_missing_prices(args.restaurant_id, args.items)
-    logger.info("update_order_details invoked customer_contact=%s", args.customer_contact)
+    logger.info("update_order_details invoked customer_contact=%s call_sid=%s", args.customer_contact, call_sid)
 
     def _update():
         user_repo = _get_user_repo()
@@ -635,9 +656,17 @@ async def update_order_details(**kwargs) -> Dict[str, Any]:
                 )
                 logger.info("Activity history logged for order update: history_id=%s", history_id)
             else:
-                logger.warning("Cannot log history - restaurant_id is None for order %s", updated_order.get("id"))
+                logger.warning(
+                    "Cannot log history - restaurant_id is None for order %s call_sid=%s",
+                    updated_order.get("id"),
+                    call_sid,
+                )
         except Exception as history_error:
-            logger.exception("[ERROR] Failed to log history for voice agent order update: %s", history_error)
+            logger.exception(
+                "[ERROR] Failed to log history for voice agent order update call_sid=%s: %s",
+                call_sid,
+                history_error,
+            )
 
     await _run_service_call(_log_history)
 

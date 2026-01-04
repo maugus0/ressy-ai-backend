@@ -1,0 +1,239 @@
+from __future__ import annotations
+
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
+
+from app.middleware.auth_middleware import get_current_restaurant_user
+from app.models.escalation_models import (
+    EscalationDetailResponse,
+    EscalationListItem,
+    EscalationListPage,
+    EscalationStatusUpdateRequest,
+)
+from app.services.escalation_service import EscalationService
+from app.utils.escalation_utils import normalize_escalation
+from app.utils.payload_validator import validate_payload
+
+
+def get_escalation_service() -> EscalationService:
+    return EscalationService()
+
+
+router = APIRouter(
+    prefix="/api/v1/client",
+    tags=["Escalations"],
+    dependencies=[Depends(get_current_restaurant_user)],
+)
+
+STATUS_UPDATE_SCHEMA = EscalationStatusUpdateRequest.model_json_schema()
+
+
+@router.get(
+    "/escalations",
+    summary="Get own escalations (Client)",
+    description="Retrieve paginated escalations scoped to the authenticated restaurant with filtering and sorting.",
+    response_model=EscalationListPage,
+    response_description="Paginated escalations for the restaurant.",
+    openapi_extra={
+        "responses": {
+            200: {
+                "description": "Escalations retrieved",
+                "content": {
+                    "application/json": {
+                        "example": {
+                            "items": [
+                                {
+                                    "id": 7,
+                                    "call_id": "123",
+                                    "user_id": "456",
+                                    "restaurant_id": "10",
+                                    "restaurant_name": "Ressy Test Kitchen",
+                                    "call_sid": "CA123",
+                                    "caller_phone": "+14155551234",
+                                    "escalation_phone_number": "+15550001111",
+                                    "urgency": "high",
+                                    "reason": "customer asked for a manager",
+                                    "status": "raised",
+                                    "requested_at": "2024-03-01T12:00:00Z",
+                                }
+                            ],
+                            "total": 1,
+                            "page": 1,
+                            "limit": 20,
+                        }
+                    }
+                },
+            }
+        }
+    },
+)
+async def get_client_escalations(
+    status: str | None = Query(
+        None, description="Escalation status filter", examples={"sample": {"summary": "Status", "value": "raised"}}
+    ),
+    urgency: str | None = Query(
+        None, description="Urgency filter", examples={"sample": {"summary": "Urgency", "value": "high"}}
+    ),
+    reason: str | None = Query(
+        None,
+        description="Reason filter (partial match)",
+        examples={"sample": {"summary": "Reason", "value": "manager"}},
+    ),
+    caller_phone: str | None = Query(
+        None, description="Search by caller phone (partial)", examples={"sample": {"summary": "Phone", "value": "+141"}}
+    ),
+    call_id: str | None = Query(
+        None, description="Filter by internal call ID", examples={"sample": {"summary": "Call ID", "value": "123"}}
+    ),
+    call_sid: str | None = Query(
+        None, description="Filter by Twilio call SID", examples={"sample": {"summary": "Call SID", "value": "CA123"}}
+    ),
+    date_from: str | None = Query(
+        None,
+        description="Start date (ISO 8601, e.g. 2024-03-01T00:00:00Z)",
+        examples={"sample": {"summary": "Example start", "value": "2024-03-01T00:00:00Z"}},
+    ),
+    date_to: str | None = Query(
+        None,
+        description="End date (ISO 8601, e.g. 2024-03-31T23:59:59Z)",
+        examples={"sample": {"summary": "Example end", "value": "2024-03-31T23:59:59Z"}},
+    ),
+    page: int = Query(1, ge=1, description="Page number (1-based)"),
+    limit: int = Query(20, ge=1, le=200, description="Items per page"),
+    sort_by: str = Query("requested_at", description="requested_at, created_at, updated_at, status"),
+    sort_order: str = Query("desc", description="Sort order asc/desc"),
+    claims: dict = Depends(get_current_restaurant_user),
+    escalation_service: EscalationService = Depends(get_escalation_service),
+):
+    restaurant_id = claims.get("restaurant_id")
+    if not restaurant_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Restaurant access required")
+    rows, total = escalation_service.list_escalations(
+        restaurant_id=str(restaurant_id),
+        status=status,
+        urgency=urgency,
+        reason=reason,
+        caller_phone=caller_phone,
+        call_id=call_id,
+        call_sid=call_sid,
+        date_from=date_from,
+        date_to=date_to,
+        page=page,
+        limit=limit,
+        sort_by=sort_by,
+        sort_order=sort_order,
+    )
+    items = [EscalationListItem(**normalize_escalation(row)) for row in rows]
+    return EscalationListPage(items=items, total=total, page=page, limit=limit)
+
+
+@router.get(
+    "/escalations/{escalation_id}",
+    summary="Get escalation detail (Client)",
+    description="Retrieve details for a specific escalation scoped to the authenticated restaurant.",
+    response_model=EscalationDetailResponse,
+    response_description="Escalation detail with metadata.",
+    openapi_extra={
+        "responses": {
+            200: {
+                "description": "Escalation detail",
+                "content": {
+                    "application/json": {
+                        "example": {
+                            "id": 7,
+                            "call_id": "123",
+                            "user_id": "456",
+                            "restaurant_id": "10",
+                            "restaurant_name": "Ressy Test Kitchen",
+                            "call_sid": "CA123",
+                            "caller_phone": "+14155551234",
+                            "escalation_phone_number": "+15550001111",
+                            "urgency": "high",
+                            "reason": "customer asked for a manager",
+                            "status": "raised",
+                            "requested_at": "2024-03-01T12:00:00Z",
+                            "forwarded_at": None,
+                            "created_at": "2024-03-01T12:00:00Z",
+                            "updated_at": "2024-03-01T12:00:00Z",
+                        }
+                    }
+                },
+            }
+        }
+    },
+)
+async def get_client_escalation(
+    escalation_id: int,
+    claims: dict = Depends(get_current_restaurant_user),
+    escalation_service: EscalationService = Depends(get_escalation_service),
+) -> EscalationDetailResponse:
+    restaurant_id = claims.get("restaurant_id")
+    if not restaurant_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Restaurant access required")
+    escalation = escalation_service.get_escalation(escalation_id)
+    if not escalation:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Escalation not found")
+    if str(escalation.get("restaurant_id")) != str(restaurant_id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Restaurant access denied")
+    return EscalationDetailResponse(**normalize_escalation(escalation))
+
+
+@router.patch(
+    "/escalations/{escalation_id}/status",
+    summary="Update escalation status (Client)",
+    description="Update the status of an escalation scoped to the authenticated restaurant. Allowed statuses: raised, forwarded, failed, resolved.",
+    response_model=EscalationDetailResponse,
+    response_description="Updated escalation details.",
+    openapi_extra={
+        "requestBody": {
+            "required": True,
+            "content": {"application/json": {"schema": STATUS_UPDATE_SCHEMA, "example": {"status": "resolved"}}},
+        },
+        "responses": {
+            200: {
+                "description": "Escalation updated",
+                "content": {
+                    "application/json": {
+                        "example": {
+                            "id": 7,
+                            "call_id": "123",
+                            "user_id": "456",
+                            "restaurant_id": "10",
+                            "restaurant_name": "Ressy Test Kitchen",
+                            "call_sid": "CA123",
+                            "caller_phone": "+14155551234",
+                            "escalation_phone_number": "+15550001111",
+                            "urgency": "high",
+                            "reason": "customer asked for a manager",
+                            "status": "resolved",
+                            "requested_at": "2024-03-01T12:00:00Z",
+                            "forwarded_at": None,
+                            "created_at": "2024-03-01T12:00:00Z",
+                            "updated_at": "2024-03-01T12:05:00Z",
+                        }
+                    }
+                },
+            }
+        },
+    },
+)
+async def update_client_escalation_status(
+    escalation_id: int,
+    payload: dict = Body(..., description="Escalation status update"),
+    claims: dict = Depends(get_current_restaurant_user),
+    escalation_service: EscalationService = Depends(get_escalation_service),
+) -> EscalationDetailResponse:
+    restaurant_id = claims.get("restaurant_id")
+    if not restaurant_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Restaurant access required")
+    data = validate_payload(EscalationStatusUpdateRequest, payload)
+    try:
+        updated = escalation_service.update_escalation_status(
+            escalation_id, data.status, restaurant_id=str(restaurant_id)
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
+    if updated is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Escalation not found")
+    return EscalationDetailResponse(**normalize_escalation(updated))

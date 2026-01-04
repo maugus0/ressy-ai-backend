@@ -25,6 +25,10 @@ class CreateRestaurantRequest(BaseModel):
     address: str | None = Field(None, description="Street address")
     phone_number: str | None = Field(None, max_length=20, description="Public phone number")
     twilio_phone_number: str | None = Field(None, max_length=20, description="Twilio phone number for routing calls")
+    forward_escalations: bool | None = Field(False, description="Forward escalations to a live phone number")
+    escalation_phone_number: str | None = Field(
+        None, max_length=20, description="Phone number to forward escalation calls"
+    )
     twilio_details: dict | None = Field(None, description="Twilio configuration JSON")
     deepgram_details: dict | None = Field(None, description="Deepgram configuration JSON")
     open_table_details: dict | None = Field(None, description="OpenTable integration details JSON")
@@ -49,7 +53,7 @@ class CreateRestaurantRequest(BaseModel):
             raise ValueError("name is required")
         return cleaned
 
-    @field_validator("address", "phone_number", "twilio_phone_number", mode="before")
+    @field_validator("address", "phone_number", "twilio_phone_number", "escalation_phone_number", mode="before")
     @classmethod
     def trim_strings(cls, value: Any) -> Any:  # noqa: ANN401 - pydantic hook allows Any
         if isinstance(value, str):
@@ -64,6 +68,10 @@ class UpdateRestaurantRequest(BaseModel):
     address: str | None = Field(None, description="Street address")
     phone_number: str | None = Field(None, max_length=20, description="Public phone number")
     twilio_phone_number: str | None = Field(None, max_length=20, description="Twilio phone number for routing calls")
+    forward_escalations: bool | None = Field(None, description="Forward escalations to a live phone number")
+    escalation_phone_number: str | None = Field(
+        None, max_length=20, description="Phone number to forward escalation calls"
+    )
     twilio_details: dict | None = Field(None, description="Twilio configuration JSON")
     deepgram_details: dict | None = Field(None, description="Deepgram configuration JSON")
     open_table_details: dict | None = Field(None, description="OpenTable integration details JSON")
@@ -90,7 +98,7 @@ class UpdateRestaurantRequest(BaseModel):
             raise ValueError("name cannot be empty")
         return cleaned
 
-    @field_validator("address", "phone_number", "twilio_phone_number", mode="before")
+    @field_validator("address", "phone_number", "twilio_phone_number", "escalation_phone_number", mode="before")
     @classmethod
     def trim_optional_strings(cls, value: Any) -> Any:  # noqa: ANN401 - pydantic hook allows Any
         if isinstance(value, str):
@@ -106,6 +114,8 @@ class RestaurantResponse(BaseModel):
     address: str | None = None
     phone_number: str | None = None
     twilio_phone_number: str | None = None
+    forward_escalations: bool | None = None
+    escalation_phone_number: str | None = None
     twilio_details: dict | None = None
     deepgram_details: dict | None = None
     open_table_details: dict | None = None
@@ -180,6 +190,8 @@ router = APIRouter(
                         "forward_minutes": 45,
                         "backward_minutes": 15,
                         "is_credit_card_required_for_reservation": True,
+                        "forward_escalations": True,
+                        "escalation_phone_number": "+15550001111",
                         "twilio_details": {"workspace_sid": "WSxxxx", "phone_sid": "PNxxxx"},
                         "deepgram_details": {"project_id": "dg-project-1"},
                         "open_table_details": {"rid": "99999"},
@@ -204,6 +216,7 @@ async def create_restaurant(
     - Phone numbers are validated for length and format
     - JSON fields must be valid objects (not strings)
     - Missing minute fields default to 0; credit card requirement defaults to `false`
+    - `forward_escalations` requires `escalation_phone_number`
     """
     data = validate_payload(CreateRestaurantRequest, payload)
     # Use exclude_unset to allow explicit nulls to flow through for clearing values
@@ -233,6 +246,8 @@ async def create_restaurant(
                                     "forward_minutes": 45,
                                     "backward_minutes": 15,
                                     "is_credit_card_required_for_reservation": True,
+                                    "forward_escalations": True,
+                                    "escalation_phone_number": "+15550001111",
                                     "twilio_details": {"workspace_sid": "WSxxxx"},
                                     "deepgram_details": {"project_id": "dg-project-1"},
                                     "open_table_details": {"rid": "99999"},
@@ -296,6 +311,8 @@ async def list_restaurants(
                             "forward_minutes": 45,
                             "backward_minutes": 15,
                             "is_credit_card_required_for_reservation": True,
+                            "forward_escalations": True,
+                            "escalation_phone_number": "+15550001111",
                             "twilio_details": {"workspace_sid": "WSxxxx"},
                             "deepgram_details": {"project_id": "dg-project-1"},
                             "open_table_details": {"rid": "99999"},
@@ -339,6 +356,8 @@ async def get_restaurant(
                         "address": "456 Elm St, Springfield",
                         "forward_minutes": 60,
                         "is_credit_card_required_for_reservation": False,
+                        "forward_escalations": True,
+                        "escalation_phone_number": "+15550001111",
                         "open_table_details": {"rid": "12345", "api_key": "secret"},
                         "opening_time": "10:00:00",
                         "closing_time": "23:00:00",
@@ -361,6 +380,7 @@ async def update_restaurant(
     **Notes**:
     - Only provided fields are updated
     - Validation mirrors creation (phone formats, JSON objects, non-negative minutes)
+    - `forward_escalations` requires `escalation_phone_number`
     """
     data = validate_payload(UpdateRestaurantRequest, payload)
     return restaurant_service.update_restaurant(restaurant_id, data.model_dump(exclude_unset=True))

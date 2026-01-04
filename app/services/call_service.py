@@ -77,6 +77,18 @@ class CallService:
         call_repo = self._get_call_repo()
         call_repo.update_call_cost(normalized_id, duration_seconds, ressy_cost)
 
+    def update_call_status(self, call_id: str | int, status: str) -> bool:
+        normalized_id = self._safe_int(call_id)
+        if normalized_id is None:
+            return False
+        if not status:
+            return False
+        call_repo = self._get_call_repo()
+        return call_repo.update_call_status(normalized_id, status)
+
+    def mark_escalated(self, call_id: str | int) -> bool:
+        return self.update_call_status(call_id, "escalated")
+
     def store_transcript_message(
         self, call_id: int, message_sequence: int, speaker: str, message: str, timestamp: str
     ) -> None:

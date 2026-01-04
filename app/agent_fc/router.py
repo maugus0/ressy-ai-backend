@@ -21,12 +21,22 @@ from .transport import Transport
 class FunctionCallRouter:
     """Routes incoming frames to registered client-side functions."""
 
-    def __init__(self, registry: FunctionRegistry, transport: Transport, settings: Settings) -> None:
+    def __init__(
+        self,
+        registry: FunctionRegistry,
+        transport: Transport,
+        settings: Settings,
+        default_arguments: Optional[Mapping[str, Any]] = None,
+    ) -> None:
         self._registry = registry
         self._transport = transport
         self._settings = settings
+        self._default_arguments = dict(default_arguments or {})
         self._logger = get_logger(__name__)
         self._logger.setLevel(settings.log_level)  # Override level for FC.
+
+    def set_default_arguments(self, default_arguments: Optional[Mapping[str, Any]]) -> None:
+        self._default_arguments = dict(default_arguments or {})
 
     async def handle_frame(self, raw_json: Mapping[str, Any]) -> Optional[dict[str, Any]]:
         """Handle a raw JSON frame from the socket."""
@@ -56,8 +66,12 @@ class FunctionCallRouter:
             envelope = self._dispatch_response(response, start_time)
             return {"response": envelope, "side_effects": []}
 
+        arguments = dict(request.arguments or {})
+        for key, value in self._default_arguments.items():
+            if key in registered.arg_model.model_fields:
+                arguments[key] = value
         try:
-            arg_model = registered.validate_arguments(request.arguments)
+            arg_model = registered.validate_arguments(arguments)
         except ValidationError as exc:
             error_msg = self._format_validation_error(exc)
             self._logger.warning("Validation failed for id=%s name=%s: %s", request.id, request.name, error_msg)
@@ -66,11 +80,12 @@ class FunctionCallRouter:
             return {"response": envelope, "side_effects": []}
 
         payload = arg_model.model_dump()
+        merged_payload = {**payload, **self._default_arguments}
         attempts = 1 + max(self._settings.max_retries, 0)
 
         for attempt in range(1, attempts + 1):
             try:
-                content = await self._execute_with_timeout(registered.handler, payload)
+                content = await self._execute_with_timeout(registered.handler, merged_payload)
             except asyncio.TimeoutError:
                 if attempt < attempts:
                     self._logger.warning(

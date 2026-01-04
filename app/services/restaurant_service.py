@@ -86,6 +86,14 @@ class RestaurantService:
                 status_code=status.HTTP_400_BAD_REQUEST, detail=f"{field_name} must be a non-negative integer"
             )
 
+    @staticmethod
+    def _validate_escalation_forwarding(forward_escalations: bool, escalation_phone_number: Optional[str]) -> None:
+        if forward_escalations and not escalation_phone_number:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="escalation_phone_number is required when forward_escalations is enabled",
+            )
+
     def _parse_json_fields(self, restaurant: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
         """Parse JSON columns to dicts and normalize operating hours for consistent responses."""
         if not restaurant:
@@ -97,6 +105,11 @@ class RestaurantService:
                 )
         restaurant["opening_time"] = self._format_time_field(restaurant.get("opening_time"), default="09:00:00")
         restaurant["closing_time"] = self._format_time_field(restaurant.get("closing_time"), default="22:00:00")
+        if "forward_escalations" in restaurant:
+            try:
+                restaurant["forward_escalations"] = bool(int(restaurant["forward_escalations"]))
+            except (TypeError, ValueError):
+                restaurant["forward_escalations"] = False
         return restaurant
 
     @staticmethod
@@ -161,6 +174,8 @@ class RestaurantService:
         name = self._normalize_name(data.get("name"))
         self._validate_phone_number(data.get("phone_number"), "phone_number")
         self._validate_phone_number(data.get("twilio_phone_number"), "twilio_phone_number")
+        self._validate_phone_number(data.get("escalation_phone_number"), "escalation_phone_number")
+        self._validate_escalation_forwarding(bool(data.get("forward_escalations")), data.get("escalation_phone_number"))
         self._validate_json_field("twilio_details", data.get("twilio_details"))
         self._validate_json_field("deepgram_details", data.get("deepgram_details"))
         self._validate_json_field("open_table_details", data.get("open_table_details"))
@@ -182,6 +197,8 @@ class RestaurantService:
             "forward_minutes": data.get("forward_minutes", 0),
             "backward_minutes": data.get("backward_minutes", 0),
             "is_credit_card_required_for_reservation": data.get("is_credit_card_required_for_reservation", False),
+            "forward_escalations": data.get("forward_escalations", False),
+            "escalation_phone_number": data.get("escalation_phone_number"),
             "opening_time": opening_time,
             "closing_time": closing_time,
         }
@@ -239,6 +256,8 @@ class RestaurantService:
             self._validate_phone_number(data.get("twilio_phone_number"), "twilio_phone_number")
             if data.get("twilio_phone_number") != current.get("twilio_phone_number"):
                 self._ensure_unique_twilio_number(data.get("twilio_phone_number"), restaurant_id=int(restaurant_id))
+        if "escalation_phone_number" in data:
+            self._validate_phone_number(data.get("escalation_phone_number"), "escalation_phone_number")
         if "twilio_details" in data:
             self._validate_json_field("twilio_details", data.get("twilio_details"))
         if "deepgram_details" in data:
@@ -253,6 +272,10 @@ class RestaurantService:
             data["opening_time"] = self._normalize_time_field(data.get("opening_time"), "opening_time", allow_none=True)
         if "closing_time" in data:
             data["closing_time"] = self._normalize_time_field(data.get("closing_time"), "closing_time", allow_none=True)
+
+        forward_escalations = bool(data.get("forward_escalations", current.get("forward_escalations", False)))
+        escalation_phone_number = data.get("escalation_phone_number", current.get("escalation_phone_number"))
+        self._validate_escalation_forwarding(forward_escalations, escalation_phone_number)
 
         try:
             updated = self.restaurant_repo.update(int(restaurant_id), data)

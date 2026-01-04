@@ -18,6 +18,7 @@ from app.api import (
     client_analytics,
     client_calls,
     client_client_users,
+    client_escalations,
     client_faqs,
     client_menus,
     client_restaurant,
@@ -25,6 +26,7 @@ from app.api import (
     dashboard_orders,
     dashboard_reservations,
     dashboard_users,
+    escalations,
     faqs,
     menus,
     opentable,
@@ -35,6 +37,8 @@ from app.api import (
 )
 from app.api.websocket import twilio_websocket_handler
 from app.repositories.db_pool import close_db_pool, get_db_pool
+from app.services.escalation_service import EscalationService
+from app.services.restaurant_service import RestaurantService
 from app.services.sse_service import SSEService
 from app.utils.logging_config import get_logger, setup_logging
 
@@ -90,6 +94,10 @@ app = FastAPI(
         {
             "name": "Calls",
             "description": "Voice call management endpoints. Track call history, transcripts, and analytics for restaurant voice interactions.",
+        },
+        {
+            "name": "Escalations",
+            "description": "Escalation management endpoints for Admin and Client dashboards. Admins can access all restaurants; client endpoints are scoped to the authenticated restaurant.",
         },
         {
             "name": "Menus",
@@ -166,6 +174,8 @@ app.add_middleware(
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["Authentication"])
 app.include_router(calls.router)
 app.include_router(client_calls.router)
+app.include_router(escalations.router)
+app.include_router(client_escalations.router)
 app.include_router(menus.router)
 app.include_router(
     restaurants.router
@@ -273,6 +283,7 @@ async def voice(request: Request):
             stream_url = f"{stream_url}?{query}"
 
         stream_url = escape(stream_url)
+        redirect_url = f"https://{host}/redirect"
         # Escape user-controlled values before embedding into TwiML XML.
         from_number_xml = escape(from_number) if from_number is not None else ""
         to_number_xml = escape(to_number) if to_number is not None else ""
@@ -285,6 +296,7 @@ async def voice(request: Request):
                     <Parameter name="toNumber" value="{to_number_xml}"/>
                 </Stream>
             </Connect>
+            <Redirect method="POST">{redirect_url}</Redirect>
         </Response>
         """
         return Response(content=xml.strip(), media_type="application/xml")
@@ -293,6 +305,78 @@ async def voice(request: Request):
         error_xml = """
         <Response>
             <Say>We are experiencing technical difficulties. Please try again shortly.</Say>
+        </Response>
+        """
+        return Response(content=error_xml.strip(), media_type="application/xml", status_code=500)
+
+
+@app.post(
+    "/redirect",
+    summary="Twilio Call Redirection Endpoint",
+    description="Twilio webhook endpoint that, if required, redirects twilio calls for escalations using TwiML. "
+    "This endpoint is called by Twilio after the websocket stream from our /twilio endpoint has closed. ",
+    response_description="TwiML XML response instructing Twilio to either forward an escalated call or do nothing.",
+    tags=["Voice Agent"],
+    include_in_schema=True,
+)
+async def redirect(request: Request):
+    escalation_id = None
+    try:
+        form = await request.form()
+        call_sid = form.get("CallSid")
+        twilio_to = form.get("To")
+        twilio_from = form.get("From")
+
+        logger.info("Redirect webhook received call_sid=%s from=%s to=%s", call_sid, twilio_from, twilio_to)
+
+        if not call_sid or not twilio_to:
+            logger.warning("Redirect webhook missing CallSid or To; hanging up")
+            return Response(content="<Response><Hangup/></Response>", media_type="application/xml")
+
+        restaurant_service = RestaurantService()
+        escalation_service = EscalationService()
+        restaurant = restaurant_service.get_restaurant_by_twilio(twilio_to)
+        if not restaurant:
+            logger.warning("Redirect webhook no restaurant matched to=%s call_sid=%s", twilio_to, call_sid)
+            return Response(content="<Response><Hangup/></Response>", media_type="application/xml")
+
+        restaurant_id = str(restaurant.get("id"))
+        escalation = escalation_service.get_latest_by_call_sid_and_restaurant(call_sid, restaurant_id)
+        if not escalation:
+            logger.info("No escalation found for call_sid=%s restaurant_id=%s", call_sid, restaurant_id)
+            return Response(content="<Response><Hangup/></Response>", media_type="application/xml")
+        escalation_id = escalation.get("id")
+
+        forward_escalations = restaurant.get("forward_escalations")
+        escalation_phone = restaurant.get("escalation_phone_number")
+        if forward_escalations and escalation_phone:
+            logger.info(
+                "Call escalation requested and forwarding is enabled. Forwarding call to %s [call_sid: %s]",
+                escalation_phone,
+                call_sid,
+            )
+            escalation_service.mark_forwarded(escalation_id)
+            dial_number = escape(str(escalation_phone))
+            xml = f"""
+            <Response>
+                <Dial callerId="{twilio_to}" timeout="25">
+                    <Number>{dial_number}</Number>
+                </Dial>
+            </Response>
+            """
+            return Response(content=xml.strip(), media_type="application/xml")
+
+        return Response(content="<Response><Hangup/></Response>", media_type="application/xml")
+    except Exception as exc:
+        logger.exception("[ERROR] redirect endpoint failed: %s", exc)
+        if escalation_id:
+            try:
+                EscalationService().mark_failed(escalation_id)
+            except Exception as mark_exc:  # noqa: BLE001 - defensive
+                logger.warning("[ERROR] failed to mark escalation failed id=%s: %s", escalation_id, mark_exc)
+        error_xml = """
+        <Response>
+            <Hangup/>
         </Response>
         """
         return Response(content=error_xml.strip(), media_type="application/xml", status_code=500)

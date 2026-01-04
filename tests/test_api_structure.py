@@ -34,11 +34,13 @@ def test_api_routes_import():
             auth,
             calls,
             client_client_users,
+            client_escalations,
             client_faqs,
             client_menus,
             client_restaurant,
             client_users,
             dashboard_reservations,
+            escalations,
             faqs,
             menus,
             opentable,
@@ -52,12 +54,14 @@ def test_api_routes_import():
 
         assert auth is not None
         assert calls is not None
+        assert escalations is not None
         assert users is not None
         assert menus is not None
         assert restaurants is not None
         assert admin_users is not None
         assert client_users is not None
         assert client_client_users is not None
+        assert client_escalations is not None
         assert client_faqs is not None
         assert client_menus is not None
         assert client_restaurant is not None
@@ -94,10 +98,11 @@ def test_services_import():
 
 def test_models_import():
     """Test that models can be imported."""
-    from app.models import call_models, menu_models
+    from app.models import call_models, escalation_models, menu_models
 
     assert menu_models is not None
     assert call_models is not None
+    assert escalation_models is not None
 
 
 def test_utils_import():

@@ -28,6 +28,8 @@ class InMemoryRestaurantRepository:
             "forward_minutes": 0,
             "backward_minutes": 0,
             "is_credit_card_required_for_reservation": False,
+            "forward_escalations": False,
+            "escalation_phone_number": None,
             "opening_time": "09:00:00",
             "closing_time": "22:00:00",
             "created_at": None,
@@ -52,6 +54,8 @@ class InMemoryRestaurantRepository:
             "forward_minutes": data.get("forward_minutes", 0),
             "backward_minutes": data.get("backward_minutes", 0),
             "is_credit_card_required_for_reservation": data.get("is_credit_card_required_for_reservation", False),
+            "forward_escalations": data.get("forward_escalations", False),
+            "escalation_phone_number": data.get("escalation_phone_number"),
             "opening_time": data.get("opening_time", "09:00:00"),
             "closing_time": data.get("closing_time", "22:00:00"),
             "created_at": datetime.now(timezone.utc),
@@ -196,6 +200,22 @@ class InMemoryCallRepository:
             return
         call["call_transcript"] = json.dumps({"conversation": conversation})
 
+    def update_call_cost(self, call_id: int, duration_seconds: int, ressy_cost: float) -> None:
+        call = self._calls.get(int(call_id))
+        if call is None:
+            return
+        call["call_duration"] = duration_seconds
+        call["cost"] = ressy_cost
+        if call.get("call_status") != "escalated":
+            call["call_status"] = "completed"
+
+    def update_call_status(self, call_id: int, status: str) -> bool:
+        call = self._calls.get(int(call_id))
+        if not call:
+            return False
+        call["call_status"] = status
+        return True
+
     def delete_call(self, call_id: int) -> int:
         removed = self._calls.pop(int(call_id), None)
         return 1 if removed else 0
@@ -249,6 +269,78 @@ class InMemoryCallRepository:
         calls = [c for c in self._calls.values() if _normalize_id(c.get("restaurant_id")) == target_id]
         calls.sort(key=lambda c: c.get("started_at") or "", reverse=True)
         return [copy.deepcopy(c) for c in calls[:limit]]
+
+
+class InMemoryEscalationRepository:
+    """In-memory escalation repository for API/service tests."""
+
+    def __init__(self, escalations: Optional[List[Dict[str, Any]]] = None):
+        self._escalations: Dict[int, Dict[str, Any]] = {}
+        for escalation in escalations or []:
+            eid = int(escalation.get("id"))
+            self._escalations[eid] = copy.deepcopy(escalation)
+
+    def list_escalations(
+        self,
+        restaurant_id: Optional[str] = None,
+        status: Optional[str] = None,
+        urgency: Optional[str] = None,
+        reason: Optional[str] = None,
+        caller_phone: Optional[str] = None,
+        call_id: Optional[str] = None,
+        call_sid: Optional[str] = None,
+        date_from: Optional[str] = None,
+        date_to: Optional[str] = None,
+        page: int = 1,
+        limit: int = 20,
+        sort_by: str = "requested_at",
+        sort_order: str = "desc",
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        escalations = list(self._escalations.values())
+        if restaurant_id is not None:
+            escalations = [e for e in escalations if str(e.get("restaurant_id")) == str(restaurant_id)]
+        if status:
+            escalations = [e for e in escalations if e.get("status") == status]
+        if urgency:
+            escalations = [e for e in escalations if e.get("urgency") == urgency]
+        if reason:
+            escalations = [e for e in escalations if reason.lower() in str(e.get("reason", "")).lower()]
+        if caller_phone:
+            escalations = [e for e in escalations if caller_phone in str(e.get("caller_phone", ""))]
+        if call_id:
+            escalations = [e for e in escalations if str(e.get("call_id")) == str(call_id)]
+        if call_sid:
+            escalations = [e for e in escalations if e.get("twilio_call_sid") == call_sid]
+        if date_from:
+            escalations = [e for e in escalations if str(e.get("requested_at")) >= date_from]
+        if date_to:
+            escalations = [e for e in escalations if str(e.get("requested_at")) <= date_to]
+
+        allowed_sort_columns = {"requested_at", "created_at", "updated_at", "status"}
+        sort_key = sort_by if sort_by in allowed_sort_columns else "requested_at"
+        reverse = str(sort_order).lower() == "desc"
+        escalations.sort(key=lambda e: str(e.get(sort_key) or ""), reverse=reverse)
+
+        total = len(escalations)
+        start = (page - 1) * limit
+        end = start + limit
+        rows = [copy.deepcopy(e) for e in escalations[start:end]]
+        return rows, total
+
+    def get_by_id(self, escalation_id: int) -> Optional[Dict[str, Any]]:
+        escalation = self._escalations.get(int(escalation_id))
+        return copy.deepcopy(escalation) if escalation else None
+
+    def update_status(self, escalation_id: int, status: str, forwarded: bool = False) -> bool:
+        escalation = self._escalations.get(int(escalation_id))
+        if not escalation:
+            return False
+        escalation["status"] = status
+        escalation["updated_at"] = datetime.now(timezone.utc)
+        if forwarded:
+            escalation["forwarded_at"] = datetime.now(timezone.utc)
+        self._escalations[int(escalation_id)] = escalation
+        return True
 
 
 class InMemoryFAQRepository:
