@@ -2,9 +2,11 @@ import json
 import re
 from datetime import datetime, time, timedelta
 from typing import Any, Dict, Optional
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import HTTPException, status
 
+from app.config import settings
 from app.repositories.mysql_restaurant_repo import MySQLRestaurantRepository
 from app.services.admin_user_common import build_pagination
 
@@ -86,6 +88,19 @@ class RestaurantService:
                 status_code=status.HTTP_400_BAD_REQUEST, detail=f"{field_name} must be a non-negative integer"
             )
 
+    def _normalize_timezone(self, value: Optional[str], allow_none: bool = False) -> Optional[str]:
+        """Validate timezone strings and default when missing."""
+        if value is None:
+            return None if allow_none else settings.RESTAURANT_TIMEZONE
+        cleaned = str(value).strip()
+        if not cleaned:
+            return None if allow_none else settings.RESTAURANT_TIMEZONE
+        try:
+            ZoneInfo(cleaned)
+        except ZoneInfoNotFoundError:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid timezone")
+        return cleaned
+
     @staticmethod
     def _validate_escalation_forwarding(forward_escalations: bool, escalation_phone_number: Optional[str]) -> None:
         if forward_escalations and not escalation_phone_number:
@@ -105,6 +120,7 @@ class RestaurantService:
                 )
         restaurant["opening_time"] = self._format_time_field(restaurant.get("opening_time"), default="09:00:00")
         restaurant["closing_time"] = self._format_time_field(restaurant.get("closing_time"), default="22:00:00")
+        restaurant["timezone"] = self._normalize_timezone(restaurant.get("timezone"))
         if "forward_escalations" in restaurant:
             try:
                 restaurant["forward_escalations"] = bool(int(restaurant["forward_escalations"]))
@@ -183,6 +199,7 @@ class RestaurantService:
         self._validate_minutes(data.get("backward_minutes"), "backward_minutes")
         opening_time = self._normalize_time_field(data.get("opening_time"), "opening_time", default="09:00:00")
         closing_time = self._normalize_time_field(data.get("closing_time"), "closing_time", default="22:00:00")
+        timezone_value = self._normalize_timezone(data.get("timezone"))
         self._ensure_unique_name(name)
         self._ensure_unique_twilio_number(data.get("twilio_phone_number"))
 
@@ -201,6 +218,7 @@ class RestaurantService:
             "escalation_phone_number": data.get("escalation_phone_number"),
             "opening_time": opening_time,
             "closing_time": closing_time,
+            "timezone": timezone_value,
         }
 
         try:
@@ -272,6 +290,8 @@ class RestaurantService:
             data["opening_time"] = self._normalize_time_field(data.get("opening_time"), "opening_time", allow_none=True)
         if "closing_time" in data:
             data["closing_time"] = self._normalize_time_field(data.get("closing_time"), "closing_time", allow_none=True)
+        if "timezone" in data:
+            data["timezone"] = self._normalize_timezone(data.get("timezone"))
 
         forward_escalations = bool(data.get("forward_escalations", current.get("forward_escalations", False)))
         escalation_phone_number = data.get("escalation_phone_number", current.get("escalation_phone_number"))

@@ -211,7 +211,7 @@ including statistics for calls, reservations, orders, menu, FAQs, and recent act
                                 "type": "call",
                                 "description": "Call from +1234567890",
                                 "status": "completed",
-                                "timestamp": "2024-12-20T14:30:00",
+                                "timestamp": "2024-12-20T14:30:00Z",
                             }
                         ],
                         "todays_schedule": [
@@ -231,7 +231,7 @@ including statistics for calls, reservations, orders, menu, FAQs, and recent act
                                 "customer_name": "Jane Smith",
                                 "total": 45.99,
                                 "status": "pending",
-                                "timestamp": "2024-12-20T14:45:00",
+                                "timestamp": "2024-12-20T14:45:00Z",
                             }
                         ],
                     }

@@ -22,6 +22,7 @@ from app.repositories.mysql_user_restaurant_metadata_repo import (
 from app.services.activity_history_service import ActivityHistoryService
 from app.services.sse_service import OrderEventSubtype, SSEService
 from app.utils.restaurant_hours import format_operating_window, is_restaurant_open_now
+from app.utils.timezone import coerce_datetime
 
 logger = logging.getLogger(__name__)
 
@@ -517,16 +518,8 @@ def _is_within_update_window(created_at: Any) -> bool:
     update_window_seconds = settings.AGENT_UPDATE_WINDOW_SECONDS
 
     # Handle different formats of created_at
-    if isinstance(created_at, datetime):
-        # Make timezone-aware if naive
-        if created_at.tzinfo is None:
-            created_at = created_at.replace(tzinfo=timezone.utc)
-    elif isinstance(created_at, str):
-        try:
-            created_at = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
-        except ValueError:
-            return False
-    else:
+    created_at = coerce_datetime(created_at)
+    if created_at is None:
         return False
 
     elapsed_seconds = (now - created_at).total_seconds()

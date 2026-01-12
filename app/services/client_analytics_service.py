@@ -22,6 +22,7 @@ from app.repositories.mysql_menu_repo import MySQLMenuRepository
 from app.repositories.mysql_order_repo import MySQLOrderRepository
 from app.repositories.mysql_reservation_repo import MySQLReservationRepository
 from app.repositories.mysql_user_repo import MySQLUserRepository
+from app.utils.timezone import isoformat_z
 
 logger = logging.getLogger(__name__)
 
@@ -350,13 +351,18 @@ class ClientAnalyticsService:
         call_repo = self._get_call_repo()
         calls = call_repo.get_calls_by_restaurant(str(restaurant_id), limit=limit)
         for call in calls:
+            started_at = call.get("started_at")
+            if isinstance(started_at, datetime):
+                timestamp = isoformat_z(started_at)
+            else:
+                timestamp = str(started_at) if started_at else None
             activities.append(
                 {
                     "id": call.get("id"),
                     "type": "call",
                     "description": f"Call from {call.get('caller_phone') or 'Unknown'}",
                     "status": call.get("call_status"),
-                    "timestamp": (str(call.get("started_at")) if call.get("started_at") else None),
+                    "timestamp": timestamp,
                 }
             )
 
@@ -368,6 +374,11 @@ class ClientAnalyticsService:
             offset=0,
         )
         for res in reservations:
+            created_at = res.get("created_at")
+            if isinstance(created_at, datetime):
+                timestamp = isoformat_z(created_at)
+            else:
+                timestamp = str(created_at) if created_at else None
             party_size = res.get("party_size") or 0
             name = res.get("name") or "Guest"
             activities.append(
@@ -376,7 +387,7 @@ class ClientAnalyticsService:
                     "type": "reservation",
                     "description": f"Table for {party_size} - {name}",
                     "status": res.get("status"),
-                    "timestamp": (str(res.get("created_at")) if res.get("created_at") else None),
+                    "timestamp": timestamp,
                 }
             )
 
@@ -388,6 +399,11 @@ class ClientAnalyticsService:
             offset=0,
         )
         for order in orders:
+            created_at = order.get("created_at")
+            if isinstance(created_at, datetime):
+                timestamp = isoformat_z(created_at)
+            else:
+                timestamp = str(created_at) if created_at else None
             total = order.get("total_amount") or 0
             activities.append(
                 {
@@ -395,7 +411,7 @@ class ClientAnalyticsService:
                     "type": "order",
                     "description": f"Order ${total:.2f}",
                     "status": order.get("status"),
-                    "timestamp": (str(order.get("created_at")) if order.get("created_at") else None),
+                    "timestamp": timestamp,
                 }
             )
 
@@ -480,6 +496,11 @@ class ClientAnalyticsService:
 
         pending = []
         for order in orders:
+            created_at = order.get("created_at")
+            if isinstance(created_at, datetime):
+                timestamp = isoformat_z(created_at)
+            else:
+                timestamp = str(created_at) if created_at else None
             pending.append(
                 {
                     "id": order.get("id"),
@@ -487,7 +508,7 @@ class ClientAnalyticsService:
                     "customer_name": order.get("customer_name") or "Guest",
                     "total": float(order.get("total_amount") or 0),
                     "status": order.get("status"),
-                    "timestamp": (str(order.get("created_at")) if order.get("created_at") else None),
+                    "timestamp": timestamp,
                 }
             )
 

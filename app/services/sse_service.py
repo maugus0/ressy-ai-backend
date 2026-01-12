@@ -18,6 +18,8 @@ from typing import Any, AsyncGenerator, Dict, List, Optional, Set
 
 from pydantic import BaseModel, Field
 
+from app.utils.timezone import isoformat_z
+
 logger = logging.getLogger(__name__)
 
 
@@ -35,7 +37,7 @@ class SSEJSONEncoder(json.JSONEncoder):
 
     def default(self, obj: Any) -> Any:
         if isinstance(obj, datetime):
-            return obj.isoformat()
+            return isoformat_z(obj)
         if isinstance(obj, date):
             return obj.isoformat()
         if isinstance(obj, time):
@@ -87,7 +89,7 @@ class SSEEvent(BaseModel):
     event_type: SSEEventType
     subtype: Optional[str] = None
     restaurant_id: Optional[int] = None
-    timestamp: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"))
+    timestamp: str = Field(default_factory=lambda: isoformat_z(datetime.now(timezone.utc)))
     data: Dict[str, Any] = Field(default_factory=dict)
 
     def to_sse_format(self) -> str:

@@ -25,6 +25,7 @@ from app.utils.restaurant_hours import (
     is_datetime_within_operating_hours,
     resolve_restaurant_timezone,
 )
+from app.utils.timezone import coerce_datetime, isoformat_z, parse_datetime
 
 logger = logging.getLogger(__name__)
 
@@ -130,7 +131,7 @@ async def _run_service_call(func, *args, **kwargs):
 def _parse_datetime_str(value: str) -> datetime:
     """Parse ISO-ish datetime strings used by the agent."""
     try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+        return parse_datetime(value)
     except ValueError:
         naive = datetime.strptime(value, "%Y-%m-%d %H:%M")
         return naive.replace(tzinfo=timezone.utc)
@@ -138,14 +139,7 @@ def _parse_datetime_str(value: str) -> datetime:
 
 def _coerce_datetime(value: Any) -> Optional[datetime]:
     """Convert DB or payload datetime representations to datetime."""
-    if isinstance(value, datetime):
-        return value
-    if isinstance(value, str):
-        try:
-            return _parse_datetime_str(value)
-        except ValueError:
-            return None
-    return None
+    return coerce_datetime(value)
 
 
 def _generate_confirmation_number() -> str:
@@ -179,6 +173,7 @@ async def create_reservation(**kwargs) -> Dict[str, Any]:
         }
     try:
         reservation_datetime = _parse_datetime_str(args.datetime_iso)
+        reservation_iso = isoformat_z(reservation_datetime)
     except ValueError:
         return {
             "status": "FAILED",
@@ -268,7 +263,7 @@ async def create_reservation(**kwargs) -> Dict[str, Any]:
             "user_id": user_id,
             "confirmation_number": confirmation_number,
             "party_size": args.party_size,
-            "datetime": args.datetime_iso,
+            "datetime": reservation_iso,
             "customer_name": args.customer_name,
             "customer_contact": args.customer_contact,
             "occasion": args.occasion,
@@ -294,7 +289,7 @@ async def create_reservation(**kwargs) -> Dict[str, Any]:
                     reservation_data={
                         "status": "pending",
                         "party_size": args.party_size,
-                        "date_time": args.datetime_iso,
+                        "date_time": reservation_iso,
                         "name": args.customer_name,
                     },
                     user_id=reservation.get("user_id"),
@@ -319,7 +314,7 @@ async def create_reservation(**kwargs) -> Dict[str, Any]:
                     "reservation_id": reservation["reservation_id"],
                     "confirmation_number": reservation.get("confirmation_number"),
                     "status": "pending",
-                    "date_time": args.datetime_iso,
+                    "date_time": reservation_iso,
                     "party_size": args.party_size,
                     "name": args.customer_name,
                 },
@@ -389,16 +384,8 @@ def _is_within_update_window(created_at: Any) -> bool:
     update_window_seconds = settings.AGENT_UPDATE_WINDOW_SECONDS
 
     # Handle different formats of created_at
-    if isinstance(created_at, datetime):
-        # Make timezone-aware if naive
-        if created_at.tzinfo is None:
-            created_at = created_at.replace(tzinfo=timezone.utc)
-    elif isinstance(created_at, str):
-        try:
-            created_at = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
-        except ValueError:
-            return False
-    else:
+    created_at = coerce_datetime(created_at)
+    if created_at is None:
         return False
 
     elapsed_seconds = (now - created_at).total_seconds()
@@ -472,7 +459,11 @@ async def update_reservation(**kwargs) -> Dict[str, Any]:
         previous_data = {
             "status": reservation.get("status"),
             "party_size": reservation.get("party_size"),
-            "date_time": str(reservation.get("date_time")) if reservation.get("date_time") else None,
+            "date_time": (
+                isoformat_z(reservation.get("date_time"))
+                if isinstance(reservation.get("date_time"), datetime)
+                else reservation.get("date_time")
+            ),
             "special_request": reservation.get("special_request"),
             "notes": reservation.get("notes"),
             "name": reservation.get("name"),
@@ -548,7 +539,11 @@ async def update_reservation(**kwargs) -> Dict[str, Any]:
                 new_data = {
                     "status": updated.get("status"),
                     "party_size": updated.get("party_size"),
-                    "date_time": str(updated.get("date_time")) if updated.get("date_time") else None,
+                    "date_time": (
+                        isoformat_z(updated.get("date_time"))
+                        if isinstance(updated.get("date_time"), datetime)
+                        else updated.get("date_time")
+                    ),
                     "special_request": updated.get("special_request"),
                     "notes": updated.get("notes"),
                     "name": updated.get("name"),
@@ -592,7 +587,11 @@ async def update_reservation(**kwargs) -> Dict[str, Any]:
                 data={
                     "reservation_id": updated.get("id"),
                     "status": new_status,
-                    "date_time": updated.get("date_time"),
+                    "date_time": (
+                        isoformat_z(updated.get("date_time"))
+                        if isinstance(updated.get("date_time"), datetime)
+                        else updated.get("date_time")
+                    ),
                     "party_size": updated.get("party_size"),
                 },
             )
@@ -655,7 +654,7 @@ async def check_reservation_availability(**kwargs) -> Dict[str, Any]:
                 if current not in locked_times and is_datetime_within_operating_hours(restaurant, current):
                     available_slots.append(
                         {
-                            "datetime": current.isoformat(),
+                            "datetime": isoformat_z(current),
                             "party_size_available": True,
                         }
                     )

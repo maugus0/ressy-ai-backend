@@ -160,7 +160,7 @@ Each entry includes who made the change, when, and what was changed.
                                 "new_value": {"status": "preparing"},
                                 "change_summary": "Order #123 status changed: pending → preparing",
                                 "restaurant_id": 1,
-                                "created_at": "2025-12-14T10:30:00",
+                                "created_at": "2025-12-14T10:30:00Z",
                                 "performed_by_name": "John Staff",
                                 "performed_by_email": "john@restaurant.com",
                             }
@@ -251,7 +251,7 @@ Each entry includes who made the change, when, and what was changed.
                                 "new_value": {"status": "confirmed"},
                                 "change_summary": "Reservation #456 status changed: pending → confirmed",
                                 "restaurant_id": 1,
-                                "created_at": "2025-12-14T11:00:00",
+                                "created_at": "2025-12-14T11:00:00Z",
                                 "performed_by_name": "Jane Manager",
                                 "performed_by_email": "jane@restaurant.com",
                             }

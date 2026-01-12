@@ -3,7 +3,7 @@ In-House Reservation Service for handling table reservations.
 """
 
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
 
 from app.repositories.mysql_reservation_repo import MySQLReservationRepository
@@ -13,6 +13,7 @@ from app.repositories.mysql_user_restaurant_metadata_repo import (
     MySQLUserRestaurantMetadataRepository,
 )
 from app.utils.logging_config import get_logger
+from app.utils.timezone import isoformat_z, parse_datetime
 
 
 class ReservationService:
@@ -90,7 +91,7 @@ class ReservationService:
 
         # Parse start date time
         try:
-            start_dt = datetime.fromisoformat(start_date_time.replace("Z", "+00:00"))
+            start_dt = parse_datetime(start_date_time)
             # Remove timezone info for local time calculations
             if start_dt.tzinfo:
                 start_dt = start_dt.replace(tzinfo=None)
@@ -158,7 +159,7 @@ class ReservationService:
                 # Check if slot is locked
                 slot_dt_normalized = current_slot.replace(second=0, microsecond=0)
                 if slot_dt_normalized not in locked_datetimes:
-                    slots.append({"date_time": current_slot.isoformat(), "available": True})
+                    slots.append({"date_time": isoformat_z(current_slot), "available": True})
 
                 # Move to next slot (15 minutes later)
                 current_slot += timedelta(minutes=self.SLOT_INTERVAL_MINUTES)
@@ -224,7 +225,7 @@ class ReservationService:
 
         # Parse date time
         try:
-            slot_dt = datetime.fromisoformat(date_time.replace("Z", "+00:00"))
+            slot_dt = parse_datetime(date_time)
             # Remove timezone info for local time calculations
             if slot_dt.tzinfo:
                 slot_dt = slot_dt.replace(tzinfo=None)
@@ -252,7 +253,7 @@ class ReservationService:
             raise ValueError("Slot is already locked/reserved")
 
         reservation_token = str(uuid.uuid4())
-        expires_at = datetime.now() + timedelta(minutes=self.SLOT_EXPIRY_MINUTES)
+        expires_at = datetime.now(timezone.utc) + timedelta(minutes=self.SLOT_EXPIRY_MINUTES)
 
         # Create new slot with locked status
         slot_id = self.reservation_repo.create_slot_booking(
@@ -267,9 +268,9 @@ class ReservationService:
 
         return {
             "reservation_token": reservation_token,
-            "date_time": date_time,
+            "date_time": isoformat_z(slot_dt),
             "party_size": party_size,
-            "expires_at": expires_at.isoformat(),
+            "expires_at": isoformat_z(expires_at),
             "slot_id": slot_id,
         }
 
@@ -356,7 +357,7 @@ class ReservationService:
             "confirmation_number": confirmation_number,
             "status": "pending",
             "date_time": (
-                slot["date_time"].isoformat() if isinstance(slot["date_time"], datetime) else slot["date_time"]
+                isoformat_z(slot["date_time"]) if isinstance(slot["date_time"], datetime) else slot["date_time"]
             ),
             "message": "Reservation created successfully. Awaiting confirmation from restaurant.",
         }
@@ -448,13 +449,13 @@ class ReservationService:
 
         if start_date:
             try:
-                start_dt = datetime.fromisoformat(start_date.replace("Z", "+00:00"))
+                start_dt = parse_datetime(start_date).replace(tzinfo=None)
             except ValueError:
                 raise ValueError(f"Invalid start_date format: {start_date}")
 
         if end_date:
             try:
-                end_dt = datetime.fromisoformat(end_date.replace("Z", "+00:00"))
+                end_dt = parse_datetime(end_date).replace(tzinfo=None)
             except ValueError:
                 raise ValueError(f"Invalid end_date format: {end_date}")
 
@@ -539,7 +540,7 @@ class ReservationService:
 
         # Parse date time
         try:
-            slot_dt = datetime.fromisoformat(date_time.replace("Z", "+00:00"))
+            slot_dt = parse_datetime(date_time)
             # Remove timezone info for local time calculations
             if slot_dt.tzinfo:
                 slot_dt = slot_dt.replace(tzinfo=None)
@@ -597,7 +598,7 @@ class ReservationService:
             "slot_id": result["slot_id"],
             "confirmation_number": confirmation_number,
             "status": "confirmed",
-            "date_time": slot_dt.isoformat(),
+            "date_time": isoformat_z(slot_dt),
             "party_size": party_size,
             "name": name,
             "phone_number": phone_number,
@@ -681,7 +682,7 @@ class ReservationService:
         # Parse and update date_time (slot timing) if provided
         if date_time is not None:
             try:
-                new_date_time = datetime.fromisoformat(date_time.replace("Z", "+00:00"))
+                new_date_time = parse_datetime(date_time)
                 if new_date_time.tzinfo:
                     new_date_time = new_date_time.replace(tzinfo=None)
                 # Normalize to minute precision
@@ -702,7 +703,7 @@ class ReservationService:
         last_cancel_time_dt = None
         if last_cancel_time is not None:
             try:
-                last_cancel_time_dt = datetime.fromisoformat(last_cancel_time.replace("Z", "+00:00"))
+                last_cancel_time_dt = parse_datetime(last_cancel_time)
                 if last_cancel_time_dt.tzinfo:
                     last_cancel_time_dt = last_cancel_time_dt.replace(tzinfo=None)
             except ValueError:

@@ -43,6 +43,7 @@ class CreateRestaurantRequest(BaseModel):
     closing_time: str | None = Field(
         None, pattern=r"^\d{2}:\d{2}:\d{2}$", description="Closing time in HH:MM:SS (24h) format"
     )
+    timezone: str | None = Field(None, description="Restaurant timezone (IANA name, e.g. America/Vancouver)")
     model_config = ConfigDict(extra="ignore")
 
     @field_validator("name")
@@ -53,7 +54,9 @@ class CreateRestaurantRequest(BaseModel):
             raise ValueError("name is required")
         return cleaned
 
-    @field_validator("address", "phone_number", "twilio_phone_number", "escalation_phone_number", mode="before")
+    @field_validator(
+        "address", "phone_number", "twilio_phone_number", "escalation_phone_number", "timezone", mode="before"
+    )
     @classmethod
     def trim_strings(cls, value: Any) -> Any:  # noqa: ANN401 - pydantic hook allows Any
         if isinstance(value, str):
@@ -86,6 +89,7 @@ class UpdateRestaurantRequest(BaseModel):
     closing_time: str | None = Field(
         None, pattern=r"^\d{2}:\d{2}:\d{2}$", description="Closing time in HH:MM:SS (24h) format"
     )
+    timezone: str | None = Field(None, description="Restaurant timezone (IANA name, e.g. America/Vancouver)")
     model_config = ConfigDict(extra="ignore")
 
     @field_validator("name")
@@ -98,7 +102,9 @@ class UpdateRestaurantRequest(BaseModel):
             raise ValueError("name cannot be empty")
         return cleaned
 
-    @field_validator("address", "phone_number", "twilio_phone_number", "escalation_phone_number", mode="before")
+    @field_validator(
+        "address", "phone_number", "twilio_phone_number", "escalation_phone_number", "timezone", mode="before"
+    )
     @classmethod
     def trim_optional_strings(cls, value: Any) -> Any:  # noqa: ANN401 - pydantic hook allows Any
         if isinstance(value, str):
@@ -124,6 +130,7 @@ class RestaurantResponse(BaseModel):
     is_credit_card_required_for_reservation: bool | None = None
     opening_time: str | None = None
     closing_time: str | None = None
+    timezone: str | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
     model_config = ConfigDict(extra="ignore")
@@ -197,6 +204,7 @@ router = APIRouter(
                         "open_table_details": {"rid": "99999"},
                         "opening_time": "09:00:00",
                         "closing_time": "22:00:00",
+                        "timezone": "America/Vancouver",
                     },
                 }
             },
@@ -253,6 +261,7 @@ async def create_restaurant(
                                     "open_table_details": {"rid": "99999"},
                                     "opening_time": "09:00:00",
                                     "closing_time": "22:00:00",
+                                    "timezone": "America/Vancouver",
                                     "created_at": "2024-02-01T10:00:00Z",
                                     "updated_at": "2024-02-02T10:00:00Z",
                                 }
@@ -318,6 +327,7 @@ async def list_restaurants(
                             "open_table_details": {"rid": "99999"},
                             "opening_time": "09:00:00",
                             "closing_time": "22:00:00",
+                            "timezone": "America/Vancouver",
                             "created_at": "2024-02-01T10:00:00Z",
                             "updated_at": "2024-02-02T10:00:00Z",
                         }
@@ -361,6 +371,7 @@ async def get_restaurant(
                         "open_table_details": {"rid": "12345", "api_key": "secret"},
                         "opening_time": "10:00:00",
                         "closing_time": "23:00:00",
+                        "timezone": "America/Vancouver",
                     },
                 }
             },

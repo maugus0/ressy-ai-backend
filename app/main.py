@@ -40,11 +40,14 @@ from app.repositories.db_pool import close_db_pool, get_db_pool
 from app.services.escalation_service import EscalationService
 from app.services.restaurant_service import RestaurantService
 from app.services.sse_service import SSEService
+from app.utils.encoding import install_utc_jsonable_encoder
 from app.utils.logging_config import get_logger, setup_logging
+from app.utils.utc_json_response import UTCJSONResponse
 
 load_dotenv()
 setup_logging()
 logger = get_logger(__name__)
+install_utc_jsonable_encoder()
 
 
 @asynccontextmanager
@@ -80,6 +83,7 @@ app = FastAPI(
     version="1.0.0",
     description="FastAPI backend for a multitenant, function-calling voice agent. Manages restaurants, menus, orders, reservations, calls, and user authentication.",
     lifespan=lifespan,
+    default_response_class=UTCJSONResponse,
     swagger_ui_parameters={
         "persistAuthorization": True,  # Keep auth token across page refreshes
         "displayRequestDuration": True,  # Show request duration

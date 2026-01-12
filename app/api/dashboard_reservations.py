@@ -80,7 +80,7 @@ class CreateReservationDirectRequest(BaseModel):
     date_time: str = Field(
         ...,
         description="Reservation date and time in ISO format",
-        json_schema_extra={"example": "2025-12-20T19:00:00"},
+        json_schema_extra={"example": "2025-12-20T19:00:00Z"},
     )
     party_size: int = Field(..., gt=0, le=20, description="Number of guests", json_schema_extra={"example": 4})
     name: str = Field(
@@ -127,7 +127,7 @@ class UpdateReservationRequest(BaseModel):
     date_time: Optional[str] = Field(
         None,
         description="Reservation date and time in ISO format (updates slot_bookings.date_time)",
-        json_schema_extra={"example": "2025-12-20T19:30:00"},
+        json_schema_extra={"example": "2025-12-20T19:30:00Z"},
     )
 
     # Reservation fields (from reservations table)
@@ -160,7 +160,7 @@ class UpdateReservationRequest(BaseModel):
     last_cancel_time: Optional[str] = Field(
         None,
         description="Last time reservation can be cancelled (ISO format)",
-        json_schema_extra={"example": "2025-12-20T17:00:00"},
+        json_schema_extra={"example": "2025-12-20T17:00:00Z"},
     )
     manage_reservation_url: Optional[str] = Field(
         None,
@@ -301,7 +301,7 @@ making it ideal for walk-in customers or phone reservations managed by staff.
                         "slot_id": 456,
                         "confirmation_number": "INH-1-A1B2C3D4",
                         "status": "confirmed",
-                        "date_time": "2025-12-20T19:00:00",
+                        "date_time": "2025-12-20T19:00:00Z",
                         "party_size": 4,
                         "name": "John Smith",
                         "phone_number": "+1234567890",
@@ -473,14 +473,14 @@ Retrieve all reservations for a specific restaurant with optional filters.
                                 "reservation_type": "in-house",
                                 "confirmation_number": "INH-1-A1B2C3D4",
                                 "status": "confirmed",
-                                "date_time": "2025-12-20T19:00:00",
+                                "date_time": "2025-12-20T19:00:00Z",
                                 "party_size": 4,
                                 "name": "John Smith",
                                 "phone_number": "+1234567890",
                                 "email": "john@example.com",
                                 "special_request": "Window seat preferred",
                                 "notes": "VIP customer",
-                                "created_at": "2025-12-13T10:00:00",
+                                "created_at": "2025-12-13T10:00:00Z",
                             }
                         ],
                         "total": 1,
@@ -501,12 +501,12 @@ async def get_restaurant_reservations(
     start_date: Optional[str] = Query(
         None,
         description="Filter by start date (ISO format)",
-        json_schema_extra={"example": "2025-12-01T00:00:00"},
+        json_schema_extra={"example": "2025-12-01T00:00:00Z"},
     ),
     end_date: Optional[str] = Query(
         None,
         description="Filter by end date (ISO format)",
-        json_schema_extra={"example": "2025-12-31T23:59:59"},
+        json_schema_extra={"example": "2025-12-31T23:59:59Z"},
     ),
     limit: int = Query(100, ge=1, le=1000, description="Limit results"),
     offset: int = Query(0, ge=0, description="Offset for pagination"),
@@ -562,7 +562,7 @@ previous and new values, and a human-readable summary.
                         "user_id": 789,
                         "confirmation_number": "INH-1-A1B2C3D4",
                         "status": "confirmed",
-                        "date_time": "2025-12-20T19:00:00",
+                        "date_time": "2025-12-20T19:00:00Z",
                         "party_size": 4,
                         "restaurant_id": 1,
                         "name": "John Smith",
@@ -570,8 +570,8 @@ previous and new values, and a human-readable summary.
                         "email": "john@example.com",
                         "special_request": "Window seat preferred",
                         "notes": "VIP customer, birthday celebration",
-                        "created_at": "2025-12-13T10:00:00",
-                        "updated_at": "2025-12-13T10:00:00",
+                        "created_at": "2025-12-13T10:00:00Z",
+                        "updated_at": "2025-12-13T10:00:00Z",
                         "history": [
                             {
                                 "id": 1,
@@ -579,7 +579,7 @@ previous and new values, and a human-readable summary.
                                 "previous_value": {"status": "pending"},
                                 "new_value": {"status": "confirmed"},
                                 "change_summary": "Reservation #123 status changed: pending → confirmed",
-                                "created_at": "2025-12-13T10:05:00",
+                                "created_at": "2025-12-13T10:05:00Z",
                             },
                             {
                                 "id": 2,
@@ -587,7 +587,7 @@ previous and new values, and a human-readable summary.
                                 "previous_value": None,
                                 "new_value": {"status": "pending", "party_size": 4},
                                 "change_summary": "Reservation #123 created for 4 guests",
-                                "created_at": "2025-12-13T10:00:00",
+                                "created_at": "2025-12-13T10:00:00Z",
                             },
                         ],
                     }
@@ -672,7 +672,7 @@ Update reservation details including slot timing.
                         "user_id": 789,
                         "confirmation_number": "INH-1-A1B2C3D4",
                         "status": "confirmed",
-                        "date_time": "2025-12-20T19:30:00",
+                        "date_time": "2025-12-20T19:30:00Z",
                         "party_size": 6,
                         "restaurant_id": 1,
                         "name": "John Smith",
@@ -680,10 +680,10 @@ Update reservation details including slot timing.
                         "email": "john@example.com",
                         "special_request": "Allergic to nuts",
                         "notes": "VIP customer, birthday celebration",
-                        "last_cancel_time": "2025-12-20T17:00:00",
+                        "last_cancel_time": "2025-12-20T17:00:00Z",
                         "manage_reservation_url": None,
-                        "created_at": "2025-12-13T10:00:00",
-                        "updated_at": "2025-12-13T12:00:00",
+                        "created_at": "2025-12-13T10:00:00Z",
+                        "updated_at": "2025-12-13T12:00:00Z",
                     }
                 }
             },

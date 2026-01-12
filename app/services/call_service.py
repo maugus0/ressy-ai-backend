@@ -1,4 +1,5 @@
 import json
+from datetime import datetime
 from typing import List, Optional
 
 from app.config import settings
@@ -14,6 +15,7 @@ from app.models.call_models import (
     TranscriptResponse,
 )
 from app.repositories.mysql_call_repo import MySQLCallRepository
+from app.utils.timezone import isoformat_z
 
 
 class CallService:
@@ -121,12 +123,22 @@ class CallService:
 
         normalized: List[CallResponse] = []
         for c in raw_calls:
+            started_at = c.get("started_at")
+            ended_at = c.get("ended_at")
+            if isinstance(started_at, datetime):
+                started_at_str = isoformat_z(started_at)
+            else:
+                started_at_str = str(started_at or "")
+            if isinstance(ended_at, datetime):
+                ended_at_str = isoformat_z(ended_at)
+            else:
+                ended_at_str = ended_at or None
             normalized.append(
                 CallResponse(
                     call_id=str(c.get("id") or c.get("call_id") or ""),
                     user_id=str(c.get("user_id", "")),
-                    start_time=str(c.get("started_at", "")),
-                    end_time=c.get("ended_at") or None,
+                    start_time=started_at_str,
+                    end_time=ended_at_str,
                     duration_seconds=int(c.get("call_duration", 0)),
                     cost=float(c.get("cost", 0)),
                     status=c.get("call_status", "unknown"),
@@ -228,7 +240,10 @@ class CallService:
         items: List[CallListItem] = []
         for row in rows:
             started_at = row.get("started_at")
-            started_at_str = str(started_at) if started_at is not None else None
+            if isinstance(started_at, datetime):
+                started_at_str = isoformat_z(started_at)
+            else:
+                started_at_str = str(started_at) if started_at is not None else None
             items.append(
                 CallListItem(
                     call_id=str(row.get("id")),
@@ -286,6 +301,15 @@ class CallService:
         # and costs are always calculated from current settings, not stored values
         costs = self.calculate_call_costs(duration_seconds)
 
+        if isinstance(started_at, datetime):
+            started_at_str = isoformat_z(started_at)
+        else:
+            started_at_str = str(started_at) if started_at is not None else None
+        if isinstance(ended_at, datetime):
+            ended_at_str = isoformat_z(ended_at)
+        else:
+            ended_at_str = str(ended_at) if ended_at else None
+
         return (
             CallDetailResponse(
                 call_id=str(call_row.get("id")),
@@ -293,8 +317,8 @@ class CallService:
                 restaurant_name=call_row.get("restaurant_name"),
                 caller_phone=call_row.get("caller_phone"),
                 status=call_row.get("call_status", "unknown"),
-                started_at=str(started_at) if started_at is not None else None,
-                ended_at=str(ended_at) if ended_at else None,
+                started_at=started_at_str,
+                ended_at=ended_at_str,
                 duration_seconds=duration_seconds,
                 cost=costs["ressy_cost"],  # Return calculated ressy_cost, not stored cost
                 call_direction=call_row.get("call_direction"),
@@ -353,6 +377,14 @@ class CallService:
 
         started_at = call_row.get("started_at")
         ended_at = call_row.get("ended_at")
+        if isinstance(started_at, datetime):
+            started_at_str = isoformat_z(started_at)
+        else:
+            started_at_str = str(started_at) if started_at is not None else None
+        if isinstance(ended_at, datetime):
+            ended_at_str = isoformat_z(ended_at)
+        else:
+            ended_at_str = str(ended_at) if ended_at else None
 
         return AdminCallDetailResponse(
             call_id=str(call_row.get("id")),
@@ -360,8 +392,8 @@ class CallService:
             restaurant_name=call_row.get("restaurant_name"),
             caller_phone=call_row.get("caller_phone"),
             status=call_row.get("call_status", "unknown"),
-            started_at=str(started_at) if started_at is not None else None,
-            ended_at=str(ended_at) if ended_at else None,
+            started_at=started_at_str,
+            ended_at=ended_at_str,
             duration_seconds=duration_seconds,
             twilio_cost=costs["twilio_cost"],
             deepgram_cost=costs["deepgram_cost"],
