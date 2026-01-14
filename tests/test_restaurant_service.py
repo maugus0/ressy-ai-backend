@@ -1,6 +1,7 @@
 import pytest
 from fastapi import HTTPException
 
+from app.config import settings
 from app.services.restaurant_service import RestaurantService
 from tests.fake_repos import InMemoryRestaurantRepository
 
@@ -70,3 +71,20 @@ def test_update_duplicate_twilio_rejected():
     second_id = service.create_restaurant({"name": "Second", "twilio_phone_number": "+2000"})["id"]
     with pytest.raises(HTTPException):
         service.update_restaurant(second_id, {"twilio_phone_number": "+1000"})
+
+
+def test_normalize_timezone_defaults_to_setting():
+    service, _ = _build_service()
+    assert service._normalize_timezone(None) == settings.RESTAURANT_TIMEZONE
+    assert service._normalize_timezone("   ") == settings.RESTAURANT_TIMEZONE
+
+
+def test_normalize_timezone_accepts_valid():
+    service, _ = _build_service()
+    assert service._normalize_timezone("UTC") == "UTC"
+
+
+def test_normalize_timezone_rejects_invalid():
+    service, _ = _build_service()
+    with pytest.raises(HTTPException):
+        service._normalize_timezone("Not/A_Timezone")

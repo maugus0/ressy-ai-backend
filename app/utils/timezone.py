@@ -10,7 +10,7 @@ UTC = timezone.utc
 
 
 def ensure_utc(value: datetime) -> datetime:
-    """Coerce datetimes to UTC, assuming naive values are already UTC."""
+    """Coerce datetimes to UTC; naive values are assumed to already be UTC."""
     if value.tzinfo is None:
         return value.replace(tzinfo=UTC)
     return value.astimezone(UTC)
