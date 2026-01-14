@@ -31,6 +31,7 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
                     escalation_phone_number,
                     opening_time,
                     closing_time,
+                    timezone,
                     created_at,
                     updated_at
                 FROM Restaurants
@@ -48,6 +49,8 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
                     result["forward_escalations"] = False
                 if "escalation_phone_number" not in result:
                     result["escalation_phone_number"] = None
+                if "timezone" not in result:
+                    result["timezone"] = None
                 return result
             return None
         except Exception:
@@ -77,6 +80,7 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
                 result["closing_time"] = "22:00:00"
                 result["forward_escalations"] = False
                 result["escalation_phone_number"] = None
+                result["timezone"] = None
                 return result
             return None
 
@@ -104,6 +108,7 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
                     escalation_phone_number,
                     opening_time,
                     closing_time,
+                    timezone,
                     created_at,
                     updated_at
                 FROM Restaurants
@@ -122,6 +127,8 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
                     result["forward_escalations"] = False
                 if "escalation_phone_number" not in result:
                     result["escalation_phone_number"] = None
+                if "timezone" not in result:
+                    result["timezone"] = None
                 return result
             return None
         except Exception:
@@ -152,6 +159,7 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
                 result["closing_time"] = "22:00:00"
                 result["forward_escalations"] = False
                 result["escalation_phone_number"] = None
+                result["timezone"] = None
                 return result
             return None
 
@@ -178,6 +186,7 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
                     escalation_phone_number,
                     opening_time,
                     closing_time,
+                    timezone,
                     created_at,
                     updated_at
                 FROM Restaurants
@@ -196,6 +205,8 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
                     result["forward_escalations"] = False
                 if "escalation_phone_number" not in result:
                     result["escalation_phone_number"] = None
+                if "timezone" not in result:
+                    result["timezone"] = None
                 return result
             return None
         except Exception:
@@ -226,6 +237,7 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
                 result["closing_time"] = "22:00:00"
                 result["forward_escalations"] = False
                 result["escalation_phone_number"] = None
+                result["timezone"] = None
                 return result
             return None
 
@@ -240,9 +252,9 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
                 twilio_details, deepgram_details, open_table_details,
                 forward_minutes, backward_minutes, is_credit_card_required_for_reservation,
                 forward_escalations, escalation_phone_number,
-                opening_time, closing_time,
+                opening_time, closing_time, timezone,
                 created_at, updated_at
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
         """
         restaurant_id = self._execute_insert(
             query,
@@ -261,6 +273,7 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
                 data.get("escalation_phone_number"),
                 data.get("opening_time"),
                 data.get("closing_time"),
+                data.get("timezone"),
             ),
         )
         return restaurant_id
@@ -315,6 +328,7 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
                 escalation_phone_number,
                 opening_time,
                 closing_time,
+                timezone,
                 created_at,
                 updated_at
             FROM Restaurants
@@ -399,6 +413,9 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
         if "closing_time" in data:
             update_fields.append("closing_time = %s")
             params.append(data["closing_time"])
+        if "timezone" in data:
+            update_fields.append("timezone = %s")
+            params.append(data["timezone"])
 
         if not update_fields:
             return False

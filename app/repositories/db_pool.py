@@ -80,6 +80,7 @@ class DatabasePool:
             "port": int(os.getenv("DB_PORT", os.getenv("MYSQL_PORT", 3306))),
             "connection_timeout": int(os.getenv("DB_CONNECTION_TIMEOUT", 20)),
             "autocommit": False,
+            "init_command": "SET time_zone = '+00:00'",
         }
 
     def _create_pool(self) -> None:

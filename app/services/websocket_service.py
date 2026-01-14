@@ -29,6 +29,7 @@ from app.services.restaurant_service import RestaurantService
 from app.utils import prompt_loader
 from app.utils.logging_config import get_logger
 from app.utils.restaurant_hours import is_restaurant_open_now, resolve_restaurant_timezone
+from app.utils.timezone import isoformat_z
 
 
 @dataclass
@@ -257,7 +258,7 @@ class WebSocketService:
                 "restaurant_phone": restaurant_phone_fwd,
             },
             "current_time": {
-                "utc_iso": now_utc.isoformat(),
+                "utc_iso": isoformat_z(now_utc),
                 "local_iso": now_local.isoformat(),
                 "local_date": now_local.date().isoformat(),
                 "timezone": timezone_label,
@@ -894,7 +895,7 @@ class WebSocketService:
         entry = {
             "role": role,
             "content": text,
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": isoformat_z(datetime.now(timezone.utc)),
             "sequence": state.message_seq,
         }
         state.conversation_history.append(entry)

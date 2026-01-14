@@ -24,7 +24,7 @@ class TestSSEJSONEncoder:
         dt = datetime(2025, 12, 20, 15, 30, 45, 123456, tzinfo=timezone.utc)
         result = json.dumps({"timestamp": dt}, cls=SSEJSONEncoder)
         data = json.loads(result)
-        assert data["timestamp"] == "2025-12-20T15:30:45.123456+00:00"
+        assert data["timestamp"] == "2025-12-20T15:30:45.123456Z"
         assert isinstance(data["timestamp"], str)
 
     def test_date_serialization(self):
@@ -94,7 +94,7 @@ class TestSSEJSONEncoder:
         result = json.dumps(obj, cls=SSEJSONEncoder)
         data = json.loads(result)
 
-        assert data["timestamp"] == "2025-12-20T15:30:45+00:00"
+        assert data["timestamp"] == "2025-12-20T15:30:45Z"
         assert data["date"] == "2025-12-20"
         assert data["time"] == "15:30:45"
         assert data["price"] == 99.99
@@ -120,9 +120,9 @@ class TestSSEJSONEncoder:
         result = json.dumps(obj, cls=SSEJSONEncoder)
         data = json.loads(result)
 
-        assert data["order"]["created_at"] == "2025-12-20T15:30:45+00:00"
-        assert data["order"]["items"][0]["timestamp"] == "2025-12-20T15:30:45+00:00"
-        assert data["order"]["items"][1]["timestamp"] == "2025-12-20T15:30:45+00:00"
+        assert data["order"]["created_at"] == "2025-12-20T15:30:45Z"
+        assert data["order"]["items"][0]["timestamp"] == "2025-12-20T15:30:45Z"
+        assert data["order"]["items"][1]["timestamp"] == "2025-12-20T15:30:45Z"
 
     def test_regular_json_types_unchanged(self):
         """Test that regular JSON-serializable types work as expected."""
@@ -178,7 +178,7 @@ class TestSSEEventSerialization:
         data_line = [line for line in lines if line.startswith("data: ")][0]
         json_data = json.loads(data_line[6:])  # Remove "data: " prefix
 
-        assert json_data["data"]["date_time"] == "2025-12-20T15:30:45+00:00"
+        assert json_data["data"]["date_time"] == "2025-12-20T15:30:45Z"
         assert isinstance(json_data["data"]["date_time"], str)
 
     def test_sse_event_with_mixed_types_in_data(self):
@@ -209,7 +209,7 @@ class TestSSEEventSerialization:
         data_line = [line for line in lines if line.startswith("data: ")][0]
         json_data = json.loads(data_line[6:])
 
-        assert json_data["data"]["created_at"] == "2025-12-20T15:30:45+00:00"
+        assert json_data["data"]["created_at"] == "2025-12-20T15:30:45Z"
         assert json_data["data"]["date"] == "2025-12-20"
         assert json_data["data"]["total_amount"] == 99.99
         assert json_data["data"]["status"] == "active"

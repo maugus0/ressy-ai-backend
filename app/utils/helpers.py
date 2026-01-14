@@ -1,5 +1,7 @@
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
+
+from app.utils.timezone import isoformat_z
 
 
 def generate_id():
@@ -7,4 +9,4 @@ def generate_id():
 
 
 def get_current_time():
-    return datetime.utcnow().isoformat()
+    return isoformat_z(datetime.now(timezone.utc))

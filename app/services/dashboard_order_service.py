@@ -14,6 +14,7 @@ from app.repositories.mysql_user_restaurant_metadata_repo import (
     MySQLUserRestaurantMetadataRepository,
 )
 from app.utils.logging_config import get_logger
+from app.utils.timezone import isoformat_z, parse_datetime
 
 logger = get_logger(__name__)
 
@@ -46,7 +47,7 @@ def _transform_order(order: Dict[str, Any]) -> Dict[str, Any]:
     # Convert datetime objects to ISO strings
     for field in ["created_at", "updated_at", "deleted_at"]:
         if isinstance(result.get(field), datetime):
-            result[field] = result[field].isoformat()
+            result[field] = isoformat_z(result[field])
 
     return result
 
@@ -282,17 +283,13 @@ class DashboardOrderService:
 
         if start_date:
             try:
-                start_dt = datetime.fromisoformat(start_date.replace("Z", "+00:00"))
-                if start_dt.tzinfo:
-                    start_dt = start_dt.replace(tzinfo=None)
+                start_dt = parse_datetime(start_date).replace(tzinfo=None)
             except ValueError:
                 raise ValueError(f"Invalid start_date format: {start_date}")
 
         if end_date:
             try:
-                end_dt = datetime.fromisoformat(end_date.replace("Z", "+00:00"))
-                if end_dt.tzinfo:
-                    end_dt = end_dt.replace(tzinfo=None)
+                end_dt = parse_datetime(end_date).replace(tzinfo=None)
             except ValueError:
                 raise ValueError(f"Invalid end_date format: {end_date}")
 

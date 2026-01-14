@@ -32,6 +32,7 @@ class ClientRestaurantResponse(BaseModel):
     is_credit_card_required_for_reservation: bool | None = None
     opening_time: str | None = None
     closing_time: str | None = None
+    timezone: str | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
     model_config = ConfigDict(extra="ignore")
@@ -110,6 +111,7 @@ router = APIRouter(
                             "is_credit_card_required_for_reservation": False,
                             "opening_time": "09:00:00",
                             "closing_time": "22:00:00",
+                            "timezone": "America/Vancouver",
                             "created_at": "2024-02-01T10:00:00Z",
                             "updated_at": "2024-02-02T10:00:00Z",
                         }
@@ -168,6 +170,7 @@ async def get_restaurant(
                             "is_credit_card_required_for_reservation": False,
                             "opening_time": "09:00:00",
                             "closing_time": "22:00:00",
+                            "timezone": "America/Vancouver",
                             "created_at": "2024-02-01T10:00:00Z",
                             "updated_at": "2024-02-02T10:00:00Z",
                         }

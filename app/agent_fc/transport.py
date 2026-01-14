@@ -7,6 +7,8 @@ import inspect
 import json
 from typing import Any, Awaitable, Callable, Optional
 
+from app.utils.timezone import json_default
+
 MessageCallback = Callable[[dict[str, Any]], Awaitable[None]]
 SendCallable = Callable[[str], Any]
 
@@ -21,7 +23,7 @@ class Transport:
     def send(self, payload: dict[str, Any]) -> None:
         """Serialize and send the payload over the existing socket."""
 
-        message = json.dumps(payload)
+        message = json.dumps(payload, default=json_default)
         result = self._send_callable(message)
         if inspect.isawaitable(result):
             try:
