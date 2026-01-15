@@ -155,6 +155,71 @@ class MySQLReservationRepository(MySQLBaseRepository):
         query += " ORDER BY date_time ASC"
         return self._execute_query(query, tuple(params))
 
+    def get_confirmed_capacity_by_slot(
+        self,
+        restaurant_id: int,
+        start_date_time: datetime,
+        end_date_time: datetime,
+        reservation_type: Optional[str] = None,
+    ) -> Dict[datetime, int]:
+        """
+        Get used capacity (sum of party_size) for each time slot based on confirmed reservations only.
+        Pending reservations are excluded from capacity calculation.
+        """
+        query = """
+            SELECT
+                sb.date_time,
+                COALESCE(SUM(r.party_size), 0) as used_capacity
+            FROM Slot_Bookings sb
+            INNER JOIN Reservations r ON sb.id = r.slot_booking_id
+            WHERE sb.restaurant_id = %s
+                AND sb.date_time >= %s
+                AND sb.date_time <= %s
+                AND r.status = 'confirmed'
+        """
+        params: List[Any] = [restaurant_id, start_date_time, end_date_time]
+
+        if reservation_type:
+            query += " AND sb.reservation_type = %s"
+            params.append(reservation_type)
+
+        query += " GROUP BY sb.date_time ORDER BY sb.date_time ASC"
+        results = self._execute_query(query, tuple(params))
+
+        capacity_map: Dict[datetime, int] = {}
+        for row in results:
+            slot_dt = row["date_time"]
+            if isinstance(slot_dt, datetime):
+                slot_dt = slot_dt.replace(second=0, microsecond=0)
+            capacity_map[slot_dt] = int(row["used_capacity"])
+        return capacity_map
+
+    def get_slot_confirmed_capacity(
+        self,
+        restaurant_id: int,
+        date_time: datetime,
+        reservation_type: Optional[str] = None,
+    ) -> int:
+        """
+        Get used capacity for a specific time slot based on confirmed reservations only.
+        """
+        query = """
+            SELECT COALESCE(SUM(r.party_size), 0) as used_capacity
+            FROM Slot_Bookings sb
+            INNER JOIN Reservations r ON sb.id = r.slot_booking_id
+            WHERE sb.restaurant_id = %s
+                AND sb.date_time = %s
+                AND r.status = 'confirmed'
+        """
+        params: List[Any] = [restaurant_id, date_time]
+
+        if reservation_type:
+            query += " AND sb.reservation_type = %s"
+            params.append(reservation_type)
+
+        results = self._execute_query(query, tuple(params))
+        return int(results[0]["used_capacity"]) if results else 0
+
     def get_slot_by_token(self, reservation_token: str, reservation_type: Optional[str] = None) -> Optional[Dict]:
         """Get a slot booking by reservation token."""
         query = """

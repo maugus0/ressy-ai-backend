@@ -1453,15 +1453,17 @@ class WebSocketService:
                         call_id = self._create_call_session(
                             resolved_user_id, call_resources.restaurant_id, call_sid, None
                         )
-                        router.set_default_arguments(
-                            {
-                                "user_id": resolved_user_id,
-                                "call_id": call_id,
-                                "restaurant_id": call_resources.restaurant_id,
-                                "customer_contact": caller_number,
-                                "call_sid": call_sid,
-                            }
-                        )
+                        # Build default arguments, only including customer_contact if available
+                        # to avoid validation errors when caller ID is blocked/unavailable
+                        default_args = {
+                            "user_id": resolved_user_id,
+                            "call_id": call_id,
+                            "restaurant_id": call_resources.restaurant_id,
+                            "call_sid": call_sid,
+                        }
+                        if caller_number:
+                            default_args["customer_contact"] = caller_number
+                        router.set_default_arguments(default_args)
 
                         timeout_seconds = float(getattr(settings, "AGENT_CALL_TIMEOUT_SECONDS", 900))
                         call_timeout_task = asyncio.create_task(
