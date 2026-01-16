@@ -206,8 +206,7 @@ async def create_reservation(**kwargs) -> Dict[str, Any]:
         return {
             "status": "ADVANCE_BOOKING_EXCEEDED",
             "message": (
-                f"Reservations can only be made up to {advance_days} days in advance. "
-                "Please choose an earlier date."
+                f"Reservations can only be made up to {advance_days} days in advance. " "Please choose an earlier date."
             ),
         }
 
