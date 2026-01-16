@@ -34,6 +34,7 @@ class ClientRestaurantResponse(BaseModel):
     closing_time: str | None = None
     reservation_seating_capacity: int | None = None
     reservation_advance_days: int | None = None
+    timezone: str | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
     model_config = ConfigDict(extra="ignore")
@@ -120,6 +121,7 @@ router = APIRouter(
                             "closing_time": "22:00:00",
                             "reservation_seating_capacity": 50,
                             "reservation_advance_days": 30,
+                            "timezone": "America/Vancouver",
                             "created_at": "2024-02-01T10:00:00Z",
                             "updated_at": "2024-02-02T10:00:00Z",
                         }
@@ -182,6 +184,7 @@ async def get_restaurant(
                             "closing_time": "22:00:00",
                             "reservation_seating_capacity": 60,
                             "reservation_advance_days": 14,
+                            "timezone": "America/Vancouver",
                             "created_at": "2024-02-01T10:00:00Z",
                             "updated_at": "2024-02-02T10:00:00Z",
                         }

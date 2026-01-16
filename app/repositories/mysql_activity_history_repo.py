@@ -9,6 +9,7 @@ from decimal import Decimal
 from typing import Any, Dict, List, Optional
 
 from app.repositories.mysql_base import MySQLBaseRepository
+from app.utils.timezone import isoformat_z
 
 
 class DecimalEncoder(json.JSONEncoder):
@@ -18,7 +19,7 @@ class DecimalEncoder(json.JSONEncoder):
         if isinstance(obj, Decimal):
             return float(obj)
         if isinstance(obj, datetime):
-            return obj.isoformat()
+            return isoformat_z(obj)
         return super().default(obj)
 
 
@@ -217,6 +218,6 @@ class MySQLActivityHistoryRepository(MySQLBaseRepository):
                         pass
             # Convert datetime to ISO format string
             if isinstance(row_copy.get("created_at"), datetime):
-                row_copy["created_at"] = row_copy["created_at"].isoformat()
+                row_copy["created_at"] = isoformat_z(row_copy["created_at"])
             parsed.append(row_copy)
         return parsed

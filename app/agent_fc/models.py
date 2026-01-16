@@ -9,6 +9,8 @@ from typing import Any, Mapping, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, RootModel, field_validator
 
+from app.utils.timezone import isoformat_z
+
 
 class FunctionCallRequest(BaseModel):
     """Function call request issued by the agent."""
@@ -49,6 +51,8 @@ class FunctionCallResponse(BaseModel):
         if isinstance(value, Decimal):
             return float(value)
         if isinstance(value, (datetime, date)):
+            if isinstance(value, datetime):
+                return isoformat_z(value)
             return value.isoformat()
         return str(value)
 

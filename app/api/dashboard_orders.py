@@ -676,8 +676,8 @@ and includes the option to show soft-deleted orders.
                                 "customer_name": "John Smith",
                                 "customer_phone": "+1234567890",
                                 "customer_email": "john@example.com",
-                                "created_at": "2025-12-14T10:30:00",
-                                "updated_at": "2025-12-14T10:35:00",
+                                "created_at": "2025-12-14T10:30:00Z",
+                                "updated_at": "2025-12-14T10:35:00Z",
                                 "deleted_at": None,
                             }
                         ],
@@ -712,12 +712,12 @@ async def get_restaurant_orders(
     start_date: Optional[str] = Query(
         None,
         description="Filter orders from this date (ISO format)",
-        json_schema_extra={"example": "2025-12-01T00:00:00"},
+        json_schema_extra={"example": "2025-12-01T00:00:00Z"},
     ),
     end_date: Optional[str] = Query(
         None,
         description="Filter orders until this date (ISO format)",
-        json_schema_extra={"example": "2025-12-31T23:59:59"},
+        json_schema_extra={"example": "2025-12-31T23:59:59Z"},
     ),
     include_deleted: bool = Query(
         False,
@@ -789,8 +789,8 @@ previous and new values, and a human-readable summary.
                         "customer_name": "John Smith",
                         "customer_phone": "+1234567890",
                         "customer_email": "john@example.com",
-                        "created_at": "2025-12-14T10:30:00",
-                        "updated_at": "2025-12-14T10:35:00",
+                        "created_at": "2025-12-14T10:30:00Z",
+                        "updated_at": "2025-12-14T10:35:00Z",
                         "deleted_at": None,
                         "history": [
                             {
@@ -799,7 +799,7 @@ previous and new values, and a human-readable summary.
                                 "previous_value": {"status": "pending"},
                                 "new_value": {"status": "preparing"},
                                 "change_summary": "Order #456 status changed: pending → preparing",
-                                "created_at": "2025-12-14T10:35:00",
+                                "created_at": "2025-12-14T10:35:00Z",
                             },
                             {
                                 "id": 2,
@@ -807,7 +807,7 @@ previous and new values, and a human-readable summary.
                                 "previous_value": None,
                                 "new_value": {"status": "pending", "total_amount": 34.97},
                                 "change_summary": "Order #456 created with status: pending",
-                                "created_at": "2025-12-14T10:30:00",
+                                "created_at": "2025-12-14T10:30:00Z",
                             },
                         ],
                     }
@@ -902,8 +902,8 @@ Cancelled orders cannot be updated (except by restoring them first).
                         "customer_name": "John Smith",
                         "customer_phone": "+1234567890",
                         "customer_email": "john@example.com",
-                        "created_at": "2025-12-14T10:30:00",
-                        "updated_at": "2025-12-14T11:00:00",
+                        "created_at": "2025-12-14T10:30:00Z",
+                        "updated_at": "2025-12-14T11:00:00Z",
                         "deleted_at": None,
                     }
                 }
