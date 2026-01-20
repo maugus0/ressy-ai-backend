@@ -44,6 +44,12 @@ class CreateRestaurantRequest(BaseModel):
         None, pattern=r"^\d{2}:\d{2}:\d{2}$", description="Closing time in HH:MM:SS (24h) format"
     )
     timezone: str | None = Field(None, description="Restaurant timezone (IANA name, e.g. America/Vancouver)")
+    reservation_seating_capacity: int | None = Field(
+        None, ge=1, le=1000, description="Total seating capacity for reservations"
+    )
+    reservation_advance_days: int | None = Field(
+        None, ge=1, le=365, description="Maximum days in advance for reservations"
+    )
     model_config = ConfigDict(extra="ignore")
 
     @field_validator("name")
@@ -90,6 +96,12 @@ class UpdateRestaurantRequest(BaseModel):
         None, pattern=r"^\d{2}:\d{2}:\d{2}$", description="Closing time in HH:MM:SS (24h) format"
     )
     timezone: str | None = Field(None, description="Restaurant timezone (IANA name, e.g. America/Vancouver)")
+    reservation_seating_capacity: int | None = Field(
+        None, ge=1, le=1000, description="Total seating capacity for reservations"
+    )
+    reservation_advance_days: int | None = Field(
+        None, ge=1, le=365, description="Maximum days in advance for reservations"
+    )
     model_config = ConfigDict(extra="ignore")
 
     @field_validator("name")
@@ -131,6 +143,8 @@ class RestaurantResponse(BaseModel):
     opening_time: str | None = None
     closing_time: str | None = None
     timezone: str | None = None
+    reservation_seating_capacity: int | None = None
+    reservation_advance_days: int | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
     model_config = ConfigDict(extra="ignore")
@@ -205,6 +219,8 @@ router = APIRouter(
                         "opening_time": "09:00:00",
                         "closing_time": "22:00:00",
                         "timezone": "America/Vancouver",
+                        "reservation_seating_capacity": 50,
+                        "reservation_advance_days": 30,
                     },
                 }
             },
@@ -262,6 +278,8 @@ async def create_restaurant(
                                     "opening_time": "09:00:00",
                                     "closing_time": "22:00:00",
                                     "timezone": "America/Vancouver",
+                                    "reservation_seating_capacity": 50,
+                                    "reservation_advance_days": 30,
                                     "created_at": "2024-02-01T10:00:00Z",
                                     "updated_at": "2024-02-02T10:00:00Z",
                                 }
@@ -328,6 +346,8 @@ async def list_restaurants(
                             "opening_time": "09:00:00",
                             "closing_time": "22:00:00",
                             "timezone": "America/Vancouver",
+                            "reservation_seating_capacity": 50,
+                            "reservation_advance_days": 30,
                             "created_at": "2024-02-01T10:00:00Z",
                             "updated_at": "2024-02-02T10:00:00Z",
                         }
@@ -372,6 +392,8 @@ async def get_restaurant(
                         "opening_time": "10:00:00",
                         "closing_time": "23:00:00",
                         "timezone": "America/Vancouver",
+                        "reservation_seating_capacity": 75,
+                        "reservation_advance_days": 60,
                     },
                 }
             },
