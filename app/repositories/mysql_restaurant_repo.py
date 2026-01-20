@@ -16,28 +16,32 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
         try:
             query = """
                 SELECT
-                    id,
-                    name,
-                    address,
-                    phone_number,
-                    twilio_phone_number,
-                    twilio_details,
-                    deepgram_details,
-                    open_table_details,
-                    forward_minutes,
-                    backward_minutes,
-                    is_credit_card_required_for_reservation,
-                    forward_escalations,
-                    escalation_phone_number,
-                    opening_time,
-                    closing_time,
-                    reservation_seating_capacity,
-                    reservation_advance_days,
-                    timezone,
-                    created_at,
-                    updated_at
-                FROM Restaurants
-                WHERE name = %s
+                    r.id,
+                    r.name,
+                    r.address,
+                    r.phone_number,
+                    r.twilio_phone_number,
+                    r.twilio_details,
+                    r.deepgram_details,
+                    r.open_table_details,
+                    r.forward_minutes,
+                    r.backward_minutes,
+                    r.is_credit_card_required_for_reservation,
+                    r.forward_escalations,
+                    r.escalation_phone_number,
+                    r.opening_time,
+                    r.closing_time,
+                    r.reservation_seating_capacity,
+                    r.reservation_advance_days,
+                    r.timezone,
+                    COALESCE(rf.orders_enabled, TRUE) AS orders_enabled,
+                    COALESCE(rf.reservations_enabled, TRUE) AS reservations_enabled,
+                    COALESCE(rf.faqs_enabled, TRUE) AS faqs_enabled,
+                    r.created_at,
+                    r.updated_at
+                FROM Restaurants r
+                LEFT JOIN Restaurant_Features rf ON rf.restaurant_id = r.id
+                WHERE r.name = %s
                 LIMIT 1
             """
             results = self._execute_query(query, (name,))
@@ -57,6 +61,12 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
                     result["reservation_advance_days"] = 30
                 if "timezone" not in result:
                     result["timezone"] = None
+                if "orders_enabled" not in result:
+                    result["orders_enabled"] = True
+                if "reservations_enabled" not in result:
+                    result["reservations_enabled"] = True
+                if "faqs_enabled" not in result:
+                    result["faqs_enabled"] = True
                 return result
             return None
         except Exception:
@@ -89,6 +99,9 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
                 result["reservation_seating_capacity"] = 50
                 result["reservation_advance_days"] = 30
                 result["timezone"] = None
+                result["orders_enabled"] = True
+                result["reservations_enabled"] = True
+                result["faqs_enabled"] = True
                 return result
             return None
 
@@ -101,28 +114,32 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
         try:
             query = """
                 SELECT
-                    id,
-                    name,
-                    address,
-                    phone_number,
-                    twilio_phone_number,
-                    twilio_details,
-                    deepgram_details,
-                    open_table_details,
-                    forward_minutes,
-                    backward_minutes,
-                    is_credit_card_required_for_reservation,
-                    forward_escalations,
-                    escalation_phone_number,
-                    opening_time,
-                    closing_time,
-                    reservation_seating_capacity,
-                    reservation_advance_days,
-                    timezone,
-                    created_at,
-                    updated_at
-                FROM Restaurants
-                WHERE twilio_phone_number = %s
+                    r.id,
+                    r.name,
+                    r.address,
+                    r.phone_number,
+                    r.twilio_phone_number,
+                    r.twilio_details,
+                    r.deepgram_details,
+                    r.open_table_details,
+                    r.forward_minutes,
+                    r.backward_minutes,
+                    r.is_credit_card_required_for_reservation,
+                    r.forward_escalations,
+                    r.escalation_phone_number,
+                    r.opening_time,
+                    r.closing_time,
+                    r.reservation_seating_capacity,
+                    r.reservation_advance_days,
+                    r.timezone,
+                    COALESCE(rf.orders_enabled, TRUE) AS orders_enabled,
+                    COALESCE(rf.reservations_enabled, TRUE) AS reservations_enabled,
+                    COALESCE(rf.faqs_enabled, TRUE) AS faqs_enabled,
+                    r.created_at,
+                    r.updated_at
+                FROM Restaurants r
+                LEFT JOIN Restaurant_Features rf ON rf.restaurant_id = r.id
+                WHERE r.twilio_phone_number = %s
                 LIMIT 1
             """
             results = self._execute_query(query, (twilio_phone_number,))
@@ -142,6 +159,12 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
                     result["reservation_advance_days"] = 30
                 if "timezone" not in result:
                     result["timezone"] = None
+                if "orders_enabled" not in result:
+                    result["orders_enabled"] = True
+                if "reservations_enabled" not in result:
+                    result["reservations_enabled"] = True
+                if "faqs_enabled" not in result:
+                    result["faqs_enabled"] = True
                 return result
             return None
         except Exception:
@@ -174,6 +197,9 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
                 result["reservation_seating_capacity"] = 50
                 result["reservation_advance_days"] = 30
                 result["timezone"] = None
+                result["orders_enabled"] = True
+                result["reservations_enabled"] = True
+                result["faqs_enabled"] = True
                 return result
             return None
 
@@ -184,28 +210,32 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
         try:
             query = """
                 SELECT
-                    id,
-                    name,
-                    address,
-                    phone_number,
-                    twilio_phone_number,
-                    twilio_details,
-                    deepgram_details,
-                    open_table_details,
-                    forward_minutes,
-                    backward_minutes,
-                    is_credit_card_required_for_reservation,
-                    forward_escalations,
-                    escalation_phone_number,
-                    opening_time,
-                    closing_time,
-                    reservation_seating_capacity,
-                    reservation_advance_days,
-                    timezone,
-                    created_at,
-                    updated_at
-                FROM Restaurants
-                WHERE id = %s
+                    r.id,
+                    r.name,
+                    r.address,
+                    r.phone_number,
+                    r.twilio_phone_number,
+                    r.twilio_details,
+                    r.deepgram_details,
+                    r.open_table_details,
+                    r.forward_minutes,
+                    r.backward_minutes,
+                    r.is_credit_card_required_for_reservation,
+                    r.forward_escalations,
+                    r.escalation_phone_number,
+                    r.opening_time,
+                    r.closing_time,
+                    r.reservation_seating_capacity,
+                    r.reservation_advance_days,
+                    r.timezone,
+                    COALESCE(rf.orders_enabled, TRUE) AS orders_enabled,
+                    COALESCE(rf.reservations_enabled, TRUE) AS reservations_enabled,
+                    COALESCE(rf.faqs_enabled, TRUE) AS faqs_enabled,
+                    r.created_at,
+                    r.updated_at
+                FROM Restaurants r
+                LEFT JOIN Restaurant_Features rf ON rf.restaurant_id = r.id
+                WHERE r.id = %s
                 LIMIT 1
             """
             results = self._execute_query(query, (restaurant_id,))
@@ -225,6 +255,12 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
                     result["reservation_advance_days"] = 30
                 if "timezone" not in result:
                     result["timezone"] = None
+                if "orders_enabled" not in result:
+                    result["orders_enabled"] = True
+                if "reservations_enabled" not in result:
+                    result["reservations_enabled"] = True
+                if "faqs_enabled" not in result:
+                    result["faqs_enabled"] = True
                 return result
             return None
         except Exception:
@@ -257,6 +293,9 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
                 result["reservation_seating_capacity"] = 50
                 result["reservation_advance_days"] = 30
                 result["timezone"] = None
+                result["orders_enabled"] = True
+                result["reservations_enabled"] = True
+                result["faqs_enabled"] = True
                 return result
             return None
 
@@ -306,6 +345,9 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
         limit: int = 20,
         search: Optional[str] = None,
         is_credit_card_required: Optional[bool] = None,
+        orders_enabled: Optional[bool] = None,
+        reservations_enabled: Optional[bool] = None,
+        faqs_enabled: Optional[bool] = None,
     ) -> Tuple[List[Dict], int]:
         """
         Get all restaurants with pagination, search, and filtering.
@@ -318,45 +360,63 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
         params = []
 
         if search:
-            where_conditions.append("name LIKE %s")
+            where_conditions.append("r.name LIKE %s")
             params.append(f"%{search}%")
 
         if is_credit_card_required is not None:
-            where_conditions.append("is_credit_card_required_for_reservation = %s")
+            where_conditions.append("r.is_credit_card_required_for_reservation = %s")
             params.append(is_credit_card_required)
+        if orders_enabled is not None:
+            where_conditions.append("COALESCE(rf.orders_enabled, TRUE) = %s")
+            params.append(orders_enabled)
+        if reservations_enabled is not None:
+            where_conditions.append("COALESCE(rf.reservations_enabled, TRUE) = %s")
+            params.append(reservations_enabled)
+        if faqs_enabled is not None:
+            where_conditions.append("COALESCE(rf.faqs_enabled, TRUE) = %s")
+            params.append(faqs_enabled)
 
         where_clause = "WHERE " + " AND ".join(where_conditions) if where_conditions else ""
 
         # Count query
-        count_query = f"SELECT COUNT(*) as total FROM Restaurants {where_clause}"
+        count_query = f"""
+            SELECT COUNT(*) as total
+            FROM Restaurants r
+            LEFT JOIN Restaurant_Features rf ON rf.restaurant_id = r.id
+            {where_clause}
+        """
         count_result = self._execute_query(count_query, tuple(params))
         total = count_result[0]["total"] if count_result else 0
 
         query = f"""
             SELECT
-                id,
-                name,
-                address,
-                phone_number,
-                twilio_phone_number,
-                twilio_details,
-                deepgram_details,
-                open_table_details,
-                forward_minutes,
-                backward_minutes,
-                is_credit_card_required_for_reservation,
-                forward_escalations,
-                escalation_phone_number,
-                opening_time,
-                closing_time,
-                reservation_seating_capacity,
-                reservation_advance_days,
-                timezone,
-                created_at,
-                updated_at
-            FROM Restaurants
+                r.id,
+                r.name,
+                r.address,
+                r.phone_number,
+                r.twilio_phone_number,
+                r.twilio_details,
+                r.deepgram_details,
+                r.open_table_details,
+                r.forward_minutes,
+                r.backward_minutes,
+                r.is_credit_card_required_for_reservation,
+                r.forward_escalations,
+                r.escalation_phone_number,
+                r.opening_time,
+                r.closing_time,
+                r.reservation_seating_capacity,
+                r.reservation_advance_days,
+                r.timezone,
+                COALESCE(rf.orders_enabled, TRUE) AS orders_enabled,
+                COALESCE(rf.reservations_enabled, TRUE) AS reservations_enabled,
+                COALESCE(rf.faqs_enabled, TRUE) AS faqs_enabled,
+                r.created_at,
+                r.updated_at
+            FROM Restaurants r
+            LEFT JOIN Restaurant_Features rf ON rf.restaurant_id = r.id
             {where_clause}
-            ORDER BY created_at DESC
+            ORDER BY r.created_at DESC
             LIMIT %s OFFSET %s
         """
         params.extend([limit, offset])

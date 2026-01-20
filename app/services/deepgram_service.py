@@ -39,7 +39,13 @@ class DeepgramService:
             ssl=ssl_context,
         )
 
-    def load_config(self, think_prompt: str | None, key_terms: list[str], restaurant_name: str | None):
+    def load_config(
+        self,
+        think_prompt: str,
+        key_terms: list[str],
+        restaurant_name: str | None,
+        feature_flags: dict | None = None,
+    ):
         """Load Deepgram configuration from environment variables."""
 
         greeting_template = settings.DEEPGRAM_AGENT_GREETING or ""
@@ -86,7 +92,7 @@ class DeepgramService:
                     # Custom prompt loaded from file (if provided)
                     "prompt": think_prompt if think_prompt is not None else prompt_loader.load_think_prompt(),
                     # Client-side function definitions for the agent to call
-                    "functions": get_function_definitions(),
+                    "functions": get_function_definitions(feature_flags),
                 },
                 "speak": {
                     "provider": {
