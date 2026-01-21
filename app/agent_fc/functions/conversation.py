@@ -226,16 +226,15 @@ async def escalate_to_human(**kwargs) -> AgentFunctionResult:
         "customer_contact": args.customer_contact,
         "forwarding": should_forward,
     }
-    if not (args.feature_disabled and should_forward):
-        asyncio.create_task(
-            _emit_escalation_sse_event(
-                restaurant_id=int(args.restaurant_id),
-                caller_phone=args.customer_contact,
-                reason=args.reason,
-                urgency=args.urgency,
-                call_sid=call_sid,
-            )
+    asyncio.create_task(
+        _emit_escalation_sse_event(
+            restaurant_id=int(args.restaurant_id),
+            caller_phone=args.customer_contact,
+            reason=args.reason,
+            urgency=args.urgency,
+            call_sid=call_sid,
         )
+    )
     side_effects = [AgentSideEffect({"type": "InjectAgentMessage", "message": message})]
     if should_forward:
         side_effects.append(AgentSideEffect({"type": "close"}, delay_seconds=0.5))
