@@ -32,6 +32,8 @@ class ClientRestaurantResponse(BaseModel):
     is_credit_card_required_for_reservation: bool | None = None
     opening_time: str | None = None
     closing_time: str | None = None
+    reservation_seating_capacity: int | None = None
+    reservation_advance_days: int | None = None
     timezone: str | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
@@ -58,6 +60,12 @@ class ClientUpdateRestaurantRequest(BaseModel):
     )
     closing_time: str | None = Field(
         None, pattern=r"^\d{2}:\d{2}:\d{2}$", description="Closing time in HH:MM:SS (24h) format"
+    )
+    reservation_seating_capacity: int | None = Field(
+        None, ge=1, le=1000, description="Total seating capacity for reservations"
+    )
+    reservation_advance_days: int | None = Field(
+        None, ge=1, le=365, description="Maximum days in advance for reservations"
     )
     model_config = ConfigDict(extra="ignore")
 
@@ -111,6 +119,8 @@ router = APIRouter(
                             "is_credit_card_required_for_reservation": False,
                             "opening_time": "09:00:00",
                             "closing_time": "22:00:00",
+                            "reservation_seating_capacity": 50,
+                            "reservation_advance_days": 30,
                             "timezone": "America/Vancouver",
                             "created_at": "2024-02-01T10:00:00Z",
                             "updated_at": "2024-02-02T10:00:00Z",
@@ -148,6 +158,8 @@ async def get_restaurant(
                         "forward_minutes": 30,
                         "forward_escalations": True,
                         "escalation_phone_number": "+15550001111",
+                        "reservation_seating_capacity": 60,
+                        "reservation_advance_days": 14,
                     },
                 }
             },
@@ -170,6 +182,8 @@ async def get_restaurant(
                             "is_credit_card_required_for_reservation": False,
                             "opening_time": "09:00:00",
                             "closing_time": "22:00:00",
+                            "reservation_seating_capacity": 60,
+                            "reservation_advance_days": 14,
                             "timezone": "America/Vancouver",
                             "created_at": "2024-02-01T10:00:00Z",
                             "updated_at": "2024-02-02T10:00:00Z",

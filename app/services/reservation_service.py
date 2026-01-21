@@ -3,7 +3,7 @@ In-House Reservation Service for handling table reservations.
 """
 
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, time, timedelta, timezone
 from typing import Any, Dict, Optional
 
 from app.repositories.mysql_reservation_repo import MySQLReservationRepository
@@ -13,7 +13,11 @@ from app.repositories.mysql_user_restaurant_metadata_repo import (
     MySQLUserRestaurantMetadataRepository,
 )
 from app.utils.logging_config import get_logger
-from app.utils.restaurant_hours import resolve_restaurant_timezone
+from app.utils.restaurant_hours import (
+    _parse_operating_time,
+    is_datetime_within_operating_hours,
+    resolve_restaurant_timezone,
+)
 from app.utils.timezone import isoformat_z, parse_datetime
 
 
@@ -32,6 +36,38 @@ class ReservationService:
         self.user_repo = MySQLUserRepository()
         self.metadata_repo = MySQLUserRestaurantMetadataRepository()
 
+    def _parse_time(self, time_str: Any, default: str = "09:00:00") -> time:
+        """Parse time string or timedelta to time object using shared utility."""
+        parsed = _parse_operating_time(time_str)
+        if parsed is not None:
+            return parsed
+        return datetime.strptime(default, "%H:%M:%S").time()
+
+    def _validate_advance_booking(self, slot_dt: datetime, restaurant: Dict[str, Any]) -> None:
+        """Validate that reservation is within advance booking limit."""
+        advance_days = restaurant.get("reservation_advance_days", 30)
+        max_booking_date = datetime.now() + timedelta(days=advance_days)
+        if slot_dt > max_booking_date:
+            raise ValueError(f"Reservations can only be made up to {advance_days} days in advance")
+
+    def _validate_opening_hours(self, slot_dt: datetime, restaurant: Dict[str, Any]) -> None:
+        """Validate that reservation is during opening hours using shared utility."""
+        if not is_datetime_within_operating_hours(restaurant, slot_dt):
+            opening = self._parse_time(restaurant.get("opening_time"), "09:00:00")
+            closing = self._parse_time(restaurant.get("closing_time"), "22:00:00")
+            raise ValueError(f"Reservations can only be made during opening hours ({opening} - {closing})")
+
+    def _check_capacity(self, restaurant_id: int, slot_dt: datetime, party_size: int, seating_capacity: int) -> None:
+        """Check if there's enough capacity for the party size."""
+        used_capacity = self.reservation_repo.get_slot_confirmed_capacity(
+            restaurant_id=restaurant_id,
+            date_time=slot_dt,
+            reservation_type=self.RESERVATION_TYPE,
+        )
+        available_capacity = seating_capacity - used_capacity
+        if party_size > available_capacity:
+            raise ValueError(f"Not enough capacity for party of {party_size}. Available: {available_capacity}")
+
     def get_availability(
         self,
         restaurant_id: int,
@@ -42,56 +78,31 @@ class ReservationService:
     ) -> Dict[str, Any]:
         """
         Get table availability for a restaurant.
+        Only confirmed reservations reduce available capacity.
 
         Args:
             restaurant_id: Restaurant ID
             start_date_time: Start date and time (ISO format)
             forward_minutes: Forward booking window
             backward_minutes: Backward booking window
-            party_size: Party size
+            party_size: Party size to check capacity for
 
         Returns:
             Availability response with available slots
         """
-        # Get restaurant configuration
         restaurant = self.restaurant_repo.get_by_id(restaurant_id)
         if not restaurant:
             raise ValueError(f"Restaurant with ID {restaurant_id} not found")
         restaurant_tz, _ = resolve_restaurant_timezone(restaurant)
 
-        # Get opening and closing times
-        opening_time_str = restaurant.get("opening_time", "09:00:00")
-        closing_time_str = restaurant.get("closing_time", "22:00:00")
+        opening_time = self._parse_time(restaurant.get("opening_time", "09:00:00"), "09:00:00")
+        closing_time = self._parse_time(restaurant.get("closing_time", "22:00:00"), "22:00:00")
+        seating_capacity = restaurant.get("reservation_seating_capacity", 50)
+        advance_days = restaurant.get("reservation_advance_days", 30)
 
-        # Parse opening and closing times
-        try:
-            # Handle timedelta objects from MySQL TIME columns
-            if isinstance(opening_time_str, timedelta):
-                total_seconds = int(opening_time_str.total_seconds())
-                hours = total_seconds // 3600
-                minutes = (total_seconds % 3600) // 60
-                seconds = total_seconds % 60
-                opening_time_str = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
-            if isinstance(closing_time_str, timedelta):
-                total_seconds = int(closing_time_str.total_seconds())
-                hours = total_seconds // 3600
-                minutes = (total_seconds % 3600) // 60
-                seconds = total_seconds % 60
-                closing_time_str = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
-            opening_time = datetime.strptime(str(opening_time_str), "%H:%M:%S").time()
-            closing_time = datetime.strptime(str(closing_time_str), "%H:%M:%S").time()
-        except (ValueError, TypeError):
-            # Default to 9 AM - 10 PM if parsing fails
-            opening_time = datetime.strptime("09:00:00", "%H:%M:%S").time()
-            closing_time = datetime.strptime("22:00:00", "%H:%M:%S").time()
-
-        # Use restaurant's forward/backward minutes if not provided
-        forward = (
-            forward_minutes if forward_minutes is not None else restaurant.get("forward_minutes", 1440)
-        )  # Default 24 hours
+        forward = forward_minutes if forward_minutes is not None else restaurant.get("forward_minutes", 1440)
         backward = backward_minutes if backward_minutes is not None else restaurant.get("backward_minutes", 0)
 
-        # Parse start date time
         try:
             start_dt_utc = parse_datetime(start_date_time)
             start_dt_local = start_dt_utc.astimezone(restaurant_tz).replace(tzinfo=None)
@@ -108,31 +119,23 @@ class ReservationService:
         end_dt_utc = _local_naive_to_utc_naive(end_dt_local)
         search_start_dt_utc = _local_naive_to_utc_naive(search_start_dt_local)
 
-        # Get locked slots from Slot_Bookings table
-        locked_slots = self.reservation_repo.get_locked_slots(
+        max_booking_date = datetime.now() + timedelta(days=advance_days)
+        if end_dt_local > max_booking_date:
+            end_dt_local = max_booking_date
+
+        capacity_map = self.reservation_repo.get_confirmed_capacity_by_slot(
             restaurant_id=restaurant_id,
             start_date_time=search_start_dt_utc,
             end_date_time=end_dt_utc,
             reservation_type=self.RESERVATION_TYPE,
         )
 
-        # Create a set of locked slot datetimes for quick lookup
-        locked_datetimes = set()
-        for locked_slot in locked_slots:
-            slot_dt = locked_slot["date_time"]
-            if isinstance(slot_dt, datetime):
-                slot_local = slot_dt.replace(tzinfo=timezone.utc).astimezone(restaurant_tz).replace(tzinfo=None)
-                slot_dt = slot_local.replace(second=0, microsecond=0)
-            locked_datetimes.add(slot_dt)
-
         # Generate all possible slots based on opening/closing times
         slots = []
         current_date = search_start_dt_local.date()
         end_date = end_dt_local.date()
 
-        # Generate slots for each day in the range
         while current_date <= end_date:
-            # Combine date with opening time
             day_start = datetime.combine(current_date, opening_time)
             day_end = datetime.combine(current_date, closing_time)
 
@@ -149,7 +152,6 @@ class ReservationService:
                     rounded_start = normalized_start + timedelta(minutes=minutes_to_add)
                 slot_start = max(rounded_start, day_start)
             else:
-                # Other days: start from opening time
                 slot_start = day_start
 
             # Determine the effective end time for this day
@@ -159,19 +161,27 @@ class ReservationService:
             else:
                 slot_end = day_end
 
-            # Generate slots with 15-minute intervals
             current_slot = slot_start
             while current_slot < slot_end:
-                # Check if slot is locked
                 slot_dt_normalized = current_slot.replace(second=0, microsecond=0)
-                if slot_dt_normalized not in locked_datetimes:
-                    slot_utc = current_slot.replace(tzinfo=restaurant_tz).astimezone(timezone.utc)
-                    slots.append({"date_time": isoformat_z(slot_utc), "available": True})
+                # Convert local slot to UTC for capacity lookup
+                slot_utc = slot_dt_normalized.replace(tzinfo=restaurant_tz).astimezone(timezone.utc)
+                slot_utc_naive = slot_utc.replace(tzinfo=None)
+                used_capacity = capacity_map.get(slot_utc_naive, 0)
+                available_capacity = seating_capacity - used_capacity
 
-                # Move to next slot (15 minutes later)
+                requested_size = party_size or 1
+                if available_capacity >= requested_size:
+                    slots.append(
+                        {
+                            "date_time": isoformat_z(slot_utc),
+                            "available": True,
+                            "available_capacity": available_capacity,
+                        }
+                    )
+
                 current_slot += timedelta(minutes=self.SLOT_INTERVAL_MINUTES)
 
-            # Move to next day
             current_date += timedelta(days=1)
 
         return {
@@ -180,6 +190,8 @@ class ReservationService:
             "forward_minutes": forward,
             "backward_minutes": backward,
             "party_size": party_size,
+            "seating_capacity": seating_capacity,
+            "advance_days": advance_days,
             "slots": slots,
             "total_available": len(slots),
         }
@@ -199,72 +211,31 @@ class ReservationService:
         Returns:
             Slot lock response with reservation_token
         """
-        # Get restaurant configuration
         restaurant = self.restaurant_repo.get_by_id(restaurant_id)
         if not restaurant:
             raise ValueError(f"Restaurant with ID {restaurant_id} not found")
         restaurant_tz, _ = resolve_restaurant_timezone(restaurant)
 
-        # Get opening and closing times
-        opening_time_str = restaurant.get("opening_time", "09:00:00")
-        closing_time_str = restaurant.get("closing_time", "22:00:00")
+        seating_capacity = restaurant.get("reservation_seating_capacity", 50)
 
-        # Parse opening and closing times
-        try:
-            # Handle timedelta objects from MySQL TIME columns
-            if isinstance(opening_time_str, timedelta):
-                total_seconds = int(opening_time_str.total_seconds())
-                hours = total_seconds // 3600
-                minutes = (total_seconds % 3600) // 60
-                seconds = total_seconds % 60
-                opening_time_str = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
-            if isinstance(closing_time_str, timedelta):
-                total_seconds = int(closing_time_str.total_seconds())
-                hours = total_seconds // 3600
-                minutes = (total_seconds % 3600) // 60
-                seconds = total_seconds % 60
-                closing_time_str = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
-            opening_time = datetime.strptime(str(opening_time_str), "%H:%M:%S").time()
-            closing_time = datetime.strptime(str(closing_time_str), "%H:%M:%S").time()
-        except (ValueError, TypeError):
-            # Default to 9 AM - 10 PM if parsing fails
-            opening_time = datetime.strptime("09:00:00", "%H:%M:%S").time()
-            closing_time = datetime.strptime("22:00:00", "%H:%M:%S").time()
-
-        # Parse date time
         try:
             slot_dt_utc = parse_datetime(date_time)
             slot_dt_local = slot_dt_utc.astimezone(restaurant_tz).replace(tzinfo=None)
-            # Normalize to minute precision (remove seconds/microseconds)
             slot_dt_local = slot_dt_local.replace(second=0, microsecond=0)
         except ValueError:
             raise ValueError(f"Invalid date_time format: {date_time}")
 
-        # Validate slot is within opening/closing hours
-        slot_time = slot_dt_local.time()
-        if slot_time < opening_time or slot_time >= closing_time:
-            raise ValueError(
-                f"Slot time {slot_time} is outside restaurant operating hours ({opening_time} - {closing_time})"
-            )
+        self._validate_opening_hours(slot_dt_local, restaurant)
 
         slot_dt_utc = slot_dt_local.replace(tzinfo=restaurant_tz).astimezone(timezone.utc)
         slot_dt_utc_naive = slot_dt_utc.replace(tzinfo=None)
 
-        # Check if slot is already locked
-        locked_slots = self.reservation_repo.get_locked_slots(
-            restaurant_id=restaurant_id,
-            start_date_time=slot_dt_utc_naive,
-            end_date_time=slot_dt_utc_naive + timedelta(minutes=1),
-            reservation_type=self.RESERVATION_TYPE,
-        )
-
-        if locked_slots:
-            raise ValueError("Slot is already locked/reserved")
+        # Check capacity - only confirmed reservations count against capacity
+        self._check_capacity(restaurant_id, slot_dt_utc_naive, party_size, seating_capacity)
 
         reservation_token = str(uuid.uuid4())
         expires_at = datetime.now(timezone.utc) + timedelta(minutes=self.SLOT_EXPIRY_MINUTES)
 
-        # Create new slot with locked status
         slot_id = self.reservation_repo.create_slot_booking(
             restaurant_id=restaurant_id,
             date_time=slot_dt_utc_naive,
@@ -528,6 +499,7 @@ class ReservationService:
         """
         Create a reservation directly (for dashboard).
         Creates slot booking and confirmed reservation in a single transaction.
+        Validates capacity and opening hours.
 
         Args:
             restaurant_id: Restaurant ID
@@ -542,42 +514,33 @@ class ReservationService:
         Returns:
             Reservation response with confirmation details
         """
-        # Get restaurant configuration
         restaurant = self.restaurant_repo.get_by_id(restaurant_id)
         if not restaurant:
             raise ValueError(f"Restaurant with ID {restaurant_id} not found")
         restaurant_tz, _ = resolve_restaurant_timezone(restaurant)
 
-        # Parse date time
+        seating_capacity = restaurant.get("reservation_seating_capacity", 50)
+
         try:
             slot_dt_utc = parse_datetime(date_time)
             slot_dt_local = slot_dt_utc.astimezone(restaurant_tz).replace(tzinfo=None)
-            # Normalize to minute precision
             slot_dt_local = slot_dt_local.replace(second=0, microsecond=0)
         except ValueError:
             raise ValueError(f"Invalid date_time format: {date_time}")
 
+        self._validate_opening_hours(slot_dt_local, restaurant)
+
         slot_dt_utc = slot_dt_local.replace(tzinfo=restaurant_tz).astimezone(timezone.utc)
         slot_dt_utc_naive = slot_dt_utc.replace(tzinfo=None)
 
-        # Check for conflicting reservations
-        locked_slots = self.reservation_repo.get_locked_slots(
-            restaurant_id=restaurant_id,
-            start_date_time=slot_dt_utc_naive,
-            end_date_time=slot_dt_utc_naive + timedelta(minutes=1),
-            reservation_type=self.RESERVATION_TYPE,
-        )
+        self._validate_advance_booking(slot_dt_utc_naive, restaurant)
+        self._check_capacity(restaurant_id, slot_dt_utc_naive, party_size, seating_capacity)
 
-        if locked_slots:
-            raise ValueError("Slot is already booked for this time")
-
-        # Create or get user
         user_data = {"name": name, "phone_number": phone_number}
         if email_address:
             user_data["email"] = email_address
         user_id = self.user_repo.create_or_update_user(user_data)
 
-        # Create user-restaurant metadata mapping (for dashboard user visibility)
         try:
             self.metadata_repo.create_mapping(
                 user_id=user_id,
@@ -586,13 +549,10 @@ class ReservationService:
                 notes="Created via dashboard direct reservation",
             )
         except Exception as meta_err:
-            # Log but don't fail reservation creation if metadata mapping fails
             self.logger.warning("Failed to create user-restaurant metadata: %s", meta_err)
 
-        # Generate confirmation number
         confirmation_number = f"INH-{restaurant_id}-{uuid.uuid4().hex[:8].upper()}"
 
-        # Create reservation directly (slot + reservation in transaction)
         result = self.reservation_repo.create_reservation_direct(
             restaurant_id=restaurant_id,
             date_time=slot_dt_utc_naive,

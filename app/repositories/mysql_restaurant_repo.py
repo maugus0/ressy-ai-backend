@@ -31,6 +31,8 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
                     escalation_phone_number,
                     opening_time,
                     closing_time,
+                    reservation_seating_capacity,
+                    reservation_advance_days,
                     timezone,
                     created_at,
                     updated_at
@@ -49,6 +51,10 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
                     result["forward_escalations"] = False
                 if "escalation_phone_number" not in result:
                     result["escalation_phone_number"] = None
+                if "reservation_seating_capacity" not in result or result.get("reservation_seating_capacity") is None:
+                    result["reservation_seating_capacity"] = 50
+                if "reservation_advance_days" not in result or result.get("reservation_advance_days") is None:
+                    result["reservation_advance_days"] = 30
                 if "timezone" not in result:
                     result["timezone"] = None
                 return result
@@ -80,6 +86,8 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
                 result["closing_time"] = "22:00:00"
                 result["forward_escalations"] = False
                 result["escalation_phone_number"] = None
+                result["reservation_seating_capacity"] = 50
+                result["reservation_advance_days"] = 30
                 result["timezone"] = None
                 return result
             return None
@@ -108,6 +116,8 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
                     escalation_phone_number,
                     opening_time,
                     closing_time,
+                    reservation_seating_capacity,
+                    reservation_advance_days,
                     timezone,
                     created_at,
                     updated_at
@@ -118,7 +128,6 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
             results = self._execute_query(query, (twilio_phone_number,))
             if results:
                 result = results[0]
-                # Set defaults if columns don't exist
                 if "opening_time" not in result or result.get("opening_time") is None:
                     result["opening_time"] = "09:00:00"
                 if "closing_time" not in result or result.get("closing_time") is None:
@@ -127,12 +136,15 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
                     result["forward_escalations"] = False
                 if "escalation_phone_number" not in result:
                     result["escalation_phone_number"] = None
+                if "reservation_seating_capacity" not in result or result.get("reservation_seating_capacity") is None:
+                    result["reservation_seating_capacity"] = 50
+                if "reservation_advance_days" not in result or result.get("reservation_advance_days") is None:
+                    result["reservation_advance_days"] = 30
                 if "timezone" not in result:
                     result["timezone"] = None
                 return result
             return None
         except Exception:
-            # If columns don't exist, use basic query with defaults
             query = """
                 SELECT
                     id,
@@ -159,6 +171,8 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
                 result["closing_time"] = "22:00:00"
                 result["forward_escalations"] = False
                 result["escalation_phone_number"] = None
+                result["reservation_seating_capacity"] = 50
+                result["reservation_advance_days"] = 30
                 result["timezone"] = None
                 return result
             return None
@@ -167,7 +181,6 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
         """
         Get restaurant by ID.
         """
-        # Try to get restaurant with opening/closing times, fallback to basic query if columns don't exist
         try:
             query = """
                 SELECT
@@ -186,6 +199,8 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
                     escalation_phone_number,
                     opening_time,
                     closing_time,
+                    reservation_seating_capacity,
+                    reservation_advance_days,
                     timezone,
                     created_at,
                     updated_at
@@ -196,7 +211,6 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
             results = self._execute_query(query, (restaurant_id,))
             if results:
                 result = results[0]
-                # Set defaults if columns don't exist
                 if "opening_time" not in result or result.get("opening_time") is None:
                     result["opening_time"] = "09:00:00"
                 if "closing_time" not in result or result.get("closing_time") is None:
@@ -205,12 +219,15 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
                     result["forward_escalations"] = False
                 if "escalation_phone_number" not in result:
                     result["escalation_phone_number"] = None
+                if "reservation_seating_capacity" not in result or result.get("reservation_seating_capacity") is None:
+                    result["reservation_seating_capacity"] = 50
+                if "reservation_advance_days" not in result or result.get("reservation_advance_days") is None:
+                    result["reservation_advance_days"] = 30
                 if "timezone" not in result:
                     result["timezone"] = None
                 return result
             return None
         except Exception:
-            # If columns don't exist, use basic query with defaults
             query = """
                 SELECT
                     id,
@@ -237,6 +254,8 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
                 result["closing_time"] = "22:00:00"
                 result["forward_escalations"] = False
                 result["escalation_phone_number"] = None
+                result["reservation_seating_capacity"] = 50
+                result["reservation_advance_days"] = 30
                 result["timezone"] = None
                 return result
             return None
@@ -253,8 +272,9 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
                 forward_minutes, backward_minutes, is_credit_card_required_for_reservation,
                 forward_escalations, escalation_phone_number,
                 opening_time, closing_time, timezone,
+                reservation_seating_capacity, reservation_advance_days,
                 created_at, updated_at
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
         """
         restaurant_id = self._execute_insert(
             query,
@@ -273,6 +293,8 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
                 data.get("escalation_phone_number"),
                 data.get("opening_time"),
                 data.get("closing_time"),
+                data.get("reservation_seating_capacity", 50),
+                data.get("reservation_advance_days", 30),
                 data.get("timezone"),
             ),
         )
@@ -310,7 +332,6 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
         count_result = self._execute_query(count_query, tuple(params))
         total = count_result[0]["total"] if count_result else 0
 
-        # Data query
         query = f"""
             SELECT
                 id,
@@ -328,6 +349,8 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
                 escalation_phone_number,
                 opening_time,
                 closing_time,
+                reservation_seating_capacity,
+                reservation_advance_days,
                 timezone,
                 created_at,
                 updated_at
@@ -413,6 +436,12 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
         if "closing_time" in data:
             update_fields.append("closing_time = %s")
             params.append(data["closing_time"])
+        if "reservation_seating_capacity" in data:
+            update_fields.append("reservation_seating_capacity = %s")
+            params.append(data["reservation_seating_capacity"])
+        if "reservation_advance_days" in data:
+            update_fields.append("reservation_advance_days = %s")
+            params.append(data["reservation_advance_days"])
         if "timezone" in data:
             update_fields.append("timezone = %s")
             params.append(data["timezone"])

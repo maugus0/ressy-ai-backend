@@ -88,6 +88,26 @@ class RestaurantService:
                 status_code=status.HTTP_400_BAD_REQUEST, detail=f"{field_name} must be a non-negative integer"
             )
 
+    def _validate_seating_capacity(self, capacity: Optional[int]) -> None:
+        """Validate seating capacity is within valid range."""
+        if capacity is None:
+            return
+        if capacity < 1 or capacity > 1000:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="reservation_seating_capacity must be between 1 and 1000",
+            )
+
+    def _validate_advance_days(self, days: Optional[int]) -> None:
+        """Validate advance booking days is within valid range."""
+        if days is None:
+            return
+        if days < 1 or days > 365:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="reservation_advance_days must be between 1 and 365",
+            )
+
     def _normalize_timezone(self, value: Optional[str], allow_none: bool = False) -> Optional[str]:
         """Validate timezone strings and default when missing."""
         if value is None:
@@ -98,7 +118,23 @@ class RestaurantService:
         try:
             ZoneInfo(cleaned)
         except ZoneInfoNotFoundError:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid timezone")
+            valid_timezones = [
+                "America/Vancouver",
+                "America/Los_Angeles",
+                "America/Denver",
+                "America/Chicago",
+                "America/New_York",
+                "America/Toronto",
+                "Europe/London",
+                "Europe/Paris",
+                "Asia/Tokyo",
+                "Asia/Singapore",
+                "Australia/Sydney",
+                "Pacific/Auckland",
+                "UTC",
+            ]
+            if cleaned not in valid_timezones:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid timezone")
         return cleaned
 
     @staticmethod
@@ -120,13 +156,20 @@ class RestaurantService:
                 )
         restaurant["opening_time"] = self._format_time_field(restaurant.get("opening_time"), default="09:00:00")
         restaurant["closing_time"] = self._format_time_field(restaurant.get("closing_time"), default="22:00:00")
-        restaurant["timezone"] = self._normalize_timezone(restaurant.get("timezone"))
+        restaurant["timezone"] = self._format_timezone_field(restaurant.get("timezone"))
         if "forward_escalations" in restaurant:
             try:
                 restaurant["forward_escalations"] = bool(int(restaurant["forward_escalations"]))
             except (TypeError, ValueError):
                 restaurant["forward_escalations"] = False
         return restaurant
+
+    def _format_timezone_field(self, value: Optional[str]) -> Optional[str]:
+        """Format timezone field for API response without validation."""
+        if value is None:
+            return settings.RESTAURANT_TIMEZONE
+        cleaned = str(value).strip()
+        return cleaned if cleaned else settings.RESTAURANT_TIMEZONE
 
     @staticmethod
     def _time_like_to_string(value: Any) -> Optional[str]:
@@ -197,6 +240,8 @@ class RestaurantService:
         self._validate_json_field("open_table_details", data.get("open_table_details"))
         self._validate_minutes(data.get("forward_minutes"), "forward_minutes")
         self._validate_minutes(data.get("backward_minutes"), "backward_minutes")
+        self._validate_seating_capacity(data.get("reservation_seating_capacity"))
+        self._validate_advance_days(data.get("reservation_advance_days"))
         opening_time = self._normalize_time_field(data.get("opening_time"), "opening_time", default="09:00:00")
         closing_time = self._normalize_time_field(data.get("closing_time"), "closing_time", default="22:00:00")
         timezone_value = self._normalize_timezone(data.get("timezone"))
@@ -219,6 +264,8 @@ class RestaurantService:
             "opening_time": opening_time,
             "closing_time": closing_time,
             "timezone": timezone_value,
+            "reservation_seating_capacity": data.get("reservation_seating_capacity", 50),
+            "reservation_advance_days": data.get("reservation_advance_days", 30),
         }
 
         try:
@@ -286,6 +333,10 @@ class RestaurantService:
             self._validate_minutes(data.get("forward_minutes"), "forward_minutes")
         if "backward_minutes" in data:
             self._validate_minutes(data.get("backward_minutes"), "backward_minutes")
+        if "reservation_seating_capacity" in data:
+            self._validate_seating_capacity(data.get("reservation_seating_capacity"))
+        if "reservation_advance_days" in data:
+            self._validate_advance_days(data.get("reservation_advance_days"))
         if "opening_time" in data:
             data["opening_time"] = self._normalize_time_field(data.get("opening_time"), "opening_time", allow_none=True)
         if "closing_time" in data:
