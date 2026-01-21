@@ -13,7 +13,11 @@ from app.repositories.mysql_user_restaurant_metadata_repo import (
     MySQLUserRestaurantMetadataRepository,
 )
 from app.utils.logging_config import get_logger
-from app.utils.restaurant_hours import resolve_restaurant_timezone
+from app.utils.restaurant_hours import (
+    _parse_operating_time,
+    is_datetime_within_operating_hours,
+    resolve_restaurant_timezone,
+)
 from app.utils.timezone import isoformat_z, parse_datetime
 
 
@@ -33,17 +37,11 @@ class ReservationService:
         self.metadata_repo = MySQLUserRestaurantMetadataRepository()
 
     def _parse_time(self, time_str: Any, default: str = "09:00:00") -> time:
-        """Parse time string or timedelta to time object."""
-        try:
-            if isinstance(time_str, timedelta):
-                total_seconds = int(time_str.total_seconds())
-                hours = total_seconds // 3600
-                minutes = (total_seconds % 3600) // 60
-                seconds = total_seconds % 60
-                time_str = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
-            return datetime.strptime(str(time_str), "%H:%M:%S").time()
-        except (ValueError, TypeError):
-            return datetime.strptime(default, "%H:%M:%S").time()
+        """Parse time string or timedelta to time object using shared utility."""
+        parsed = _parse_operating_time(time_str)
+        if parsed is not None:
+            return parsed
+        return datetime.strptime(default, "%H:%M:%S").time()
 
     def _validate_advance_booking(self, slot_dt: datetime, restaurant: Dict[str, Any]) -> None:
         """Validate that reservation is within advance booking limit."""
@@ -52,12 +50,11 @@ class ReservationService:
         if slot_dt > max_booking_date:
             raise ValueError(f"Reservations can only be made up to {advance_days} days in advance")
 
-    def _validate_opening_hours(self, slot_dt: datetime, opening_time: Any, closing_time: Any) -> None:
-        """Validate that reservation is during opening hours."""
-        opening = self._parse_time(opening_time, "09:00:00")
-        closing = self._parse_time(closing_time, "22:00:00")
-        slot_time = slot_dt.time()
-        if slot_time < opening or slot_time >= closing:
+    def _validate_opening_hours(self, slot_dt: datetime, restaurant: Dict[str, Any]) -> None:
+        """Validate that reservation is during opening hours using shared utility."""
+        if not is_datetime_within_operating_hours(restaurant, slot_dt):
+            opening = self._parse_time(restaurant.get("opening_time"), "09:00:00")
+            closing = self._parse_time(restaurant.get("closing_time"), "22:00:00")
             raise ValueError(f"Reservations can only be made during opening hours ({opening} - {closing})")
 
     def _check_capacity(self, restaurant_id: int, slot_dt: datetime, party_size: int, seating_capacity: int) -> None:
@@ -219,24 +216,16 @@ class ReservationService:
             raise ValueError(f"Restaurant with ID {restaurant_id} not found")
         restaurant_tz, _ = resolve_restaurant_timezone(restaurant)
 
-        opening_time = self._parse_time(restaurant.get("opening_time", "09:00:00"), "09:00:00")
-        closing_time = self._parse_time(restaurant.get("closing_time", "22:00:00"), "22:00:00")
         seating_capacity = restaurant.get("reservation_seating_capacity", 50)
 
         try:
             slot_dt_utc = parse_datetime(date_time)
             slot_dt_local = slot_dt_utc.astimezone(restaurant_tz).replace(tzinfo=None)
-            # Normalize to minute precision (remove seconds/microseconds)
             slot_dt_local = slot_dt_local.replace(second=0, microsecond=0)
         except ValueError:
             raise ValueError(f"Invalid date_time format: {date_time}")
 
-        # Validate slot is within opening/closing hours
-        slot_time = slot_dt_local.time()
-        if slot_time < opening_time or slot_time >= closing_time:
-            raise ValueError(
-                f"Slot time {slot_time} is outside restaurant operating hours ({opening_time} - {closing_time})"
-            )
+        self._validate_opening_hours(slot_dt_local, restaurant)
 
         slot_dt_utc = slot_dt_local.replace(tzinfo=restaurant_tz).astimezone(timezone.utc)
         slot_dt_utc_naive = slot_dt_utc.replace(tzinfo=None)
@@ -530,29 +519,20 @@ class ReservationService:
             raise ValueError(f"Restaurant with ID {restaurant_id} not found")
         restaurant_tz, _ = resolve_restaurant_timezone(restaurant)
 
-        opening_time = self._parse_time(restaurant.get("opening_time", "09:00:00"), "09:00:00")
-        closing_time = self._parse_time(restaurant.get("closing_time", "22:00:00"), "22:00:00")
         seating_capacity = restaurant.get("reservation_seating_capacity", 50)
 
         try:
             slot_dt_utc = parse_datetime(date_time)
             slot_dt_local = slot_dt_utc.astimezone(restaurant_tz).replace(tzinfo=None)
-            # Normalize to minute precision
             slot_dt_local = slot_dt_local.replace(second=0, microsecond=0)
         except ValueError:
             raise ValueError(f"Invalid date_time format: {date_time}")
 
-        # Validate slot is within opening/closing hours
-        slot_time = slot_dt_local.time()
-        if slot_time < opening_time or slot_time >= closing_time:
-            raise ValueError(
-                f"Slot time {slot_time} is outside restaurant operating hours ({opening_time} - {closing_time})"
-            )
+        self._validate_opening_hours(slot_dt_local, restaurant)
 
         slot_dt_utc = slot_dt_local.replace(tzinfo=restaurant_tz).astimezone(timezone.utc)
         slot_dt_utc_naive = slot_dt_utc.replace(tzinfo=None)
 
-        # Validate advance booking and capacity
         self._validate_advance_booking(slot_dt_utc_naive, restaurant)
         self._check_capacity(restaurant_id, slot_dt_utc_naive, party_size, seating_capacity)
 

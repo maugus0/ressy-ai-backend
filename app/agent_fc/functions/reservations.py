@@ -492,6 +492,24 @@ async def update_reservation(**kwargs) -> Dict[str, Any]:
         if not is_datetime_within_operating_hours(restaurant, candidate_datetime):
             return "OUT_OF_HOURS", None, reservation
 
+        new_party_size = args.party_size or reservation.get("party_size", 1)
+        if new_datetime or args.party_size:
+            seating_capacity = restaurant.get("reservation_seating_capacity", 50)
+            slot_dt = candidate_datetime.replace(second=0, microsecond=0)
+            if slot_dt.tzinfo:
+                slot_dt = slot_dt.replace(tzinfo=None)
+            used_capacity = reservation_repo.get_slot_confirmed_capacity(
+                restaurant_id=int(args.restaurant_id),
+                date_time=slot_dt,
+                reservation_type="in-house",
+            )
+            current_party_size = reservation.get("party_size", 0)
+            if reservation.get("status") == "confirmed":
+                used_capacity -= current_party_size
+            available_capacity = seating_capacity - used_capacity
+            if new_party_size > available_capacity:
+                return "CAPACITY_EXCEEDED", available_capacity, reservation
+
         # Update user's name if provided (align with order update behavior)
         if args.customer_name:
             user_repo.create_or_update_user(
@@ -565,6 +583,18 @@ async def update_reservation(**kwargs) -> Dict[str, Any]:
         return {
             "status": "FAILED",
             "message": "Unable to process the reservation time provided. Please try again with a valid time.",
+        }
+
+    if result == "CAPACITY_EXCEEDED":
+        available_capacity = previous_data if isinstance(previous_data, int) else 0
+        return {
+            "status": "CAPACITY_EXCEEDED",
+            "message": (
+                f"Sorry, we cannot accommodate the requested party size at that time. "
+                f"We have space for up to {available_capacity} guests. "
+                "Would you like to try a different time or a smaller party size?"
+            ),
+            "available_capacity": available_capacity,
         }
 
     if not result:
@@ -689,8 +719,6 @@ async def check_reservation_availability(**kwargs) -> Dict[str, Any]:
         try:
             reservation_repo = _get_reservation_repo()
 
-            # Get confirmed capacity for each slot in the time range
-            # Normalize datetime to remove timezone for consistent comparison
             search_start = start_dt.replace(tzinfo=None) if start_dt.tzinfo else start_dt
             search_end = end_dt.replace(tzinfo=None) if end_dt.tzinfo else end_dt
 
@@ -701,27 +729,29 @@ async def check_reservation_availability(**kwargs) -> Dict[str, Any]:
                 reservation_type="in-house",
             )
 
-            # Check advance booking limit
             max_booking_date = datetime.now() + timedelta(days=advance_days)
 
-            # Generate available time slots (every 30 minutes within operating hours)
             available_slots: List[Dict[str, Any]] = []
+            slots_outside_hours = 0
+            slots_at_capacity = 0
+            total_slots_checked = 0
+
             current = start_dt
             if current.tzinfo:
                 current = current.replace(tzinfo=None)
 
             while current <= search_end:
-                # Skip if beyond advance booking limit
+                total_slots_checked += 1
+
                 if current > max_booking_date:
                     current += timedelta(minutes=30)
                     continue
 
-                # Check if within operating hours
                 if not is_datetime_within_operating_hours(restaurant, current):
+                    slots_outside_hours += 1
                     current += timedelta(minutes=30)
                     continue
 
-                # Check capacity
                 slot_normalized = current.replace(second=0, microsecond=0)
                 used_capacity = capacity_map.get(slot_normalized, 0)
                 available_capacity = seating_capacity - used_capacity
@@ -734,10 +764,29 @@ async def check_reservation_availability(**kwargs) -> Dict[str, Any]:
                             "party_size_available": True,
                         }
                     )
+                else:
+                    slots_at_capacity += 1
 
                 current += timedelta(minutes=30)
 
             available = len(available_slots) > 0
+
+            message = None
+            if not available:
+                if slots_outside_hours == total_slots_checked:
+                    tz_label = resolve_restaurant_timezone(restaurant)[1]
+                    message = (
+                        f"The requested times are outside operating hours. "
+                        f"Please choose a time between {format_operating_window(restaurant)} ({tz_label})."
+                    )
+                elif slots_at_capacity > 0:
+                    message = (
+                        f"No availability for a party of {args.party_size} in the requested time range. "
+                        "Please try a different time or smaller party size."
+                    )
+                else:
+                    message = "No available slots in the requested time range."
+
             return {
                 "restaurant_id": args.restaurant_id,
                 "party_size": args.party_size,
@@ -747,16 +796,9 @@ async def check_reservation_availability(**kwargs) -> Dict[str, Any]:
                     "end": args.date_end_iso,
                 },
                 "available": available,
-                "available_slots": available_slots[:10],  # Return up to 10 slots
+                "available_slots": available_slots[:10],
                 "total_available_slots": len(available_slots),
-                "message": (
-                    None
-                    if available
-                    else (
-                        f"No availability for a party of {args.party_size} in the requested time range. "
-                        "Please try a different time or smaller party size."
-                    )
-                ),
+                "message": message,
             }
         except Exception as exc:
             logger.exception("[ERROR] check_reservation_availability failed: %s", exc)
