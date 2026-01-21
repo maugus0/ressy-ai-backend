@@ -18,6 +18,33 @@ def _strip_or_none(value: str | None) -> str | None:
     return cleaned or None
 
 
+class RestaurantFeaturesCreate(BaseModel):
+    """Feature flags for restaurant creation (defaults to enabled)."""
+
+    orders_enabled: bool = Field(True, description="Enable pickup order handling")
+    reservations_enabled: bool = Field(True, description="Enable reservation handling")
+    faqs_enabled: bool = Field(True, description="Enable FAQ handling")
+    model_config = ConfigDict(extra="ignore")
+
+
+class RestaurantFeaturesUpdate(BaseModel):
+    """Feature flags for restaurant updates (all optional)."""
+
+    orders_enabled: bool | None = Field(None, description="Enable pickup order handling")
+    reservations_enabled: bool | None = Field(None, description="Enable reservation handling")
+    faqs_enabled: bool | None = Field(None, description="Enable FAQ handling")
+    model_config = ConfigDict(extra="ignore")
+
+
+class RestaurantFeaturesResponse(BaseModel):
+    """Feature flags returned in restaurant responses."""
+
+    orders_enabled: bool
+    reservations_enabled: bool
+    faqs_enabled: bool
+    model_config = ConfigDict(extra="ignore")
+
+
 class CreateRestaurantRequest(BaseModel):
     """Payload for creating a restaurant."""
 
@@ -49,6 +76,9 @@ class CreateRestaurantRequest(BaseModel):
     )
     reservation_advance_days: int | None = Field(
         None, ge=1, le=365, description="Maximum days in advance for reservations"
+    )
+    features: RestaurantFeaturesCreate | None = Field(
+        None, description="Feature flags for the voice agent (defaults to enabled)"
     )
     model_config = ConfigDict(extra="ignore")
 
@@ -102,6 +132,7 @@ class UpdateRestaurantRequest(BaseModel):
     reservation_advance_days: int | None = Field(
         None, ge=1, le=365, description="Maximum days in advance for reservations"
     )
+    features: RestaurantFeaturesUpdate | None = Field(None, description="Feature flags for the voice agent")
     model_config = ConfigDict(extra="ignore")
 
     @field_validator("name")
@@ -145,6 +176,7 @@ class RestaurantResponse(BaseModel):
     timezone: str | None = None
     reservation_seating_capacity: int | None = None
     reservation_advance_days: int | None = None
+    features: RestaurantFeaturesResponse | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
     model_config = ConfigDict(extra="ignore")
@@ -221,6 +253,7 @@ router = APIRouter(
                         "timezone": "America/Vancouver",
                         "reservation_seating_capacity": 50,
                         "reservation_advance_days": 30,
+                        "features": {"orders_enabled": True, "reservations_enabled": True, "faqs_enabled": True},
                     },
                 }
             },
@@ -280,6 +313,11 @@ async def create_restaurant(
                                     "timezone": "America/Vancouver",
                                     "reservation_seating_capacity": 50,
                                     "reservation_advance_days": 30,
+                                    "features": {
+                                        "orders_enabled": True,
+                                        "reservations_enabled": True,
+                                        "faqs_enabled": True,
+                                    },
                                     "created_at": "2024-02-01T10:00:00Z",
                                     "updated_at": "2024-02-02T10:00:00Z",
                                 }
@@ -299,6 +337,9 @@ async def list_restaurants(
     is_credit_card_required: bool | None = Query(
         None, description="Filter by restaurants that require a credit card for reservations"
     ),
+    orders_enabled: bool | None = Query(None, description="Filter by pickup orders feature flag"),
+    reservations_enabled: bool | None = Query(None, description="Filter by reservations feature flag"),
+    faqs_enabled: bool | None = Query(None, description="Filter by FAQs feature flag"),
     restaurant_service: RestaurantService = Depends(get_restaurant_service),
 ):
     """
@@ -311,9 +352,18 @@ async def list_restaurants(
     - `limit`: Items per page (max 100)
     - `search`: Optional fuzzy search on restaurant name
     - `is_credit_card_required`: Optional filter for credit-card requirement
+    - `orders_enabled`: Optional filter for pickup orders flag
+    - `reservations_enabled`: Optional filter for reservations flag
+    - `faqs_enabled`: Optional filter for FAQs flag
     """
     return restaurant_service.list_restaurants(
-        page=page, limit=limit, search=search, is_credit_card_required=is_credit_card_required
+        page=page,
+        limit=limit,
+        search=search,
+        is_credit_card_required=is_credit_card_required,
+        orders_enabled=orders_enabled,
+        reservations_enabled=reservations_enabled,
+        faqs_enabled=faqs_enabled,
     )
 
 
@@ -348,6 +398,7 @@ async def list_restaurants(
                             "timezone": "America/Vancouver",
                             "reservation_seating_capacity": 50,
                             "reservation_advance_days": 30,
+                            "features": {"orders_enabled": True, "reservations_enabled": True, "faqs_enabled": True},
                             "created_at": "2024-02-01T10:00:00Z",
                             "updated_at": "2024-02-02T10:00:00Z",
                         }
@@ -394,6 +445,7 @@ async def get_restaurant(
                         "timezone": "America/Vancouver",
                         "reservation_seating_capacity": 75,
                         "reservation_advance_days": 60,
+                        "features": {"orders_enabled": True, "reservations_enabled": False, "faqs_enabled": True},
                     },
                 }
             },

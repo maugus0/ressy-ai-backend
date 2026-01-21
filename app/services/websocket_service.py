@@ -185,6 +185,19 @@ class WebSocketService:
         if not isinstance(service_options, dict):
             service_options = {}
 
+        raw_features = restaurant.get("features") if isinstance(restaurant.get("features"), dict) else {}
+        orders_enabled = (
+            self._normalize_boolean(raw_features.get("orders_enabled")) if "orders_enabled" in raw_features else True
+        )
+        reservations_enabled = (
+            self._normalize_boolean(raw_features.get("reservations_enabled"))
+            if "reservations_enabled" in raw_features
+            else True
+        )
+        faqs_enabled = (
+            self._normalize_boolean(raw_features.get("faqs_enabled")) if "faqs_enabled" in raw_features else True
+        )
+
         restaurant_tz, timezone_label = resolve_restaurant_timezone(restaurant)
         now_utc = datetime.now(timezone.utc)
         now_local = now_utc.astimezone(restaurant_tz)
@@ -250,6 +263,11 @@ class WebSocketService:
                 "takeout": service_options.get("takeout", True),
                 "delivery": service_options.get("delivery", False),
                 "reservations": service_options.get("reservations", True),
+            },
+            "agent_capabilities": {
+                "orders": {"enabled": orders_enabled},
+                "reservations": {"enabled": reservations_enabled},
+                "faqs": {"enabled": faqs_enabled},
             },
             "menu_by_category": all_items_by_category,
             "faqs": faqs,
@@ -548,53 +566,63 @@ class WebSocketService:
         self.logger.warning("No caller phone or provided user_id; defaulting to user_id=0 for call logging")
         return "0"
 
-    def _build_function_router(self, sts_ws) -> tuple[Transport, FunctionCallRouter]:
+    def _build_function_router(
+        self, sts_ws, feature_flags: Optional[Dict[str, Any]] = None
+    ) -> tuple[Transport, FunctionCallRouter]:
+        feature_flags = feature_flags or {}
+        orders_enabled = bool(feature_flags.get("orders_enabled", True))
+        reservations_enabled = bool(feature_flags.get("reservations_enabled", True))
+        faqs_enabled = bool(feature_flags.get("faqs_enabled", True))
+        menu_enabled = orders_enabled or faqs_enabled
         registry = FunctionRegistry()
-        registry.register(
-            name="create_order",
-            handler=orders.create_order,
-            arg_model=orders.CreateOrderArgs,
-        )
-        registry.register(
-            name="lookup_order",
-            handler=orders.lookup_order,
-            arg_model=orders.LookupOrderArgs,
-        )
-        registry.register(
-            name="update_order_details",
-            handler=orders.update_order_details,
-            arg_model=orders.UpdateOrderDetailsArgs,
-        )
-        registry.register(
-            name="check_items_availability",
-            handler=orders.check_items_availability,
-            arg_model=orders.CheckItemsAvailabilityArgs,
-        )
-        registry.register(
-            name="get_menu_item_details",
-            handler=menu.get_menu_item_details,
-            arg_model=menu.GetMenuItemDetailsArgs,
-        )
-        registry.register(
-            name="create_reservation",
-            handler=reservations.create_reservation,
-            arg_model=reservations.CreateReservationArgs,
-        )
-        registry.register(
-            name="lookup_reservation",
-            handler=reservations.lookup_reservation,
-            arg_model=reservations.LookupReservationArgs,
-        )
-        registry.register(
-            name="update_reservation",
-            handler=reservations.update_reservation,
-            arg_model=reservations.UpdateReservationArgs,
-        )
-        registry.register(
-            name="check_reservation_availability",
-            handler=reservations.check_reservation_availability,
-            arg_model=reservations.CheckAvailabilityArgs,
-        )
+        if orders_enabled:
+            registry.register(
+                name="create_order",
+                handler=orders.create_order,
+                arg_model=orders.CreateOrderArgs,
+            )
+            registry.register(
+                name="lookup_order",
+                handler=orders.lookup_order,
+                arg_model=orders.LookupOrderArgs,
+            )
+            registry.register(
+                name="update_order_details",
+                handler=orders.update_order_details,
+                arg_model=orders.UpdateOrderDetailsArgs,
+            )
+            registry.register(
+                name="check_items_availability",
+                handler=orders.check_items_availability,
+                arg_model=orders.CheckItemsAvailabilityArgs,
+            )
+        if menu_enabled:
+            registry.register(
+                name="get_menu_item_details",
+                handler=menu.get_menu_item_details,
+                arg_model=menu.GetMenuItemDetailsArgs,
+            )
+        if reservations_enabled:
+            registry.register(
+                name="create_reservation",
+                handler=reservations.create_reservation,
+                arg_model=reservations.CreateReservationArgs,
+            )
+            registry.register(
+                name="lookup_reservation",
+                handler=reservations.lookup_reservation,
+                arg_model=reservations.LookupReservationArgs,
+            )
+            registry.register(
+                name="update_reservation",
+                handler=reservations.update_reservation,
+                arg_model=reservations.UpdateReservationArgs,
+            )
+            registry.register(
+                name="check_reservation_availability",
+                handler=reservations.check_reservation_availability,
+                arg_model=reservations.CheckAvailabilityArgs,
+            )
         # registry.register(
         #     name="agent_filler",
         #     handler=conversation.agent_filler,
@@ -1441,15 +1469,17 @@ class WebSocketService:
 
                     try:
                         self.logger.info("🔗 Connected to Deepgram STS")
+                        feature_flags = restaurant_record.get("features") if restaurant_record else {}
                         config_message = self.deepgram_service.load_config(
                             think_prompt=call_resources.think_prompt,
                             key_terms=call_resources.deepgram_key_terms or None,
                             restaurant_name=call_resources.restaurant_name,
+                            feature_flags=feature_flags,
                         )
                         config_message_json = json.dumps(config_message)
                         await sts_ws.send(config_message_json)
 
-                        transport, router = self._build_function_router(sts_ws)
+                        transport, router = self._build_function_router(sts_ws, feature_flags)
                         resolved_user_id = self._resolve_user_id(caller_number, user_id)
                         call_id = self._create_call_session(
                             resolved_user_id, call_resources.restaurant_id, call_sid, None

@@ -4,7 +4,7 @@ from typing import Any
 from fastapi import APIRouter, Body, Depends, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from app.api.restaurants import get_restaurant_service
+from app.api.restaurants import RestaurantFeaturesResponse, RestaurantFeaturesUpdate, get_restaurant_service
 from app.middleware.auth_middleware import get_current_restaurant_user
 from app.utils.payload_validator import validate_payload
 
@@ -35,6 +35,7 @@ class ClientRestaurantResponse(BaseModel):
     reservation_seating_capacity: int | None = None
     reservation_advance_days: int | None = None
     timezone: str | None = None
+    features: RestaurantFeaturesResponse | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
     model_config = ConfigDict(extra="ignore")
@@ -67,6 +68,7 @@ class ClientUpdateRestaurantRequest(BaseModel):
     reservation_advance_days: int | None = Field(
         None, ge=1, le=365, description="Maximum days in advance for reservations"
     )
+    features: RestaurantFeaturesUpdate | None = Field(None, description="Feature flags for the voice agent")
     model_config = ConfigDict(extra="ignore")
 
     @field_validator("name")
@@ -122,6 +124,7 @@ router = APIRouter(
                             "reservation_seating_capacity": 50,
                             "reservation_advance_days": 30,
                             "timezone": "America/Vancouver",
+                            "features": {"orders_enabled": True, "reservations_enabled": True, "faqs_enabled": True},
                             "created_at": "2024-02-01T10:00:00Z",
                             "updated_at": "2024-02-02T10:00:00Z",
                         }
@@ -160,6 +163,7 @@ async def get_restaurant(
                         "escalation_phone_number": "+15550001111",
                         "reservation_seating_capacity": 60,
                         "reservation_advance_days": 14,
+                        "features": {"orders_enabled": True, "reservations_enabled": False, "faqs_enabled": True},
                     },
                 }
             },
@@ -185,6 +189,7 @@ async def get_restaurant(
                             "reservation_seating_capacity": 60,
                             "reservation_advance_days": 14,
                             "timezone": "America/Vancouver",
+                            "features": {"orders_enabled": True, "reservations_enabled": False, "faqs_enabled": True},
                             "created_at": "2024-02-01T10:00:00Z",
                             "updated_at": "2024-02-02T10:00:00Z",
                         }

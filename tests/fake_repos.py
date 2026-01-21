@@ -91,6 +91,9 @@ class InMemoryRestaurantRepository:
         limit: int = 20,
         search: Optional[str] = None,
         is_credit_card_required: Optional[bool] = None,
+        orders_enabled: Optional[bool] = None,
+        reservations_enabled: Optional[bool] = None,
+        faqs_enabled: Optional[bool] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         restaurants = list(self._restaurants.values())
         if search:
@@ -99,6 +102,12 @@ class InMemoryRestaurantRepository:
             restaurants = [
                 r for r in restaurants if r.get("is_credit_card_required_for_reservation") == is_credit_card_required
             ]
+        if orders_enabled is not None:
+            restaurants = [r for r in restaurants if r.get("orders_enabled", True) == orders_enabled]
+        if reservations_enabled is not None:
+            restaurants = [r for r in restaurants if r.get("reservations_enabled", True) == reservations_enabled]
+        if faqs_enabled is not None:
+            restaurants = [r for r in restaurants if r.get("faqs_enabled", True) == faqs_enabled]
         restaurants.sort(key=lambda r: r["id"], reverse=True)
         total = len(restaurants)
         start = (page - 1) * limit
@@ -122,6 +131,39 @@ class InMemoryRestaurantRepository:
 
     def get_statistics(self, restaurant_id: int) -> Dict[str, Any]:
         return copy.deepcopy(self._stats.get(restaurant_id, {}))
+
+
+class InMemoryRestaurantFeaturesRepository:
+    """In-memory restaurant feature flags repository used for tests."""
+
+    def __init__(self):
+        self._features: Dict[int, Dict[str, Any]] = {}
+
+    def get_by_restaurant_id(self, restaurant_id: int) -> Optional[Dict[str, Any]]:
+        return copy.deepcopy(self._features.get(restaurant_id))
+
+    def create_defaults(self, restaurant_id: int) -> None:
+        if restaurant_id in self._features:
+            return
+        self._features[restaurant_id] = {
+            "restaurant_id": restaurant_id,
+            "orders_enabled": True,
+            "reservations_enabled": True,
+            "faqs_enabled": True,
+            "created_at": datetime.now(timezone.utc),
+            "updated_at": datetime.now(timezone.utc),
+        }
+
+    def update(self, restaurant_id: int, data: Dict[str, Any]) -> bool:
+        if restaurant_id not in self._features:
+            self.create_defaults(restaurant_id)
+        record = self._features.get(restaurant_id, {})
+        for key in ("orders_enabled", "reservations_enabled", "faqs_enabled"):
+            if key in data:
+                record[key] = data[key]
+        record["updated_at"] = datetime.now(timezone.utc)
+        self._features[restaurant_id] = record
+        return True
 
 
 class InMemoryCallRepository:

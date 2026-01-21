@@ -3,12 +3,13 @@ from fastapi import HTTPException
 
 from app.config import settings
 from app.services.restaurant_service import RestaurantService
-from tests.fake_repos import InMemoryRestaurantRepository
+from tests.fake_repos import InMemoryRestaurantFeaturesRepository, InMemoryRestaurantRepository
 
 
 def _build_service():
     repo = InMemoryRestaurantRepository()
-    service = RestaurantService(restaurant_repo=repo)
+    features_repo = InMemoryRestaurantFeaturesRepository()
+    service = RestaurantService(restaurant_repo=repo, features_repo=features_repo)
     return service, repo
 
 
@@ -71,6 +72,19 @@ def test_update_duplicate_twilio_rejected():
     second_id = service.create_restaurant({"name": "Second", "twilio_phone_number": "+2000"})["id"]
     with pytest.raises(HTTPException):
         service.update_restaurant(second_id, {"twilio_phone_number": "+1000"})
+
+
+def test_create_restaurant_allows_feature_disable_without_forwarding():
+    service, _ = _build_service()
+    restaurant = service.create_restaurant({"name": "No Orders", "features": {"orders_enabled": False}})
+    assert restaurant["features"]["orders_enabled"] is False
+
+
+def test_update_restaurant_allows_feature_disable_without_forwarding():
+    service, _ = _build_service()
+    restaurant = service.create_restaurant({"name": "Selective"})
+    updated = service.update_restaurant(restaurant["id"], {"features": {"reservations_enabled": False}})
+    assert updated["features"]["reservations_enabled"] is False
 
 
 def test_normalize_timezone_defaults_to_setting():

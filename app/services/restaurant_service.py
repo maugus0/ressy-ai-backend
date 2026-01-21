@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from fastapi import HTTPException, status
 
 from app.config import settings
+from app.repositories.mysql_restaurant_features_repo import MySQLRestaurantFeaturesRepository
 from app.repositories.mysql_restaurant_repo import MySQLRestaurantRepository
 from app.services.admin_user_common import build_pagination
 
@@ -14,8 +15,13 @@ from app.services.admin_user_common import build_pagination
 class RestaurantService:
     """Service layer for restaurant CRUD and lookups."""
 
-    def __init__(self, restaurant_repo: Optional[MySQLRestaurantRepository] = None):
+    def __init__(
+        self,
+        restaurant_repo: Optional[MySQLRestaurantRepository] = None,
+        features_repo: Optional[MySQLRestaurantFeaturesRepository] = None,
+    ):
         self.restaurant_repo = restaurant_repo or MySQLRestaurantRepository()
+        self.features_repo = features_repo or MySQLRestaurantFeaturesRepository()
 
     # ---------- Validation helpers ----------
     def _normalize_name(self, name: Optional[str]) -> str:
@@ -145,6 +151,51 @@ class RestaurantService:
                 detail="escalation_phone_number is required when forward_escalations is enabled",
             )
 
+    @staticmethod
+    def _normalize_feature_value(value: Any, default: bool = True) -> bool:
+        """Normalize feature flag values from DB or request payloads."""
+        if value is None:
+            return default
+        if isinstance(value, bool):
+            return value
+        try:
+            return bool(int(value))
+        except (TypeError, ValueError):
+            return default
+
+    def _merge_feature_flags(self, current: Dict[str, Any], incoming: Optional[Dict[str, Any]]) -> Dict[str, bool]:
+        """Merge incoming feature flags with current values and defaults."""
+        incoming = incoming or {}
+        return {
+            "orders_enabled": self._normalize_feature_value(
+                incoming.get("orders_enabled"),
+                default=self._normalize_feature_value(current.get("orders_enabled"), True),
+            ),
+            "reservations_enabled": self._normalize_feature_value(
+                incoming.get("reservations_enabled"),
+                default=self._normalize_feature_value(current.get("reservations_enabled"), True),
+            ),
+            "faqs_enabled": self._normalize_feature_value(
+                incoming.get("faqs_enabled"),
+                default=self._normalize_feature_value(current.get("faqs_enabled"), True),
+            ),
+        }
+
+    # Not used currently. If needed, we can add this validation to restaurant create and update flows later.
+    def _validate_feature_forwarding(
+        self,
+        feature_flags: Dict[str, bool],
+        forward_escalations: bool,
+        escalation_phone_number: Optional[str],
+    ) -> None:
+        """Require forwarding when any feature is disabled."""
+        any_disabled = not all(feature_flags.values())
+        if any_disabled and (not forward_escalations or not escalation_phone_number):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=("forward_escalations and escalation_phone_number are required when any feature is disabled"),
+            )
+
     def _parse_json_fields(self, restaurant: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
         """Parse JSON columns to dicts and normalize operating hours for consistent responses."""
         if not restaurant:
@@ -162,6 +213,17 @@ class RestaurantService:
                 restaurant["forward_escalations"] = bool(int(restaurant["forward_escalations"]))
             except (TypeError, ValueError):
                 restaurant["forward_escalations"] = False
+        features_source = restaurant.get("features")
+        if features_source is None and restaurant.get("id") is not None:
+            try:
+                features_source = self.features_repo.get_by_restaurant_id(int(restaurant["id"]))
+            except Exception:
+                features_source = None
+        features = self._merge_feature_flags(restaurant, features_source)
+        restaurant["features"] = features
+        restaurant.pop("orders_enabled", None)
+        restaurant.pop("reservations_enabled", None)
+        restaurant.pop("faqs_enabled", None)
         return restaurant
 
     def _format_timezone_field(self, value: Optional[str]) -> Optional[str]:
@@ -247,6 +309,7 @@ class RestaurantService:
         timezone_value = self._normalize_timezone(data.get("timezone"))
         self._ensure_unique_name(name)
         self._ensure_unique_twilio_number(data.get("twilio_phone_number"))
+        feature_flags = self._merge_feature_flags({}, data.get("features"))
 
         payload = {
             "name": name,
@@ -270,6 +333,8 @@ class RestaurantService:
 
         try:
             restaurant_id = self.restaurant_repo.create(payload)
+            self.features_repo.create_defaults(restaurant_id)
+            self.features_repo.update(restaurant_id, feature_flags)
         except Exception as exc:  # pragma: no cover - defensive logging for DB errors
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -283,6 +348,9 @@ class RestaurantService:
         limit: int = 20,
         search: Optional[str] = None,
         is_credit_card_required: Optional[bool] = None,
+        orders_enabled: Optional[bool] = None,
+        reservations_enabled: Optional[bool] = None,
+        faqs_enabled: Optional[bool] = None,
     ) -> Dict[str, Any]:
         """Return paginated restaurants with optional filters."""
         page = max(1, int(page))
@@ -290,7 +358,15 @@ class RestaurantService:
         search_term = (search or "").strip() or None
 
         try:
-            restaurants, total = self.restaurant_repo.get_all(page, limit, search_term, is_credit_card_required)
+            restaurants, total = self.restaurant_repo.get_all(
+                page,
+                limit,
+                search_term,
+                is_credit_card_required,
+                orders_enabled,
+                reservations_enabled,
+                faqs_enabled,
+            )
         except Exception as exc:  # pragma: no cover - defensive logging for DB errors
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -309,6 +385,8 @@ class RestaurantService:
         current = self._get_or_404(int(restaurant_id))
         if not data:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No fields provided for update")
+
+        feature_updates = data.pop("features", None)
 
         # Validate provided fields
         if "name" in data:
@@ -348,15 +426,20 @@ class RestaurantService:
         escalation_phone_number = data.get("escalation_phone_number", current.get("escalation_phone_number"))
         self._validate_escalation_forwarding(forward_escalations, escalation_phone_number)
 
+        merged_features = self._merge_feature_flags(current.get("features", {}), feature_updates)
+
         try:
             updated = self.restaurant_repo.update(int(restaurant_id), data)
+            if feature_updates is not None:
+                self.features_repo.create_defaults(int(restaurant_id))
+                self.features_repo.update(int(restaurant_id), merged_features)
         except Exception as exc:  # pragma: no cover - defensive logging for DB errors
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Failed to update restaurant: {exc}",
             )
 
-        if not updated:
+        if not updated and feature_updates is None:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No fields to update")
 
         # Return refreshed record with parsed JSON fields
