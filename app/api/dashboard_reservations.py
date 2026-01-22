@@ -12,7 +12,9 @@ from pydantic import BaseModel, Field
 
 from app.middleware.auth_middleware import require_role
 from app.services.activity_history_service import ActivityHistoryService
+from app.services.notification_service import send_reservation_status_notification_async
 from app.services.reservation_service import ReservationService
+from app.services.restaurant_service import RestaurantService
 from app.services.sse_service import ReservationEventSubtype, SSEService
 
 logger = logging.getLogger(__name__)
@@ -45,7 +47,45 @@ def get_history_service() -> ActivityHistoryService:
     return ActivityHistoryService()
 
 
+def get_restaurant_service() -> RestaurantService:
+    """Dependency to get restaurant service instance."""
+    return RestaurantService()
+
+
 # ---------- Background task helpers ----------
+
+
+async def _send_reservation_notification(
+    restaurant_id: int,
+    reservation_id: int,
+    new_status: str,
+    phone_number: Optional[str],
+    confirmation_number: Optional[str] = None,
+) -> None:
+    if not phone_number:
+        return
+    try:
+        restaurant_service = RestaurantService()
+        restaurant = restaurant_service.get_restaurant(restaurant_id)
+        if not restaurant:
+            logger.warning(f"Restaurant {restaurant_id} not found for reservation notification")
+            return
+        restaurant_name = restaurant.get("name", "the restaurant")
+        restaurant_twilio_number = restaurant.get("twilio_phone_number")
+        if not restaurant_twilio_number:
+            logger.warning(f"No Twilio number configured for restaurant {restaurant_id}")
+            return
+        await send_reservation_status_notification_async(
+            restaurant_id=restaurant_id,
+            reservation_id=reservation_id,
+            new_status=new_status,
+            recipient_phone=phone_number,
+            restaurant_name=restaurant_name,
+            restaurant_twilio_number=restaurant_twilio_number,
+            confirmation_number=confirmation_number,
+        )
+    except Exception as e:
+        logger.error(f"Failed to send reservation notification for reservation {reservation_id}: {e}")
 
 
 async def _emit_reservation_sse_event(
@@ -704,6 +744,9 @@ async def update_reservation(
     """Update reservation and slot booking details."""
     reservation = _check_reservation_access(current_user, reservation_id, reservation_service)
     restaurant_id = reservation.get("restaurant_id")
+    old_status = reservation.get("status")
+    phone_number = reservation.get("phone_number")
+    confirmation_number = reservation.get("confirmation_number")
 
     # Store previous state for history logging
     previous_data = {
@@ -769,6 +812,16 @@ async def update_reservation(
                 },
             )
 
+            if request.status and request.status != old_status:
+                background_tasks.add_task(
+                    _send_reservation_notification,
+                    restaurant_id=restaurant_id,
+                    reservation_id=reservation_id,
+                    new_status=request.status,
+                    phone_number=phone_number,
+                    confirmation_number=result.get("confirmation_number") or confirmation_number,
+                )
+
         return result
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -824,6 +877,8 @@ async def cancel_reservation_dashboard(
     reservation = _check_reservation_access(current_user, reservation_id, reservation_service)
     restaurant_id = reservation.get("restaurant_id")
     previous_status = reservation.get("status")
+    phone_number = reservation.get("phone_number")
+    confirmation_number = reservation.get("confirmation_number")
 
     try:
         result = reservation_service.cancel_reservation(reservation_id=reservation_id)
@@ -852,6 +907,15 @@ async def cancel_reservation_dashboard(
                     "reservation_id": reservation_id,
                     "status": "cancelled",
                 },
+            )
+
+            background_tasks.add_task(
+                _send_reservation_notification,
+                restaurant_id=restaurant_id,
+                reservation_id=reservation_id,
+                new_status="cancelled",
+                phone_number=phone_number,
+                confirmation_number=confirmation_number,
             )
 
         return result

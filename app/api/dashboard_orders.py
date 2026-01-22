@@ -13,6 +13,8 @@ from pydantic import BaseModel, Field
 from app.middleware.auth_middleware import require_role
 from app.services.activity_history_service import ActivityHistoryService
 from app.services.dashboard_order_service import DashboardOrderService
+from app.services.notification_service import send_order_status_notification_async
+from app.services.restaurant_service import RestaurantService
 from app.services.sse_service import OrderEventSubtype, SSEService
 
 logger = logging.getLogger(__name__)
@@ -45,7 +47,43 @@ def get_history_service() -> ActivityHistoryService:
     return ActivityHistoryService()
 
 
+def get_restaurant_service() -> RestaurantService:
+    """Dependency to get restaurant service instance."""
+    return RestaurantService()
+
+
 # ---------- Background task helpers ----------
+
+
+async def _send_order_notification(
+    restaurant_id: int,
+    order_id: int,
+    new_status: str,
+    customer_phone: Optional[str],
+) -> None:
+    if not customer_phone:
+        return
+    try:
+        restaurant_service = RestaurantService()
+        restaurant = restaurant_service.get_restaurant(restaurant_id)
+        if not restaurant:
+            logger.warning(f"Restaurant {restaurant_id} not found for order notification")
+            return
+        restaurant_name = restaurant.get("name", "the restaurant")
+        restaurant_twilio_number = restaurant.get("twilio_phone_number")
+        if not restaurant_twilio_number:
+            logger.warning(f"No Twilio number configured for restaurant {restaurant_id}")
+            return
+        await send_order_status_notification_async(
+            restaurant_id=restaurant_id,
+            order_id=order_id,
+            new_status=new_status,
+            recipient_phone=customer_phone,
+            restaurant_name=restaurant_name,
+            restaurant_twilio_number=restaurant_twilio_number,
+        )
+    except Exception as e:
+        logger.error(f"Failed to send order notification for order {order_id}: {e}")
 
 
 async def _emit_order_sse_event(
@@ -938,6 +976,8 @@ async def update_order(
     """Update order details."""
     order = _check_order_access(current_user, order_id, order_service)
     restaurant_id = order.get("restaurant_id")
+    old_status = order.get("status")
+    customer_phone = order.get("customer_phone")
 
     # Store previous state for history logging
     previous_data = {
@@ -1000,6 +1040,15 @@ async def update_order(
                     "total_amount": result.get("total_amount"),
                 },
             )
+
+            if request.status and request.status != old_status:
+                background_tasks.add_task(
+                    _send_order_notification,
+                    restaurant_id=restaurant_id,
+                    order_id=order_id,
+                    new_status=request.status,
+                    customer_phone=customer_phone,
+                )
 
         return result
     except ValueError as e:
@@ -1084,6 +1133,7 @@ async def update_order_status(
     order = _check_order_access(current_user, order_id, order_service)
     restaurant_id = order.get("restaurant_id")
     old_status = order.get("status")
+    customer_phone = order.get("customer_phone")
 
     try:
         result = order_service.update_order_status(order_id=order_id, status=request.status)
@@ -1118,6 +1168,14 @@ async def update_order_status(
                     "order_id": order_id,
                     "status": request.status,
                 },
+            )
+
+            background_tasks.add_task(
+                _send_order_notification,
+                restaurant_id=restaurant_id,
+                order_id=order_id,
+                new_status=request.status,
+                customer_phone=customer_phone,
             )
 
         return result
@@ -1201,6 +1259,7 @@ async def cancel_order(
     order = _check_order_access(current_user, order_id, order_service)
     restaurant_id = order.get("restaurant_id")
     previous_status = order.get("status")
+    customer_phone = order.get("customer_phone")
 
     try:
         result = order_service.cancel_order(order_id=order_id)
@@ -1229,6 +1288,14 @@ async def cancel_order(
                     "order_id": order_id,
                     "status": "cancelled",
                 },
+            )
+
+            background_tasks.add_task(
+                _send_order_notification,
+                restaurant_id=restaurant_id,
+                order_id=order_id,
+                new_status="cancelled",
+                customer_phone=customer_phone,
             )
 
         return result
