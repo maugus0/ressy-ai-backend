@@ -332,9 +332,9 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
                 data.get("escalation_phone_number"),
                 data.get("opening_time"),
                 data.get("closing_time"),
+                data.get("timezone"),
                 data.get("reservation_seating_capacity", 50),
                 data.get("reservation_advance_days", 30),
-                data.get("timezone"),
             ),
         )
         return restaurant_id
