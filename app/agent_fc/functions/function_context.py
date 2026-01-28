@@ -2,7 +2,13 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
+
+
+class NoArgs(BaseModel):
+    """Shared empty args model for functions that rely entirely on default context."""
+
+    model_config = ConfigDict(extra="forbid")
 
 
 def split_call_context(

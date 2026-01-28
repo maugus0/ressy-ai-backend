@@ -6,14 +6,16 @@ import asyncio
 import inspect
 import logging
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.agent_fc.functions.common_restaurant import load_restaurant
-from app.agent_fc.functions.function_context import split_call_context
+from app.agent_fc.functions.function_context import NoArgs, split_call_context
 from app.config import settings
+from app.models.order_models import OrderItemOptionGroupSelection
 from app.repositories.mysql_menu_repo import MySQLMenuRepository
+from app.repositories.mysql_order_item_repo import MySQLOrderItemRepository
 from app.repositories.mysql_order_repo import MySQLOrderRepository
 from app.repositories.mysql_user_repo import MySQLUserRepository
 from app.repositories.mysql_user_restaurant_metadata_repo import (
@@ -21,6 +23,7 @@ from app.repositories.mysql_user_restaurant_metadata_repo import (
 )
 from app.services.activity_history_service import ActivityHistoryService
 from app.services.notification_service import NotificationService
+from app.services.order_customization_service import OrderCustomizationService
 from app.services.sse_service import OrderEventSubtype, SSEService
 from app.utils.restaurant_hours import format_operating_window, is_restaurant_open_now
 from app.utils.timezone import coerce_datetime
@@ -36,40 +39,46 @@ class OrderItem(BaseModel):
     quantity: int = 1
     price: Optional[float] = None
     instructions: Optional[str] = None
-    options: Dict[str, Any] = Field(default_factory=dict)
+    options: List[OrderItemOptionGroupSelection] = Field(default_factory=list)
+
+    @field_validator("options", mode="before")
+    @classmethod
+    def _normalize_options(cls, value: Any) -> List[OrderItemOptionGroupSelection]:
+        if value is None:
+            return []
+        if isinstance(value, list):
+            return value
+        if isinstance(value, dict):
+            normalized: List[OrderItemOptionGroupSelection] = []
+            for group_id, selections in value.items():
+                if selections is None:
+                    continue
+                normalized.append(
+                    OrderItemOptionGroupSelection.model_validate({"group_id": int(group_id), "selections": selections})
+                )
+            return normalized
+        return []
 
 
 class CreateOrderArgs(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    restaurant_id: int
     customer_name: Optional[str] = None
-    customer_contact: str
     pickup_time_iso: Optional[str] = None
     items: List[OrderItem]
     notes: Optional[str] = None
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
-class LookupOrderArgs(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    customer_contact: str
-    restaurant_id: int
-
-
 class LookupOrderByIdArgs(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     order_id: int
-    customer_contact: str
-    restaurant_id: int
 
 
 class CheckItemsAvailabilityArgs(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    restaurant_id: int
     items: List[OrderItem]
     location: Optional[str] = None
 
@@ -77,8 +86,6 @@ class CheckItemsAvailabilityArgs(BaseModel):
 class UpdateOrderDetailsArgs(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    customer_contact: str
-    restaurant_id: int
     customer_name: Optional[str] = None  # Allow updating customer name during order update
     items: List[OrderItem]
     customization: Dict[str, Any] = Field(default_factory=dict)
@@ -107,6 +114,11 @@ def _get_menu_repo() -> MySQLMenuRepository:
     return MySQLMenuRepository()
 
 
+def _get_order_item_repo() -> MySQLOrderItemRepository:
+    """Create fresh order item repository instance per function call."""
+    return MySQLOrderItemRepository()
+
+
 def _get_metadata_repo() -> MySQLUserRestaurantMetadataRepository:
     """Create fresh metadata repository instance per function call."""
     return MySQLUserRestaurantMetadataRepository()
@@ -120,6 +132,11 @@ def _get_history_service() -> ActivityHistoryService:
 def _get_sse_service() -> SSEService:
     """Create fresh SSE service instance per function call."""
     return SSEService()
+
+
+def _get_customization_service() -> OrderCustomizationService:
+    """Create fresh customization service per function call."""
+    return OrderCustomizationService()
 
 
 async def _emit_order_sse_event(
@@ -248,6 +265,24 @@ async def _run_service_call(func, *args, **kwargs):
     return await asyncio.to_thread(func, *args, **kwargs)
 
 
+def _context_restaurant_id(context: Dict[str, Any]) -> Optional[int]:
+    raw = context.get("restaurant_id")
+    if raw is None:
+        return None
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return None
+
+
+def _context_customer_contact(context: Dict[str, Any]) -> Optional[str]:
+    value = context.get("customer_contact") or context.get("caller_phone")
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
 def _summarize_items(items: List[OrderItem]) -> List[Dict[str, Any]]:
     return [
         {
@@ -255,7 +290,7 @@ def _summarize_items(items: List[OrderItem]) -> List[Dict[str, Any]]:
             "quantity": item.quantity,
             "item_id": item.item_id,
             "instructions": item.instructions,
-            "options": item.options,
+            "options": [option.model_dump() for option in item.options],
         }
         for item in items
     ]
@@ -272,6 +307,79 @@ def _calculate_total(items: List[OrderItem]) -> float:
         except (TypeError, ValueError):
             continue
     return round(total, 2)
+
+
+async def _validate_and_price_items(
+    items: List[OrderItem],
+) -> Tuple[List[Dict[str, Any]], Optional[List[Dict[str, Any]]]]:
+    """
+    Validate customization selections and compute pricing snapshots.
+    """
+    customization_service = _get_customization_service()
+    priced_items: List[Dict[str, Any]] = []
+    issues: List[Dict[str, Any]] = []
+
+    for item in items:
+        base_price = float(item.price or 0)
+        if not item.item_id:
+            if item.options:
+                issues.append(
+                    {
+                        "item_id": item.item_id,
+                        "item_name": item.name,
+                        "issues": [
+                            {
+                                "issue_code": "INVALID_OPTION",
+                                "message": "Customizations require a known menu item.",
+                            }
+                        ],
+                    }
+                )
+                continue
+            option_total = 0.0
+            final_unit_price = base_price
+            total_price = round(final_unit_price * max(item.quantity, 1), 2)
+            priced_items.append(
+                {
+                    "option_total": option_total,
+                    "final_unit_price": final_unit_price,
+                    "total_price": total_price,
+                    "option_snapshots": [],
+                }
+            )
+            continue
+
+        validation = await _run_service_call(customization_service.validate_item_options, item.item_id, item.options)
+        if not validation.is_valid:
+            issues.append(
+                {
+                    "item_id": item.item_id,
+                    "item_name": item.name,
+                    "issues": [issue.model_dump() for issue in validation.issues],
+                }
+            )
+            continue
+
+        item.options = validation.normalized_options
+        priced = await _run_service_call(
+            customization_service.price_item,
+            item.item_id,
+            base_price,
+            item.quantity,
+            validation.normalized_options,
+        )
+        priced_items.append(
+            {
+                "option_total": priced.option_total,
+                "final_unit_price": priced.final_unit_price,
+                "total_price": priced.total_price,
+                "option_snapshots": priced.option_snapshots,
+            }
+        )
+
+    if issues:
+        return [], issues
+    return priced_items, None
 
 
 async def _populate_missing_prices(restaurant_id: int, items: List[OrderItem]) -> None:
@@ -326,7 +434,13 @@ async def create_order(**kwargs) -> Dict[str, Any]:
     context, model_kwargs = split_call_context(kwargs, CreateOrderArgs)
     args = CreateOrderArgs.model_validate(model_kwargs)
     call_sid = context.get("call_sid")
-    restaurant = await load_restaurant(args.restaurant_id)
+    restaurant_id = _context_restaurant_id(context)
+    customer_contact = _context_customer_contact(context)
+    if restaurant_id is None:
+        return {"status": "FAILED", "message": "Missing restaurant context."}
+    if not customer_contact:
+        return {"status": "FAILED", "message": "Missing caller contact context."}
+    restaurant = await load_restaurant(restaurant_id)
     if not restaurant:
         return {
             "status": "FAILED",
@@ -340,11 +454,19 @@ async def create_order(**kwargs) -> Dict[str, Any]:
                 f"({format_operating_window(restaurant)})."
             ),
         }
-    await _populate_missing_prices(args.restaurant_id, args.items)
-    total_amount = _calculate_total(args.items)
+    await _populate_missing_prices(restaurant_id, args.items)
+    priced_items, validation_issues = await _validate_and_price_items(args.items)
+    if validation_issues:
+        return {
+            "status": "CUSTOMIZATION_INVALID",
+            "message": "Some customizations need clarification.",
+            "issues": validation_issues,
+        }
+
+    total_amount = round(sum(item["total_price"] for item in priced_items), 2)
     logger.info(
         "create_order invoked customer_contact=%s items=%s call_sid=%s",
-        args.customer_contact,
+        customer_contact,
         len(args.items),
         call_sid,
     )
@@ -354,12 +476,13 @@ async def create_order(**kwargs) -> Dict[str, Any]:
         user_repo = _get_user_repo()
         metadata_repo = _get_metadata_repo()
         order_repo = _get_order_repo()
+        order_item_repo = _get_order_item_repo()
 
         # Ensure user exists/updated
         user_id = user_repo.create_or_update_user(
             {
                 "name": args.customer_name,
-                "phone_number": args.customer_contact,
+                "phone_number": customer_contact,
                 "email": None,
                 "address": None,
                 "is_spam": False,
@@ -368,11 +491,11 @@ async def create_order(**kwargs) -> Dict[str, Any]:
         )
 
         # Create user-restaurant metadata mapping (for dashboard user visibility)
-        if args.restaurant_id:
+        if restaurant_id:
             try:
                 metadata_repo.create_mapping(
                     user_id=user_id,
-                    restaurant_id=int(args.restaurant_id),
+                    restaurant_id=restaurant_id,
                     source="order",
                     notes="Created via voice agent order",
                 )
@@ -381,7 +504,7 @@ async def create_order(**kwargs) -> Dict[str, Any]:
                 logger.warning("Failed to create user-restaurant metadata call_sid=%s: %s", call_sid, meta_err)
 
         order_payload = {
-            "restaurant_id": int(args.restaurant_id) if args.restaurant_id else None,
+            "restaurant_id": restaurant_id,
             "status": "pending",
             "total_amount": total_amount,
             "order_details": [item.model_dump() for item in args.items],
@@ -394,6 +517,22 @@ async def create_order(**kwargs) -> Dict[str, Any]:
             if item_id:
                 for _ in range(max(item.quantity, 1)):
                     order_repo.create_order_details(order_id, item_id)
+        # Store order item snapshots and options
+        for item, pricing in zip(args.items, priced_items):
+            order_item_id = order_item_repo.create_order_item(
+                order_id,
+                {
+                    "menu_item_id": item.item_id,
+                    "item_name_snapshot": item.name,
+                    "base_price_snapshot": float(item.price or 0),
+                    "quantity": item.quantity,
+                    "instructions": item.instructions,
+                    "final_unit_price_snapshot": pricing["final_unit_price"],
+                    "option_total_snapshot": pricing["option_total"],
+                    "total_price_snapshot": pricing["total_price"],
+                },
+            )
+            order_item_repo.create_order_item_options(order_item_id, pricing["option_snapshots"])
         return order_id, user_id
 
     order_id, user_id = await _run_service_call(_create)
@@ -401,16 +540,16 @@ async def create_order(**kwargs) -> Dict[str, Any]:
     # Log activity history for voice agent order creation (run in thread since it's a DB operation)
     def _log_history():
         try:
-            if args.restaurant_id:
+            if restaurant_id:
                 logger.debug(
                     "[DEBUG] Logging order creation history: order_id=%s, restaurant_id=%s",
                     order_id,
-                    args.restaurant_id,
+                    restaurant_id,
                 )
                 history_service = _get_history_service()
                 history_id = history_service.log_order_created(
                     order_id=order_id,
-                    restaurant_id=int(args.restaurant_id),
+                    restaurant_id=restaurant_id,
                     order_data={
                         "status": "pending",
                         "total_amount": total_amount,
@@ -434,10 +573,10 @@ async def create_order(**kwargs) -> Dict[str, Any]:
     await _run_service_call(_log_history)
 
     # Emit SSE event for new order (background task)
-    if args.restaurant_id:
+    if restaurant_id:
         asyncio.create_task(
             _emit_order_sse_event(
-                restaurant_id=int(args.restaurant_id),
+                restaurant_id=restaurant_id,
                 order_id=order_id,
                 subtype=OrderEventSubtype.NEW_ORDER,
                 data={
@@ -450,12 +589,12 @@ async def create_order(**kwargs) -> Dict[str, Any]:
         )
 
         # Send SMS notification for voice-created order (background task)
-        if args.customer_contact:
+        if customer_contact:
             asyncio.create_task(
                 _send_voice_order_sms(
                     restaurant=restaurant,
                     order_id=order_id,
-                    customer_phone=args.customer_contact,
+                    customer_phone=customer_contact,
                 )
             )
 
@@ -464,25 +603,31 @@ async def create_order(**kwargs) -> Dict[str, Any]:
         "message": "Order created",
         "order_id": order_id,
         "user_id": user_id,
-        "restaurant_id": args.restaurant_id,
+        "restaurant_id": restaurant_id,
         "items": _summarize_items(args.items),
         "total_amount": total_amount,
     }
 
 
 async def lookup_order(**kwargs) -> Dict[str, Any]:
-    context, model_kwargs = split_call_context(kwargs, LookupOrderArgs)
-    args = LookupOrderArgs.model_validate(model_kwargs)
+    context, model_kwargs = split_call_context(kwargs, NoArgs)
+    NoArgs.model_validate(model_kwargs)
     call_sid = context.get("call_sid")
-    logger.info("lookup_order invoked customer_contact=%s call_sid=%s", args.customer_contact, call_sid)
+    restaurant_id = _context_restaurant_id(context)
+    customer_contact = _context_customer_contact(context)
+    if restaurant_id is None:
+        return {"status": "FAILED", "message": "Missing restaurant context."}
+    if not customer_contact:
+        return {"status": "FAILED", "message": "Missing caller contact context."}
+    logger.info("lookup_order invoked customer_contact=%s call_sid=%s", customer_contact, call_sid)
 
     def _lookup():
         user_repo = _get_user_repo()
         order_repo = _get_order_repo()
-        user_id = user_repo.get_user_id_by_phone_or_email(args.customer_contact, None)
+        user_id = user_repo.get_user_id_by_phone_or_email(customer_contact, None)
         if not user_id:
             return None
-        return order_repo.get_latest_order_by_user(user_id, args.restaurant_id)
+        return order_repo.get_latest_order_by_user(user_id, restaurant_id)
 
     order = await _run_service_call(_lookup)
     if not order:
@@ -497,20 +642,26 @@ async def lookup_order_by_id(**kwargs) -> Dict[str, Any]:
     """
     Look up a specific order by order ID, verifying it belongs to the caller and restaurant.
 
-    This function requires all three parameters (order_id, restaurant_id, customer_contact)
+    This function requires order_id argument and restaurant/caller context defaults
     to match, ensuring no private data is leaked. The order will only be returned if:
     - The order_id exists
-    - The order belongs to the specified restaurant_id
-    - The order belongs to the user associated with customer_contact (phone number)
+    - The order belongs to the context restaurant_id
+    - The order belongs to the user associated with context customer_contact (phone number)
     """
     context, model_kwargs = split_call_context(kwargs, LookupOrderByIdArgs)
     args = LookupOrderByIdArgs.model_validate(model_kwargs)
     call_sid = context.get("call_sid")
+    restaurant_id = _context_restaurant_id(context)
+    customer_contact = _context_customer_contact(context)
+    if restaurant_id is None:
+        return {"status": "FAILED", "message": "Missing restaurant context."}
+    if not customer_contact:
+        return {"status": "FAILED", "message": "Missing caller contact context."}
     logger.info(
         "lookup_order_by_id invoked order_id=%s customer_contact=%s restaurant_id=%s call_sid=%s",
         args.order_id,
-        args.customer_contact,
-        args.restaurant_id,
+        customer_contact,
+        restaurant_id,
         call_sid,
     )
 
@@ -519,12 +670,12 @@ async def lookup_order_by_id(**kwargs) -> Dict[str, Any]:
         order_repo = _get_order_repo()
 
         # First, get user_id from phone number
-        user_id = user_repo.get_user_id_by_phone_or_email(args.customer_contact, None)
+        user_id = user_repo.get_user_id_by_phone_or_email(customer_contact, None)
         if not user_id:
             return None
 
         # Then verify order belongs to this user, restaurant, and matches the order_id
-        return order_repo.get_order_by_id_with_verification(args.order_id, args.restaurant_id, user_id)
+        return order_repo.get_order_by_id_with_verification(args.order_id, restaurant_id, user_id)
 
     order = await _run_service_call(_lookup)
     if not order:
@@ -557,21 +708,24 @@ async def check_items_availability(**kwargs) -> Dict[str, Any]:
     """
     Check availability of menu items.
 
-    Returns clear status for each item:
-    - AVAILABLE: Item exists and is available
-    - UNAVAILABLE: Item exists but is currently unavailable
-    - UNKNOWN_ITEM: Item not found in menu
+    Returns only item availability buckets:
+    - available_items
+    - unavailable_items
+    - unknown_items
     """
     context, model_kwargs = split_call_context(kwargs, CheckItemsAvailabilityArgs)
     args = CheckItemsAvailabilityArgs.model_validate(model_kwargs)
     call_sid = context.get("call_sid")
+    restaurant_id = _context_restaurant_id(context)
+    if restaurant_id is None:
+        return {"status": "FAILED", "message": "Missing restaurant context."}
     logger.info(
         "check_items_availability invoked restaurant_id=%s item_count=%s call_sid=%s",
-        args.restaurant_id,
+        restaurant_id,
         len(args.items),
         call_sid,
     )
-    restaurant = await load_restaurant(args.restaurant_id)
+    restaurant = await load_restaurant(restaurant_id)
     if not restaurant:
         return {
             "status": "FAILED",
@@ -587,51 +741,30 @@ async def check_items_availability(**kwargs) -> Dict[str, Any]:
         }
     menu_repo = _get_menu_repo()
     # Get ALL items (both available and unavailable) to properly check status
-    all_menu_items = await _run_service_call(menu_repo.get_menus_by_restaurant, args.restaurant_id)
+    all_menu_items = await _run_service_call(menu_repo.get_menus_by_restaurant, restaurant_id)
     all_menu_items = _flatten_menu_items(all_menu_items)
-    results = []
+    available_items: List[Dict[str, Any]] = []
+    unavailable_items: List[Dict[str, Any]] = []
+    unknown_items: List[Dict[str, Any]] = []
     for requested in args.items:
         match = _match_menu_item(all_menu_items, requested)
         if match:
             # Normalize availability to boolean (handles MySQL TINYINT 0/1 and Python booleans)
             is_available_bool = _normalize_boolean(match.get("is_available"))
-            item_id = match.get("id")
-            price = match.get("price")
-            category = match.get("category")
-            item_name = match.get("item_name") or match.get("name") or requested.name
+            item_ref = {"item_id": match.get("id"), "requested_item": requested.name}
 
             if is_available_bool:
-                results.append(
-                    {
-                        "requested_item": requested.name,
-                        "status": "AVAILABLE",
-                        "item_id": item_id,
-                        "price": str(price) if price is not None else "0",
-                        "category": category,
-                        "message": f"{item_name} is available for ${price if price else 0}.",
-                    },
-                )
+                available_items.append(item_ref)
             else:
-                results.append(
-                    {
-                        "requested_item": requested.name,
-                        "status": "UNAVAILABLE",
-                        "item_id": item_id,
-                        "message": f"{item_name} is currently unavailable.",
-                    },
-                )
+                unavailable_items.append(item_ref)
         else:
-            results.append(
-                {
-                    "requested_item": requested.name,
-                    "status": "UNKNOWN_ITEM",
-                    "message": f"{requested.name} is not on our menu.",
-                },
-            )
+            unknown_items.append({"requested_item": requested.name})
 
     return {
-        "restaurant_id": args.restaurant_id,
-        "results": results,
+        "restaurant_id": restaurant_id,
+        "available_items": available_items,
+        "unavailable_items": unavailable_items,
+        "unknown_items": unknown_items,
     }
 
 
@@ -664,7 +797,13 @@ async def update_order_details(**kwargs) -> Dict[str, Any]:
     context, model_kwargs = split_call_context(kwargs, UpdateOrderDetailsArgs)
     args = UpdateOrderDetailsArgs.model_validate(model_kwargs)
     call_sid = context.get("call_sid")
-    restaurant = await load_restaurant(args.restaurant_id)
+    restaurant_id = _context_restaurant_id(context)
+    customer_contact = _context_customer_contact(context)
+    if restaurant_id is None:
+        return {"status": "FAILED", "message": "Missing restaurant context."}
+    if not customer_contact:
+        return {"status": "FAILED", "message": "Missing caller contact context."}
+    restaurant = await load_restaurant(restaurant_id)
     if not restaurant:
         return {
             "status": "FAILED",
@@ -678,18 +817,27 @@ async def update_order_details(**kwargs) -> Dict[str, Any]:
                 f"({format_operating_window(restaurant)})."
             ),
         }
-    await _populate_missing_prices(args.restaurant_id, args.items)
-    logger.info("update_order_details invoked customer_contact=%s call_sid=%s", args.customer_contact, call_sid)
+    await _populate_missing_prices(restaurant_id, args.items)
+    priced_items, validation_issues = await _validate_and_price_items(args.items)
+    if validation_issues:
+        return {
+            "status": "CUSTOMIZATION_INVALID",
+            "message": "Some customizations need clarification.",
+            "issues": validation_issues,
+        }
+
+    logger.info("update_order_details invoked customer_contact=%s call_sid=%s", customer_contact, call_sid)
 
     def _update():
         user_repo = _get_user_repo()
         order_repo = _get_order_repo()
+        order_item_repo = _get_order_item_repo()
 
-        user_id = user_repo.get_user_id_by_phone_or_email(args.customer_contact, None)
+        user_id = user_repo.get_user_id_by_phone_or_email(customer_contact, None)
         if not user_id:
             return None, None, None, None
 
-        order = order_repo.get_latest_order_by_user(user_id, args.restaurant_id)
+        order = order_repo.get_latest_order_by_user(user_id, restaurant_id)
         if not order:
             return None, None, None, None
         order_id = order.get("id")
@@ -707,7 +855,7 @@ async def update_order_details(**kwargs) -> Dict[str, Any]:
             user_repo.create_or_update_user(
                 {
                     "name": args.customer_name,
-                    "phone_number": args.customer_contact,
+                    "phone_number": customer_contact,
                     "email": None,
                     "address": None,
                     "is_spam": False,
@@ -724,8 +872,24 @@ async def update_order_details(**kwargs) -> Dict[str, Any]:
         }
 
         order_details = [item.model_dump() for item in args.items]
-        total_amount = _calculate_total(args.items)
+        total_amount = round(sum(item["total_price"] for item in priced_items), 2)
         order_repo.update_order_details(order_id, order_details, args.customization, total_amount)
+        order_item_repo.delete_order_items_by_order(order_id)
+        for item, pricing in zip(args.items, priced_items):
+            order_item_id = order_item_repo.create_order_item(
+                order_id,
+                {
+                    "menu_item_id": item.item_id,
+                    "item_name_snapshot": item.name,
+                    "base_price_snapshot": float(item.price or 0),
+                    "quantity": item.quantity,
+                    "instructions": item.instructions,
+                    "final_unit_price_snapshot": pricing["final_unit_price"],
+                    "option_total_snapshot": pricing["option_total"],
+                    "total_price_snapshot": pricing["total_price"],
+                },
+            )
+            order_item_repo.create_order_item_options(order_item_id, pricing["option_snapshots"])
 
         # Update status if provided (e.g., cancellation within update window)
         if args.status:
@@ -736,7 +900,7 @@ async def update_order_details(**kwargs) -> Dict[str, Any]:
         return updated, previous_data, order.get("restaurant_id"), order
 
     result, previous_data, restaurant_id, original_order = await _run_service_call(_update)
-    restaurant_id = restaurant_id or args.restaurant_id
+    restaurant_id = restaurant_id or _context_restaurant_id(context)
 
     # Handle update window expired
     if result == "UPDATE_WINDOW_EXPIRED":

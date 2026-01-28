@@ -72,7 +72,27 @@ BULK_AVAILABILITY_SCHEMA = BulkAvailabilityRequest.model_json_schema()
                     },
                 }
             },
-        }
+        },
+        "responses": {
+            201: {
+                "description": "Menu item created",
+                "content": {
+                    "application/json": {
+                        "example": {
+                            "id": 1,
+                            "restaurant_id": 10,
+                            "restaurant_name": "Ressy Test Kitchen",
+                            "item_name": "Margherita Pizza",
+                            "price": 15.99,
+                            "category": "Pizza",
+                            "sub_category": "Classic",
+                            "is_available": True,
+                            "is_special": False,
+                        }
+                    }
+                },
+            }
+        },
     },
 )
 async def create_menu_item(
@@ -115,6 +135,34 @@ async def create_menu_item(
     "/restaurants/{restaurant_id}/menu",
     summary="List Menu Items",
     description="Retrieve paginated menu items for a restaurant with optional filters. Requires admin authentication.",
+    openapi_extra={
+        "responses": {
+            200: {
+                "description": "Menu items retrieved",
+                "content": {
+                    "application/json": {
+                        "example": {
+                            "items": [
+                                {
+                                    "id": 1,
+                                    "restaurant_id": 10,
+                                    "restaurant_name": "Ressy Test Kitchen",
+                                    "item_name": "Margherita Pizza",
+                                    "price": 15.99,
+                                    "category": "Pizza",
+                                    "sub_category": "Classic",
+                                    "is_available": True,
+                                    "is_special": False,
+                                    "option_groups": None,
+                                }
+                            ],
+                            "pagination": {"page": 1, "limit": 50, "total": 1, "pages": 1},
+                        }
+                    }
+                },
+            }
+        }
+    },
 )
 async def list_menu_items(  # pylint: disable=too-many-arguments,too-many-positional-arguments
     restaurant_id: int,
@@ -171,6 +219,59 @@ async def list_menu_items(  # pylint: disable=too-many-arguments,too-many-positi
     "/menu/{menu_id}",
     summary="Get Menu Item by ID",
     description="Retrieve detailed information about a specific menu item. Requires admin authentication.",
+    openapi_extra={
+        "responses": {
+            200: {
+                "description": "Menu item retrieved",
+                "content": {
+                    "application/json": {
+                        "example": {
+                            "id": 1,
+                            "restaurant_id": 10,
+                            "restaurant_name": "Ressy Test Kitchen",
+                            "item_name": "Margherita Pizza",
+                            "price": 15.99,
+                            "category": "Pizza",
+                            "sub_category": "Classic",
+                            "item_desc": "Fresh mozzarella, tomato sauce, and basil",
+                            "avg_prep_time": 20,
+                            "is_available": True,
+                            "is_special": False,
+                            "option_groups": [
+                                {
+                                    "id": 12,
+                                    "restaurant_id": 10,
+                                    "name": "Toppings",
+                                    "description": "Choose your toppings",
+                                    "selection_type": "multiple",
+                                    "min_select": 0,
+                                    "max_select": 5,
+                                    "free_allowance": 2,
+                                    "allows_quantity": True,
+                                    "max_quantity_per_option": 2,
+                                    "prompt_style": "ASK_ALWAYS",
+                                    "is_required": False,
+                                    "is_available": True,
+                                    "sort_order": 1,
+                                    "values": [
+                                        {
+                                            "id": 101,
+                                            "group_id": 12,
+                                            "name": "Pepperoni",
+                                            "price_delta": 1.5,
+                                            "is_default": False,
+                                            "is_available": True,
+                                            "sort_order": 1,
+                                        }
+                                    ],
+                                }
+                            ],
+                        }
+                    }
+                },
+            }
+        }
+    },
 )
 async def get_menu_item(
     menu_id: int,
@@ -211,7 +312,29 @@ async def get_menu_item(
                     },
                 }
             },
-        }
+        },
+        "responses": {
+            200: {
+                "description": "Menu item updated",
+                "content": {
+                    "application/json": {
+                        "example": {
+                            "id": 1,
+                            "restaurant_id": 10,
+                            "restaurant_name": "Ressy Test Kitchen",
+                            "item_name": "Margherita Pizza",
+                            "price": 17.99,
+                            "category": "Pizza",
+                            "sub_category": "Classic",
+                            "item_desc": "Updated description",
+                            "avg_prep_time": 20,
+                            "is_available": True,
+                            "is_special": True,
+                        }
+                    }
+                },
+            }
+        },
     },
 )
 async def update_menu_item(

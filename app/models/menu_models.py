@@ -8,6 +8,8 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from app.models.menu_option_models import MenuOptionGroupResponse
+
 
 class MenuItemCreate(BaseModel):
     """Request model for creating a menu item."""
@@ -170,6 +172,9 @@ class MenuItemResponse(BaseModel):
     is_special: bool = Field(..., description="Whether the item is marked as a special")
     created_at: Optional[datetime] = Field(None, description="Timestamp when the item was created")
     updated_at: Optional[datetime] = Field(None, description="Timestamp when the item was last updated")
+    option_groups: Optional[List[MenuOptionGroupResponse]] = Field(
+        None, description="Customization option groups for the item"
+    )
 
     model_config = ConfigDict(from_attributes=True)
 

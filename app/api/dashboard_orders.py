@@ -199,6 +199,21 @@ class OrderItemRequest(BaseModel):
         description="Special instructions for this item",
         json_schema_extra={"example": "Extra cheese, no onions"},
     )
+    options: Optional[List[Dict[str, Any]]] = Field(
+        None,
+        description="Customization selections for this item",
+        json_schema_extra={
+            "example": [
+                {
+                    "group_id": 12,
+                    "selections": [
+                        {"value_id": 101, "quantity": 1},
+                        {"value_id": 102, "quantity": 2},
+                    ],
+                }
+            ]
+        },
+    )
 
 
 class CreateOrderRequest(BaseModel):
@@ -210,13 +225,20 @@ class CreateOrderRequest(BaseModel):
         description="List of order items (at least one required). Each item must have a name and quantity.",
         json_schema_extra={
             "example": [
-                {"item_id": 444, "name": "Sample Item", "quantity": 1, "price": 5},
+                {
+                    "item_id": 444,
+                    "name": "Sample Item",
+                    "quantity": 1,
+                    "price": 5,
+                    "options": [{"group_id": 12, "selections": [{"value_id": 101, "quantity": 1}]}],
+                },
                 {
                     "item_id": 102,
                     "name": "Caesar Salad",
                     "quantity": 1,
                     "price": 8.99,
                     "instructions": "Dressing on side",
+                    "options": [{"group_id": 18, "selections": [{"value_id": 205, "quantity": 1}]}],
                 },
             ]
         },
@@ -260,7 +282,15 @@ class CreateOrderRequest(BaseModel):
         "json_schema_extra": {
             "examples": [
                 {
-                    "order_details": [{"item_id": 444, "name": "Ahan Item", "quantity": 1, "price": 5}],
+                    "order_details": [
+                        {
+                            "item_id": 444,
+                            "name": "Ahan Item",
+                            "quantity": 1,
+                            "price": 5,
+                            "options": [{"group_id": 12, "selections": [{"value_id": 101, "quantity": 1}]}],
+                        }
+                    ],
                     "total_amount": 5,
                     "customer_name": "Ahan Jaiswal",
                     "customer_phone": "+6588292920",
@@ -289,6 +319,17 @@ class UpdateOrderRequest(BaseModel):
     order_details: Optional[List[OrderItemRequest]] = Field(
         None,
         description="Updated list of order items",
+        json_schema_extra={
+            "example": [
+                {
+                    "item_id": 321,
+                    "name": "Veggie Pizza",
+                    "quantity": 1,
+                    "price": 14.99,
+                    "options": [{"group_id": 12, "selections": [{"value_id": 101, "quantity": 1}]}],
+                }
+            ]
+        },
     )
     customization: Optional[Dict[str, Any]] = Field(
         None,
@@ -320,6 +361,68 @@ class OrderItemResponse(BaseModel):
     instructions: Optional[str] = Field(None, description="Special instructions")
 
 
+class OrderItemOptionResponse(BaseModel):
+    """Response model for order item option snapshot."""
+
+    option_value_id: Optional[int] = Field(None, description="Menu option value ID")
+    option_group_name_snapshot: str = Field(..., description="Option group name snapshot")
+    option_value_name_snapshot: str = Field(..., description="Option value name snapshot")
+    price_delta_snapshot: float = Field(..., description="Option price delta snapshot")
+    quantity: int = Field(..., description="Option quantity")
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "option_value_id": 101,
+                "option_group_name_snapshot": "Toppings",
+                "option_value_name_snapshot": "Pepperoni",
+                "price_delta_snapshot": 1.5,
+                "quantity": 1,
+            }
+        }
+    }
+
+
+class OrderItemSnapshotResponse(BaseModel):
+    """Response model for order item snapshots."""
+
+    id: int = Field(..., description="Order item ID")
+    menu_item_id: Optional[int] = Field(None, description="Menu item ID")
+    item_name_snapshot: str = Field(..., description="Item name snapshot")
+    base_price_snapshot: float = Field(..., description="Base price snapshot")
+    quantity: int = Field(..., description="Quantity")
+    instructions: Optional[str] = Field(None, description="Special instructions")
+    final_unit_price_snapshot: float = Field(..., description="Final unit price snapshot")
+    option_total_snapshot: float = Field(..., description="Options total snapshot")
+    total_price_snapshot: float = Field(..., description="Total price snapshot")
+    options: List[OrderItemOptionResponse] = Field(default_factory=list, description="Option snapshots")
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "id": 55,
+                "menu_item_id": 444,
+                "item_name_snapshot": "Margherita Pizza",
+                "base_price_snapshot": 12.99,
+                "quantity": 1,
+                "instructions": "Extra cheese",
+                "final_unit_price_snapshot": 14.49,
+                "option_total_snapshot": 1.5,
+                "total_price_snapshot": 14.49,
+                "options": [
+                    {
+                        "option_value_id": 101,
+                        "option_group_name_snapshot": "Toppings",
+                        "option_value_name_snapshot": "Pepperoni",
+                        "price_delta_snapshot": 1.5,
+                        "quantity": 1,
+                    }
+                ],
+            }
+        }
+    }
+
+
 class HistoryEntryResponse(BaseModel):
     """Response model for a history entry in order/reservation detail."""
 
@@ -341,6 +444,9 @@ class OrderResponse(BaseModel):
     total_amount: float = Field(..., description="Total order amount")
     order_details: List[Dict[str, Any]] = Field(..., description="Order items")
     customization: Optional[Dict[str, Any]] = Field(None, description="Customization options")
+    order_items: Optional[List[OrderItemSnapshotResponse]] = Field(
+        None, description="Order item snapshots with customization details"
+    )
     customer_name: Optional[str] = Field(None, description="Customer name")
     customer_phone: Optional[str] = Field(None, description="Customer phone")
     customer_email: Optional[str] = Field(None, description="Customer email")
@@ -394,7 +500,14 @@ class CreateOrderResponse(BaseModel):
                 "status": "pending",
                 "total_amount": 5.0,
                 "order_details": [
-                    {"item_id": 444, "name": "Ahan Item", "quantity": 1, "price": 5.0, "instructions": None}
+                    {
+                        "item_id": 444,
+                        "name": "Ahan Item",
+                        "quantity": 1,
+                        "price": 5.0,
+                        "instructions": None,
+                        "options": [{"group_id": 12, "selections": [{"value_id": 101, "quantity": 1}]}],
+                    }
                 ],
                 "customization": {},
                 "customer_name": "Ahan Jaiswal",
@@ -560,7 +673,8 @@ phone orders, or to create orders on behalf of customers.
       "item_id": 444,
       "name": "Ahan Item",
       "quantity": 1,
-      "price": 5
+      "price": 5,
+      "options": [{"group_id": 12, "selections": [{"value_id": 101, "quantity": 1}]}]
     }
   ],
   "total_amount": 5,
@@ -586,7 +700,14 @@ phone orders, or to create orders on behalf of customers.
                         "status": "pending",
                         "total_amount": 5.0,
                         "order_details": [
-                            {"item_id": 444, "name": "Ahan Item", "quantity": 1, "price": 5.0, "instructions": None}
+                            {
+                                "item_id": 444,
+                                "name": "Ahan Item",
+                                "quantity": 1,
+                                "price": 5.0,
+                                "instructions": None,
+                                "options": [{"group_id": 12, "selections": [{"value_id": 101, "quantity": 1}]}],
+                            }
                         ],
                         "customization": {},
                         "customer_name": "Ahan Jaiswal",
@@ -774,9 +895,37 @@ and includes the option to show soft-deleted orders.
                                 "status": "preparing",
                                 "total_amount": 34.97,
                                 "order_details": [
-                                    {"item_id": 101, "name": "Margherita Pizza", "quantity": 2, "price": 12.99}
+                                    {
+                                        "item_id": 101,
+                                        "name": "Margherita Pizza",
+                                        "quantity": 2,
+                                        "price": 12.99,
+                                        "options": [{"group_id": 12, "selections": [{"value_id": 101, "quantity": 1}]}],
+                                    }
                                 ],
                                 "customization": {"delivery": True},
+                                "order_items": [
+                                    {
+                                        "id": 55,
+                                        "menu_item_id": 101,
+                                        "item_name_snapshot": "Margherita Pizza",
+                                        "base_price_snapshot": 12.99,
+                                        "quantity": 2,
+                                        "instructions": None,
+                                        "final_unit_price_snapshot": 13.99,
+                                        "option_total_snapshot": 1.0,
+                                        "total_price_snapshot": 27.98,
+                                        "options": [
+                                            {
+                                                "option_value_id": 101,
+                                                "option_group_name_snapshot": "Toppings",
+                                                "option_value_name_snapshot": "Pepperoni",
+                                                "price_delta_snapshot": 1.0,
+                                                "quantity": 1,
+                                            }
+                                        ],
+                                    }
+                                ],
                                 "customer_name": "John Smith",
                                 "customer_phone": "+1234567890",
                                 "customer_email": "john@example.com",
@@ -886,7 +1035,13 @@ previous and new values, and a human-readable summary.
                         "status": "preparing",
                         "total_amount": 34.97,
                         "order_details": [
-                            {"item_id": 101, "name": "Margherita Pizza", "quantity": 2, "price": 12.99},
+                            {
+                                "item_id": 101,
+                                "name": "Margherita Pizza",
+                                "quantity": 2,
+                                "price": 12.99,
+                                "options": [{"group_id": 12, "selections": [{"value_id": 101, "quantity": 1}]}],
+                            },
                             {"item_id": 102, "name": "Caesar Salad", "quantity": 1, "price": 8.99},
                         ],
                         "customization": {"delivery": True, "notes": "Ring doorbell"},
@@ -1001,8 +1156,38 @@ Cancelled orders cannot be updated (except by restoring them first).
                         "restaurant_id": 1,
                         "status": "ready",
                         "total_amount": 34.97,
-                        "order_details": [{"item_id": 101, "name": "Margherita Pizza", "quantity": 2, "price": 12.99}],
+                        "order_details": [
+                            {
+                                "item_id": 101,
+                                "name": "Margherita Pizza",
+                                "quantity": 2,
+                                "price": 12.99,
+                                "options": [{"group_id": 12, "selections": [{"value_id": 101, "quantity": 1}]}],
+                            }
+                        ],
                         "customization": {"delivery": True},
+                        "order_items": [
+                            {
+                                "id": 55,
+                                "menu_item_id": 101,
+                                "item_name_snapshot": "Margherita Pizza",
+                                "base_price_snapshot": 12.99,
+                                "quantity": 2,
+                                "instructions": None,
+                                "final_unit_price_snapshot": 13.99,
+                                "option_total_snapshot": 1.0,
+                                "total_price_snapshot": 27.98,
+                                "options": [
+                                    {
+                                        "option_value_id": 101,
+                                        "option_group_name_snapshot": "Toppings",
+                                        "option_value_name_snapshot": "Pepperoni",
+                                        "price_delta_snapshot": 1.0,
+                                        "quantity": 1,
+                                    }
+                                ],
+                            }
+                        ],
                         "customer_name": "John Smith",
                         "customer_phone": "+1234567890",
                         "customer_email": "john@example.com",

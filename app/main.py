@@ -21,6 +21,7 @@ from app.api import (
     client_client_users,
     client_escalations,
     client_faqs,
+    client_menu_options,
     client_menus,
     client_restaurant,
     client_users,
@@ -30,6 +31,7 @@ from app.api import (
     dashboard_users,
     escalations,
     faqs,
+    menu_options,
     menus,
     opentable,
     reservations,
@@ -193,6 +195,7 @@ app.include_router(client_escalations.router)
 app.include_router(dashboard_notifications.router)
 app.include_router(admin_notifications.router)
 app.include_router(menus.router)
+app.include_router(menu_options.router)
 app.include_router(
     restaurants.router
     # Note: restaurants router declares its own prefix/tags to keep Admin CRM docs localized.
@@ -209,6 +212,7 @@ app.include_router(admin_users.router, tags=["Admin Users"])
 app.include_router(client_users.router, tags=["Client Users"])
 app.include_router(client_faqs.router)
 app.include_router(client_menus.router)
+app.include_router(client_menu_options.router)
 app.include_router(client_restaurant.router)
 app.include_router(client_client_users.router)
 app.include_router(client_analytics.router, tags=["Client Analytics"])

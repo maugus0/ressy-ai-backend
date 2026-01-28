@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Tuple
 
-from pydantic import BaseModel, ConfigDict, model_validator
+from pydantic import BaseModel, ConfigDict, Field
 
-from app.agent_fc.functions.function_context import split_call_context
+from app.agent_fc.functions.function_context import NoArgs, split_call_context
 from app.repositories.mysql_menu_repo import MySQLMenuRepository
 from app.utils.logging_config import get_logger
 
@@ -25,26 +25,18 @@ def _get_menu_repo() -> MySQLMenuRepository:
     return MySQLMenuRepository()
 
 
-class ListMenuArgs(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    restaurant_id: int
-
-
 class GetMenuItemDetailsArgs(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    restaurant_id: int
-    item_id: Optional[int] = None
-    search_term: Optional[str] = None
+    item_id: int
 
-    @model_validator(mode="after")
-    def _ensure_lookup_params(self) -> "GetMenuItemDetailsArgs":
-        term = (self.search_term or "").strip()
-        if self.item_id is None and not term:
-            raise ValueError("Either item_id or search_term is required")
-        self.search_term = term or None
-        return self
+
+class GetMenuItemCustomizationsArgs(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    item_ids: List[int] = Field(..., min_length=1)
+    exclude_group_ids: List[int] = Field(default_factory=list)
+    include_ask_if_mentioned: bool = False
 
 
 def _normalize_boolean(value: Any) -> bool:
@@ -75,8 +67,63 @@ def _normalize_boolean(value: Any) -> bool:
         return False
 
 
+def _is_available(record: Dict[str, Any]) -> bool:
+    return _normalize_boolean(record.get("is_available", True))
+
+
+def _format_option_value(value: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "id": value.get("id"),
+        "name": value.get("name"),
+        "price_delta": value.get("price_delta"),
+        "is_default": _normalize_boolean(value.get("is_default")),
+    }
+
+
+def _format_option_group(group: Dict[str, Any]) -> Dict[str, Any]:
+    values = [
+        _format_option_value(value)
+        for value in sorted(group.get("values", []), key=lambda entry: entry.get("sort_order", 0))
+        if _is_available(value)
+    ]
+    return {
+        "id": group.get("id"),
+        "name": group.get("name"),
+        "description": group.get("description"),
+        "selection_type": group.get("selection_type"),
+        "min_select": group.get("min_select"),
+        "max_select": group.get("max_select"),
+        "free_allowance": group.get("free_allowance"),
+        "allows_quantity": _normalize_boolean(group.get("allows_quantity")),
+        "max_quantity_per_option": group.get("max_quantity_per_option"),
+        "prompt_style": group.get("prompt_style"),
+        "is_required": _normalize_boolean(group.get("is_required")),
+        "values": values,
+    }
+
+
+def _group_id(group: Dict[str, Any]) -> int | None:
+    raw_group_id = group.get("id")
+    if raw_group_id is None:
+        return None
+    try:
+        return int(raw_group_id)
+    except (TypeError, ValueError):
+        return None
+
+
 async def _run_repo_call(func, *args, **kwargs):
     return await asyncio.to_thread(func, *args, **kwargs)
+
+
+def _context_restaurant_id(context: Dict[str, Any]) -> int | None:
+    raw = context.get("restaurant_id")
+    if raw is None:
+        return None
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return None
 
 
 def _summarize_menu_items(items: List[Dict[str, Any]]) -> Tuple[List[str], List[Dict[str, Any]]]:
@@ -109,28 +156,31 @@ async def list_menu_items(**kwargs) -> Dict[str, Any]:
     rather than hiding them completely. The agent should mention unavailable items but clearly
     indicate they cannot be ordered right now.
     """
-    context, model_kwargs = split_call_context(kwargs, ListMenuArgs)
-    args = ListMenuArgs.model_validate(model_kwargs)
+    context, model_kwargs = split_call_context(kwargs, NoArgs)
+    NoArgs.model_validate(model_kwargs)
     call_sid = context.get("call_sid")
-    logger.info("list_menu_items invoked restaurant_id=%s call_sid=%s", args.restaurant_id, call_sid)
+    restaurant_id = _context_restaurant_id(context)
+    if restaurant_id is None:
+        return {"status": "ERROR", "message": "Missing restaurant context for menu lookup."}
+    logger.info("list_menu_items invoked restaurant_id=%s call_sid=%s", restaurant_id, call_sid)
 
     def _fetch():
         menu_repo = _get_menu_repo()
         # Get ALL items (both available and unavailable) to show complete menu
-        return menu_repo.get_menus_by_restaurant(args.restaurant_id)
+        return menu_repo.get_menus_by_restaurant(restaurant_id)
 
     try:
         all_items = await _run_repo_call(_fetch)
     except Exception as exc:  # noqa: BLE001 - defensive for agent calls
         logger.exception(
             "[ERROR] list_menu_items failed restaurant_id=%s call_sid=%s: %s",
-            args.restaurant_id,
+            restaurant_id,
             call_sid,
             exc,
         )
         return {
             "status": "ERROR",
-            "restaurant_id": args.restaurant_id,
+            "restaurant_id": restaurant_id,
             "message": "Unable to load menu right now.",
         }
 
@@ -149,7 +199,7 @@ async def list_menu_items(**kwargs) -> Dict[str, Any]:
 
     return {
         "status": status,
-        "restaurant_id": args.restaurant_id,
+        "restaurant_id": restaurant_id,
         "categories": all_categories,
         "items_available": summaries_available,
         "items_unavailable": summaries_unavailable,
@@ -161,7 +211,7 @@ async def list_menu_items(**kwargs) -> Dict[str, Any]:
 
 async def get_menu_item_details(**kwargs) -> Dict[str, Any]:
     """
-    Lookup detailed information about a single menu item using its ID, or search for items.
+    Lookup detailed information about a single menu item using its ID.
 
     Creates a fresh repository instance per call to ensure up-to-date menu data
     during active voice calls (fixes mid-call menu updates not being detected).
@@ -169,76 +219,55 @@ async def get_menu_item_details(**kwargs) -> Dict[str, Any]:
     context, model_kwargs = split_call_context(kwargs, GetMenuItemDetailsArgs)
     args = GetMenuItemDetailsArgs.model_validate(model_kwargs)
     call_sid = context.get("call_sid")
-    item: Optional[Dict[str, Any]] = None
+    restaurant_id = _context_restaurant_id(context)
+    if restaurant_id is None:
+        return {
+            "status": "ERROR",
+            "item_id": args.item_id,
+            "message": "Missing restaurant context for item details lookup.",
+        }
     logger.info(
-        "get_menu_item_details invoked restaurant_id=%s item_id=%s search_term=%s call_sid=%s",
-        args.restaurant_id,
+        "get_menu_item_details invoked restaurant_id=%s item_id=%s call_sid=%s",
+        restaurant_id,
         args.item_id,
-        args.search_term,
         call_sid,
     )
 
     def _fetch_by_id():
         menu_repo = _get_menu_repo()
-        found = menu_repo.get_menu_by_id(args.restaurant_id, args.item_id)
+        found = menu_repo.get_menu_by_id(restaurant_id, args.item_id)
+        if found:
+            found["option_groups"] = menu_repo.get_option_groups_for_item(found.get("id"))
         if not found:
-            found = menu_repo.get_by_id(args.item_id)
+            found = menu_repo.get_menu_item_with_options(args.item_id)
         return found
 
-    def _search():
-        menu_repo = _get_menu_repo()
-        items, _count = menu_repo.get_paginated_by_restaurant(
-            restaurant_id=args.restaurant_id,
-            page=1,
-            limit=25,
-            search=args.search_term,
-            is_available=True,
-        )
-        return items
-
     try:
-        if args.item_id is not None:
-            item = await _run_repo_call(_fetch_by_id)
-        else:
-            items = await _run_repo_call(_search)
-            if not items:
-                return {"status": "NOT_FOUND", "search_term": args.search_term, "restaurant_id": args.restaurant_id}
-            return {
-                "status": "SEARCH_RESULTS",
-                "restaurant_id": args.restaurant_id,
-                "search_term": args.search_term,
-                "items": [
-                    {
-                        "item_id": item.get("id"),
-                        "name": item.get("item_name"),
-                        "description": item.get("item_desc"),
-                        "price": item.get("price"),
-                        "category": item.get("category"),
-                        "sub_category": item.get("sub_category"),
-                        "is_special": item.get("is_special"),
-                    }
-                    for item in items
-                ],
-            }
+        item = await _run_repo_call(_fetch_by_id)
     except Exception as exc:
         logger.exception(
-            "[ERROR] get_menu_item_details failed restaurant_id=%s item_id=%s search_term=%s call_sid=%s: %s",
-            args.restaurant_id,
+            "[ERROR] get_menu_item_details failed restaurant_id=%s item_id=%s call_sid=%s: %s",
+            restaurant_id,
             args.item_id,
-            args.search_term,
             call_sid,
             exc,
         )
         return {
             "status": "ERROR",
             "item_id": args.item_id,
-            "search_term": args.search_term,
-            "restaurant_id": args.restaurant_id,
+            "restaurant_id": restaurant_id,
             "message": "Unable to load item details.",
         }
 
     if not item:
-        return {"status": "NOT_FOUND", "item_id": args.item_id, "restaurant_id": args.restaurant_id}
+        return {"status": "NOT_FOUND", "item_id": args.item_id, "restaurant_id": restaurant_id}
+
+    option_groups = [
+        _format_option_group(group)
+        for group in sorted(item.get("option_groups", []), key=lambda entry: entry.get("sort_order", 0))
+        if _is_available(group)
+    ]
+    option_groups = [group for group in option_groups if group.get("values")]
 
     return {
         "status": "FOUND",
@@ -250,5 +279,104 @@ async def get_menu_item_details(**kwargs) -> Dict[str, Any]:
             "category": item.get("category"),
             "sub_category": item.get("sub_category"),
             "is_special": item.get("is_special"),
+            "option_groups": option_groups,
         },
+    }
+
+
+async def get_menu_item_customizations(**kwargs) -> Dict[str, Any]:
+    """
+    Return customization option groups for one or more menu items.
+    """
+    context, model_kwargs = split_call_context(kwargs, GetMenuItemCustomizationsArgs)
+    args = GetMenuItemCustomizationsArgs.model_validate(model_kwargs)
+    restaurant_id = context.get("restaurant_id")
+    call_sid = context.get("call_sid")
+    logger.info(
+        "get_menu_item_customizations invoked restaurant_id=%s item_ids=%s exclude_group_ids=%s include_ask_if_mentioned=%s call_sid=%s",
+        restaurant_id,
+        args.item_ids,
+        args.exclude_group_ids,
+        args.include_ask_if_mentioned,
+        call_sid,
+    )
+    if restaurant_id is None:
+        return {
+            "status": "ERROR",
+            "message": "Missing restaurant context for customizations lookup.",
+        }
+
+    def _fetch_for_item(item_id: int) -> Tuple[int, List[Dict[str, Any]], bool]:
+        menu_repo = _get_menu_repo()
+        found = menu_repo.get_menu_by_id(int(restaurant_id), item_id)
+        if not found:
+            return item_id, [], False
+        groups = menu_repo.get_option_groups_for_item(item_id)
+        return item_id, groups or [], True
+
+    try:
+        results = await asyncio.gather(*[_run_repo_call(_fetch_for_item, item_id) for item_id in args.item_ids])
+    except Exception as exc:  # noqa: BLE001 - defensive for agent calls
+        logger.exception(
+            "[ERROR] get_menu_item_customizations failed restaurant_id=%s item_ids=%s call_sid=%s: %s",
+            restaurant_id,
+            args.item_ids,
+            call_sid,
+            exc,
+        )
+        return {
+            "status": "ERROR",
+            "restaurant_id": restaurant_id,
+            "message": "Unable to load customizations right now.",
+        }
+
+    items: List[Dict[str, Any]] = []
+    missing_item_ids: List[int] = []
+    excluded_group_ids = {int(group_id) for group_id in args.exclude_group_ids}
+    for item_id, groups, found in results:
+        if not found:
+            missing_item_ids.append(item_id)
+            continue
+        option_groups = [
+            _format_option_group(group)
+            for group in sorted(groups, key=lambda entry: entry.get("sort_order", 0))
+            if _is_available(group)
+        ]
+        option_groups = [group for group in option_groups if group.get("values")]
+        pending_groups: List[Dict[str, Any]] = []
+        deferred_group_ids: List[int] = []
+        for group in option_groups:
+            group_id = _group_id(group)
+            if group_id is None or group_id in excluded_group_ids:
+                continue
+            if group.get("prompt_style") == "ASK_IF_MENTIONED" and not args.include_ask_if_mentioned:
+                deferred_group_ids.append(group_id)
+                continue
+            pending_groups.append(group)
+
+        next_group = pending_groups[0] if pending_groups else None
+        remaining_group_ids = [
+            group_id for group_id in (_group_id(group) for group in pending_groups[1:]) if group_id is not None
+        ]
+
+        items.append(
+            {
+                "item_id": item_id,
+                "next_group": next_group,
+                "remaining_group_ids": remaining_group_ids,
+                "remaining_count": len(remaining_group_ids),
+                "deferred_group_ids": deferred_group_ids,
+                "deferred_count": len(deferred_group_ids),
+                "progress_note": (
+                    "Only next_group contains options for caller dialogue. "
+                    "After each answer, call get_menu_item_customizations again with updated exclude_group_ids."
+                ),
+            }
+        )
+
+    return {
+        "status": "FOUND",
+        "restaurant_id": restaurant_id,
+        "items": items,
+        "missing_item_ids": missing_item_ids,
     }

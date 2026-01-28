@@ -552,3 +552,136 @@ class MySQLMenuRepository(MySQLBaseRepository):
 
     def delete_special(self, restaurant_id: int, special_id: int) -> int:
         return self.delete_menu(restaurant_id, special_id)
+
+    def get_option_groups_for_item(self, menu_item_id: int) -> List[Dict[str, Any]]:
+        """
+        Fetch option groups (with overrides) and values for a menu item.
+        """
+        group_query = """
+            SELECT
+                mog.*,
+                mig.menu_item_id,
+                mig.min_select_override,
+                mig.max_select_override,
+                mig.free_allowance_override,
+                mig.allows_quantity_override,
+                mig.max_quantity_per_option_override,
+                mig.is_required_override,
+                mig.sort_order AS item_sort_order
+            FROM Menu_Item_Option_Groups mig
+            JOIN Menu_Option_Groups mog ON mig.group_id = mog.id
+            WHERE mig.menu_item_id = %s
+            ORDER BY mig.sort_order, mog.sort_order, mog.name
+        """
+        groups = self._execute_query(group_query, (menu_item_id,))
+        if not groups:
+            return []
+        group_ids = [group["id"] for group in groups if group.get("id") is not None]
+        if not group_ids:
+            return groups
+        placeholders = ", ".join(["%s"] * len(group_ids))
+        values_query = f"""
+            SELECT * FROM Menu_Option_Values
+            WHERE group_id IN ({placeholders})
+            ORDER BY sort_order, name
+        """
+        values = self._execute_query(values_query, tuple(group_ids))
+        values_by_group: Dict[int, List[Dict[str, Any]]] = {}
+        for value in values:
+            group_id = value.get("group_id")
+            if group_id is None:
+                continue
+            values_by_group.setdefault(int(group_id), []).append(value)
+        for group in groups:
+            group_id = group.get("id")
+            group["values"] = values_by_group.get(int(group_id), []) if group_id is not None else []
+            self._apply_option_group_overrides(group)
+        return groups
+
+    def get_menu_item_with_options(self, menu_item_id: int) -> Optional[Dict[str, Any]]:
+        """
+        Fetch a menu item and attach option groups/values when present.
+        """
+        item = self.get_by_id(menu_item_id)
+        if not item:
+            return None
+        item["option_groups"] = self.get_option_groups_for_item(menu_item_id)
+        return item
+
+    def get_option_group_summaries_for_items(self, menu_item_ids: List[int]) -> Dict[int, List[Dict[str, Any]]]:
+        """
+        Fetch summarized option group data for multiple menu items in one query.
+        """
+        if not menu_item_ids:
+            return {}
+        placeholders = ", ".join(["%s"] * len(menu_item_ids))
+        query = f"""
+            SELECT
+                mig.menu_item_id,
+                mog.id AS group_id,
+                mog.name,
+                mog.prompt_style,
+                mog.selection_type,
+                COALESCE(mig.min_select_override, mog.min_select) AS min_select,
+                COALESCE(mig.max_select_override, mog.max_select) AS max_select,
+                COALESCE(mig.free_allowance_override, mog.free_allowance) AS free_allowance,
+                COALESCE(mig.allows_quantity_override, mog.allows_quantity) AS allows_quantity,
+                COALESCE(mig.max_quantity_per_option_override, mog.max_quantity_per_option) AS max_quantity_per_option,
+                COALESCE(mig.is_required_override, mog.is_required) AS is_required,
+                mog.is_available
+            FROM Menu_Item_Option_Groups mig
+            JOIN Menu_Option_Groups mog ON mig.group_id = mog.id
+            WHERE mig.menu_item_id IN ({placeholders})
+            ORDER BY mig.menu_item_id, mig.sort_order, mog.sort_order, mog.name
+        """
+        results = self._execute_query(query, tuple(menu_item_ids))
+        summaries: Dict[int, List[Dict[str, Any]]] = {}
+        for row in results:
+            menu_item_id = row.get("menu_item_id")
+            if menu_item_id is None:
+                continue
+            summaries.setdefault(int(menu_item_id), []).append(
+                {
+                    "group_id": row.get("group_id"),
+                    "name": row.get("name"),
+                    "prompt_style": row.get("prompt_style"),
+                    "selection_type": row.get("selection_type"),
+                    "min_select": row.get("min_select"),
+                    "max_select": row.get("max_select"),
+                    "free_allowance": row.get("free_allowance"),
+                    "allows_quantity": row.get("allows_quantity"),
+                    "max_quantity_per_option": row.get("max_quantity_per_option"),
+                    "is_required": row.get("is_required"),
+                    "is_available": row.get("is_available"),
+                }
+            )
+        return summaries
+
+    def get_items_with_option_groups(self, menu_item_ids: List[int]) -> Dict[int, bool]:
+        """
+        Return which menu items have option groups attached.
+        """
+        if not menu_item_ids:
+            return {}
+        placeholders = ", ".join(["%s"] * len(menu_item_ids))
+        query = f"""
+            SELECT DISTINCT menu_item_id
+            FROM Menu_Item_Option_Groups
+            WHERE menu_item_id IN ({placeholders})
+        """
+        results = self._execute_query(query, tuple(menu_item_ids))
+        return {int(row["menu_item_id"]): True for row in results if row.get("menu_item_id") is not None}
+
+    @staticmethod
+    def _apply_option_group_overrides(group: Dict[str, Any]) -> None:
+        override_map = {
+            "min_select": "min_select_override",
+            "max_select": "max_select_override",
+            "free_allowance": "free_allowance_override",
+            "allows_quantity": "allows_quantity_override",
+            "max_quantity_per_option": "max_quantity_per_option_override",
+            "is_required": "is_required_override",
+        }
+        for field, override_field in override_map.items():
+            if override_field in group and group[override_field] is not None:
+                group[field] = group[override_field]
