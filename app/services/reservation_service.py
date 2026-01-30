@@ -15,6 +15,8 @@ from app.repositories.mysql_user_restaurant_metadata_repo import (
 from app.utils.logging_config import get_logger
 from app.utils.restaurant_hours import (
     _parse_operating_time,
+    format_operating_window,
+    get_day_operating_hours,
     is_datetime_within_operating_hours,
     resolve_restaurant_timezone,
 )
@@ -53,9 +55,9 @@ class ReservationService:
     def _validate_opening_hours(self, slot_dt: datetime, restaurant: Dict[str, Any]) -> None:
         """Validate that reservation is during opening hours using shared utility."""
         if not is_datetime_within_operating_hours(restaurant, slot_dt):
-            opening = self._parse_time(restaurant.get("opening_time"), "09:00:00")
-            closing = self._parse_time(restaurant.get("closing_time"), "22:00:00")
-            raise ValueError(f"Reservations can only be made during opening hours ({opening} - {closing})")
+            day_name = slot_dt.strftime("%A").lower()
+            hours_display = format_operating_window(restaurant, day_name)
+            raise ValueError(f"Reservations can only be made during opening hours ({hours_display})")
 
     def _check_capacity(self, restaurant_id: int, slot_dt: datetime, party_size: int, seating_capacity: int) -> None:
         """Check if there's enough capacity for the party size."""
@@ -95,8 +97,6 @@ class ReservationService:
             raise ValueError(f"Restaurant with ID {restaurant_id} not found")
         restaurant_tz, _ = resolve_restaurant_timezone(restaurant)
 
-        opening_time = self._parse_time(restaurant.get("opening_time", "09:00:00"), "09:00:00")
-        closing_time = self._parse_time(restaurant.get("closing_time", "22:00:00"), "22:00:00")
         seating_capacity = restaurant.get("reservation_seating_capacity", 50)
         advance_days = restaurant.get("reservation_advance_days", 30)
 
@@ -130,14 +130,23 @@ class ReservationService:
             reservation_type=self.RESERVATION_TYPE,
         )
 
-        # Generate all possible slots based on opening/closing times
+        # Generate all possible slots based on per-day operating hours
         slots = []
         current_date = search_start_dt_local.date()
         end_date = end_dt_local.date()
 
         while current_date <= end_date:
-            day_start = datetime.combine(current_date, opening_time)
-            day_end = datetime.combine(current_date, closing_time)
+            # Get operating hours for this specific day
+            day_name = current_date.strftime("%A").lower()
+            day_open_time, day_close_time, day_is_closed = get_day_operating_hours(restaurant, day_name)
+
+            # Skip closed days
+            if day_is_closed or not day_open_time or not day_close_time:
+                current_date += timedelta(days=1)
+                continue
+
+            day_start = datetime.combine(current_date, day_open_time)
+            day_end = datetime.combine(current_date, day_close_time)
 
             # Determine the effective start time for this day
             if current_date == search_start_dt_local.date():
