@@ -87,7 +87,9 @@ async def _send_order_notification(
         if not restaurant_twilio_number:
             logger.warning(f"No Twilio number configured for restaurant {restaurant_id}")
             return
-        logger.info(f"Sending SMS notification for order {order_id} to {customer_phone} from {restaurant_twilio_number}")
+        logger.info(
+            f"Sending SMS notification for order {order_id} to {customer_phone} from {restaurant_twilio_number}"
+        )
         await send_order_status_notification_async(
             restaurant_id=restaurant_id,
             order_id=order_id,
@@ -1152,7 +1154,9 @@ async def update_order_status(
     customer_phone = order.get("customer_phone")
     user_id = order.get("user_id")
 
-    logger.info(f"Updating order {order_id} status: {old_status} -> {request.status}, customer_phone={customer_phone}, user_id={user_id}")
+    logger.info(
+        f"Updating order {order_id} status: {old_status} -> {request.status}, customer_phone={customer_phone}, user_id={user_id}"
+    )
 
     try:
         result = order_service.update_order_status(order_id=order_id, status=request.status)

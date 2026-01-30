@@ -2,7 +2,6 @@ from typing import Optional
 
 from app.integrations.twilio_client import TwilioClient
 from app.repositories.mysql_notification_log_repo import MySQLNotificationLogRepository
-from app.config import settings
 from app.utils.logging_config import get_logger
 
 logger = get_logger(__name__)

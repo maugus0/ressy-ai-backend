@@ -88,7 +88,9 @@ async def _send_reservation_notification(
         if not restaurant_twilio_number:
             logger.warning(f"No Twilio number configured for restaurant {restaurant_id}")
             return
-        logger.info(f"Sending SMS notification for reservation {reservation_id} to {phone_number} from {restaurant_twilio_number}")
+        logger.info(
+            f"Sending SMS notification for reservation {reservation_id} to {phone_number} from {restaurant_twilio_number}"
+        )
         await send_reservation_status_notification_async(
             restaurant_id=restaurant_id,
             reservation_id=reservation_id,
@@ -782,7 +784,9 @@ async def update_reservation(
     user_id = reservation.get("user_id")
     confirmation_number = reservation.get("confirmation_number")
 
-    logger.info(f"Updating reservation {reservation_id} status: {old_status} -> {request.status if request.status else 'unchanged'}, phone_number={phone_number}, user_id={user_id}")
+    logger.info(
+        f"Updating reservation {reservation_id} status: {old_status} -> {request.status if request.status else 'unchanged'}, phone_number={phone_number}, user_id={user_id}"
+    )
 
     # Store previous state for history logging
     previous_data = {

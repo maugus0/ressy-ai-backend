@@ -1,8 +1,8 @@
 from dataclasses import dataclass
 from typing import Optional
 
-from twilio.rest import Client
 from twilio.base.exceptions import TwilioRestException
+from twilio.rest import Client
 
 from app.config import settings
 from app.utils.logging_config import get_logger
