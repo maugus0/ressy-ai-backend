@@ -280,6 +280,9 @@ class WebSocketService:
                 "local_iso": now_local.isoformat(),
                 "local_date": now_local.date().isoformat(),
                 "timezone": timezone_label,
+                "display_time": now_local.strftime("%I:%M %p").lstrip("0"),
+                "display_date": now_local.strftime("%A, %B %d, %Y"),
+                "day_of_week": now_local.strftime("%A").lower(),
             },
         }
         if caller_phone:
