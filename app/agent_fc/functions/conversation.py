@@ -84,6 +84,7 @@ class EscalateToHumanArgs(BaseModel):
     customer_contact: str
     reason: str
     urgency: Literal["standard", "urgent"] = "standard"
+    feature_disabled: Optional[Literal["orders", "reservations", "faqs"]] = None
 
 
 def _pick_message(message_set: list[str]) -> str:
@@ -93,6 +94,35 @@ def _pick_message(message_set: list[str]) -> str:
 def _get_sse_service() -> SSEService:
     """Create fresh SSE service instance per function call."""
     return SSEService()
+
+
+def _build_escalation_message(args: EscalateToHumanArgs, should_forward: bool) -> str:
+    if args.feature_disabled:
+        if args.feature_disabled == "orders":
+            if should_forward:
+                return (
+                    "I can't take pickup orders for this location, but I can connect you to the team right now. "
+                    "One moment."
+                )
+            return "I can't take pickup orders for this location. I'll have the team call you back shortly."
+        if args.feature_disabled == "reservations":
+            if should_forward:
+                return (
+                    "I'm not able to book reservations for this location, but I can connect you to the team right now. "
+                    "One moment."
+                )
+            return "I'm not able to book reservations for this location. I'll have the team call you back shortly."
+        if args.feature_disabled == "faqs":
+            if should_forward:
+                return "I don't have the info to answer that here, but I can connect you to the team now. One moment."
+            return "I don't have the info to answer that here. I'll have the team call you back shortly."
+
+    if should_forward:
+        return "Please hold while I connect you to a team member."
+    return (
+        "I'm looping in a team member to assist you now. You'll receive a call back from them shortly. "
+        "Thank you for your patience."
+    )
 
 
 async def _emit_escalation_sse_event(
@@ -188,13 +218,7 @@ async def escalate_to_human(**kwargs) -> AgentFunctionResult:
             logger.warning("Failed to mark call escalated call_id=%s call_sid=%s: %s", call_id, call_sid, exc)
 
     should_forward = forward_escalations and bool(escalation_phone_number)
-    if should_forward:
-        message = "Please hold while I connect you to a team member."
-    else:
-        message = (
-            "I'm looping in a team member to assist you now. You'll receive a call back from them shortly. "
-            "Thank you for your patience."
-        )
+    message = _build_escalation_message(args, should_forward)
     content = {
         "status": "HUMAN_ESCALATION_REQUESTED",
         "urgency": args.urgency,

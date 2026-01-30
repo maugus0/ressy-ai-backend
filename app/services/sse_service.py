@@ -18,6 +18,7 @@ from typing import Any, AsyncGenerator, Dict, List, Optional, Set
 
 from pydantic import BaseModel, Field
 
+from app.utils.escalation_utils import format_escalation_reason
 from app.utils.timezone import isoformat_z
 
 logger = logging.getLogger(__name__)
@@ -339,7 +340,7 @@ class SSEService:
         event_data = {
             "call_id": call_id,
             "caller_phone": caller_phone,
-            "reason": reason or "User requested human assistance",
+            "reason": format_escalation_reason(reason) or "User requested human assistance",
             **(data or {}),
         }
         return await self.emit_event(

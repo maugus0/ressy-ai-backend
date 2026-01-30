@@ -10,7 +10,7 @@ from app.api.restaurants import get_restaurant_service  # noqa: E402
 from app.main import app  # noqa: E402
 from app.middleware.auth_middleware import get_current_restaurant_user  # noqa: E402
 from app.services.restaurant_service import RestaurantService  # noqa: E402
-from tests.fake_repos import InMemoryRestaurantRepository  # noqa: E402
+from tests.fake_repos import InMemoryRestaurantFeaturesRepository, InMemoryRestaurantRepository  # noqa: E402
 
 
 def _claims(restaurant_id: int) -> dict:
@@ -27,7 +27,8 @@ def client_with_overrides():
     restaurant_repo = InMemoryRestaurantRepository()
     restaurant_repo.add(1, "Pasta Place")
     restaurant_repo.add(2, "Burger Barn")
-    service = RestaurantService(restaurant_repo=restaurant_repo)
+    features_repo = InMemoryRestaurantFeaturesRepository()
+    service = RestaurantService(restaurant_repo=restaurant_repo, features_repo=features_repo)
     app.dependency_overrides[get_restaurant_service] = lambda: service
     app.dependency_overrides[get_current_restaurant_user] = lambda: _claims(1)
     client = TestClient(app)
