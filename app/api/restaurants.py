@@ -87,7 +87,11 @@ class CreateRestaurantRequest(BaseModel):
         False, description="Require credit card for reservations"
     )
     operating_hours: OperatingHours | None = Field(
-        None, description="Weekly operating hours (defaults to 09:00-22:00 daily if not provided)"
+        None,
+        description=(
+            "Weekly operating hours. Defaults to 09:00-22:00 daily for any days not provided. "
+            "When is_closed=true for a day, open/close times are ignored and stored as NULL."
+        ),
     )
     timezone: str | None = Field(None, description="Restaurant timezone (IANA name, e.g. America/Vancouver)")
     reservation_seating_capacity: int | None = Field(
@@ -138,7 +142,13 @@ class UpdateRestaurantRequest(BaseModel):
     is_credit_card_required_for_reservation: bool | None = Field(
         None, description="Require credit card for reservations"
     )
-    operating_hours: OperatingHours | None = Field(None, description="Weekly operating hours")
+    operating_hours: OperatingHours | None = Field(
+        None,
+        description=(
+            "Weekly operating hours. Partial update supported: only provided days are updated, "
+            "other days remain unchanged. When is_closed=true for a day, open/close times are cleared."
+        ),
+    )
     timezone: str | None = Field(None, description="Restaurant timezone (IANA name, e.g. America/Vancouver)")
     reservation_seating_capacity: int | None = Field(
         None, ge=1, le=1000, description="Total seating capacity for reservations"

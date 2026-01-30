@@ -10,8 +10,7 @@ from app.config import settings
 from app.repositories.mysql_restaurant_features_repo import MySQLRestaurantFeaturesRepository
 from app.repositories.mysql_restaurant_repo import MySQLRestaurantRepository
 from app.services.admin_user_common import build_pagination
-
-DAYS_OF_WEEK = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+from app.utils.restaurant_hours import DAYS_OF_WEEK
 
 
 class RestaurantService:
@@ -292,18 +291,29 @@ class RestaurantService:
         return operating_hours
 
     def _flatten_operating_hours(self, operating_hours: Dict[str, Any]) -> Dict[str, Any]:
-        """Transform operating_hours object into flat columns for database."""
+        """Transform operating_hours object into flat columns for database.
+
+        When is_closed=True, open/close times are set to NULL for data consistency.
+        """
         flat: Dict[str, Any] = {}
         for day in DAYS_OF_WEEK:
             day_hours = operating_hours.get(day, {})
             if not isinstance(day_hours, dict):
                 continue
-            if "open" in day_hours:
-                flat[f"{day}_open"] = day_hours.get("open")
-            if "close" in day_hours:
-                flat[f"{day}_close"] = day_hours.get("close")
-            if "is_closed" in day_hours:
-                flat[f"{day}_closed"] = day_hours.get("is_closed", False)
+
+            is_closed = day_hours.get("is_closed", False)
+
+            if is_closed:
+                # When marked as closed, clear times to NULL for consistency
+                flat[f"{day}_open"] = None
+                flat[f"{day}_close"] = None
+                flat[f"{day}_closed"] = True
+            else:
+                if "open" in day_hours:
+                    flat[f"{day}_open"] = day_hours.get("open")
+                if "close" in day_hours:
+                    flat[f"{day}_close"] = day_hours.get("close")
+                flat[f"{day}_closed"] = False
         return flat
 
     def _validate_operating_hours(self, operating_hours: Dict[str, Any]) -> None:
@@ -397,15 +407,37 @@ class RestaurantService:
             "reservation_advance_days": data.get("reservation_advance_days", 30),
         }
 
-        # Handle operating_hours - flatten to day columns
+        # Handle operating_hours - flatten to day columns with defaults for missing days
+        DEFAULT_OPEN = "09:00:00"
+        DEFAULT_CLOSE = "22:00:00"
+
         if "operating_hours" in data:
-            flat_hours = self._flatten_operating_hours(data["operating_hours"])
-            payload.update(flat_hours)
-        else:
-            # Default: 09:00-22:00 for all days, not closed
+            provided_hours = data["operating_hours"]
+            # Apply defaults for any missing days to prevent NULL values
             for day in DAYS_OF_WEEK:
-                payload[f"{day}_open"] = "09:00:00"
-                payload[f"{day}_close"] = "22:00:00"
+                if day in provided_hours and isinstance(provided_hours[day], dict):
+                    day_hours = provided_hours[day]
+                    is_closed = day_hours.get("is_closed", False)
+                    if is_closed:
+                        # When marked closed, times should be NULL (handled in _flatten)
+                        payload[f"{day}_open"] = None
+                        payload[f"{day}_close"] = None
+                        payload[f"{day}_closed"] = True
+                    else:
+                        # Use provided times or defaults
+                        payload[f"{day}_open"] = day_hours.get("open") or DEFAULT_OPEN
+                        payload[f"{day}_close"] = day_hours.get("close") or DEFAULT_CLOSE
+                        payload[f"{day}_closed"] = False
+                else:
+                    # Day not provided - use defaults
+                    payload[f"{day}_open"] = DEFAULT_OPEN
+                    payload[f"{day}_close"] = DEFAULT_CLOSE
+                    payload[f"{day}_closed"] = False
+        else:
+            # No operating_hours provided - use defaults for all days
+            for day in DAYS_OF_WEEK:
+                payload[f"{day}_open"] = DEFAULT_OPEN
+                payload[f"{day}_close"] = DEFAULT_CLOSE
                 payload[f"{day}_closed"] = False
 
         try:
