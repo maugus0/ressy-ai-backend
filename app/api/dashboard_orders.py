@@ -11,6 +11,7 @@ from fastapi.security import HTTPBearer
 from pydantic import BaseModel, Field
 
 from app.middleware.auth_middleware import require_role
+from app.repositories.mysql_user_repo import MySQLUserRepository
 from app.services.activity_history_service import ActivityHistoryService
 from app.services.dashboard_order_service import DashboardOrderService
 from app.services.notification_service import send_order_status_notification_async
@@ -60,8 +61,20 @@ async def _send_order_notification(
     order_id: int,
     new_status: str,
     customer_phone: Optional[str],
+    user_id: Optional[int] = None,
 ) -> None:
+    if not customer_phone and user_id:
+        try:
+            user_repo = MySQLUserRepository()
+            user = user_repo.get_user_by_id(user_id)
+            if user and user.get("phone_number"):
+                customer_phone = user.get("phone_number")
+                logger.info(f"Order {order_id}: Retrieved phone {customer_phone} from user_id {user_id}")
+        except Exception as e:
+            logger.warning(f"Order {order_id}: Failed to lookup user {user_id} for phone number: {e}")
+
     if not customer_phone:
+        logger.info(f"Order {order_id}: No customer_phone found (user_id={user_id}), skipping notification")
         return
     try:
         restaurant_service = RestaurantService()
@@ -74,6 +87,7 @@ async def _send_order_notification(
         if not restaurant_twilio_number:
             logger.warning(f"No Twilio number configured for restaurant {restaurant_id}")
             return
+        logger.info(f"Sending SMS notification for order {order_id} to {customer_phone} from {restaurant_twilio_number}")
         await send_order_status_notification_async(
             restaurant_id=restaurant_id,
             order_id=order_id,
@@ -83,7 +97,7 @@ async def _send_order_notification(
             restaurant_twilio_number=restaurant_twilio_number,
         )
     except Exception as e:
-        logger.error(f"Failed to send order notification for order {order_id}: {e}")
+        logger.error(f"Failed to send order notification for order {order_id}: {e}", exc_info=True)
 
 
 async def _emit_order_sse_event(
@@ -978,6 +992,7 @@ async def update_order(
     restaurant_id = order.get("restaurant_id")
     old_status = order.get("status")
     customer_phone = order.get("customer_phone")
+    user_id = order.get("user_id")
 
     # Store previous state for history logging
     previous_data = {
@@ -1048,6 +1063,7 @@ async def update_order(
                     order_id=order_id,
                     new_status=request.status,
                     customer_phone=customer_phone,
+                    user_id=user_id,
                 )
 
         return result
@@ -1134,6 +1150,9 @@ async def update_order_status(
     restaurant_id = order.get("restaurant_id")
     old_status = order.get("status")
     customer_phone = order.get("customer_phone")
+    user_id = order.get("user_id")
+
+    logger.info(f"Updating order {order_id} status: {old_status} -> {request.status}, customer_phone={customer_phone}, user_id={user_id}")
 
     try:
         result = order_service.update_order_status(order_id=order_id, status=request.status)
@@ -1176,6 +1195,7 @@ async def update_order_status(
                 order_id=order_id,
                 new_status=request.status,
                 customer_phone=customer_phone,
+                user_id=user_id,
             )
 
         return result
@@ -1260,6 +1280,7 @@ async def cancel_order(
     restaurant_id = order.get("restaurant_id")
     previous_status = order.get("status")
     customer_phone = order.get("customer_phone")
+    user_id = order.get("user_id")
 
     try:
         result = order_service.cancel_order(order_id=order_id)
@@ -1296,6 +1317,7 @@ async def cancel_order(
                 order_id=order_id,
                 new_status="cancelled",
                 customer_phone=customer_phone,
+                user_id=user_id,
             )
 
         return result

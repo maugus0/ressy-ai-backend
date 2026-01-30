@@ -11,6 +11,7 @@ from fastapi.security import HTTPBearer
 from pydantic import BaseModel, Field
 
 from app.middleware.auth_middleware import require_role
+from app.repositories.mysql_user_repo import MySQLUserRepository
 from app.services.activity_history_service import ActivityHistoryService
 from app.services.notification_service import send_reservation_status_notification_async
 from app.services.reservation_service import ReservationService
@@ -60,9 +61,21 @@ async def _send_reservation_notification(
     reservation_id: int,
     new_status: str,
     phone_number: Optional[str],
+    user_id: Optional[int] = None,
     confirmation_number: Optional[str] = None,
 ) -> None:
+    if not phone_number and user_id:
+        try:
+            user_repo = MySQLUserRepository()
+            user = user_repo.get_user_by_id(user_id)
+            if user and user.get("phone_number"):
+                phone_number = user.get("phone_number")
+                logger.info(f"Reservation {reservation_id}: Retrieved phone {phone_number} from user_id {user_id}")
+        except Exception as e:
+            logger.warning(f"Reservation {reservation_id}: Failed to lookup user {user_id} for phone number: {e}")
+
     if not phone_number:
+        logger.info(f"Reservation {reservation_id}: No phone_number found (user_id={user_id}), skipping notification")
         return
     try:
         restaurant_service = RestaurantService()
@@ -75,6 +88,7 @@ async def _send_reservation_notification(
         if not restaurant_twilio_number:
             logger.warning(f"No Twilio number configured for restaurant {restaurant_id}")
             return
+        logger.info(f"Sending SMS notification for reservation {reservation_id} to {phone_number} from {restaurant_twilio_number}")
         await send_reservation_status_notification_async(
             restaurant_id=restaurant_id,
             reservation_id=reservation_id,
@@ -85,7 +99,7 @@ async def _send_reservation_notification(
             confirmation_number=confirmation_number,
         )
     except Exception as e:
-        logger.error(f"Failed to send reservation notification for reservation {reservation_id}: {e}")
+        logger.error(f"Failed to send reservation notification for reservation {reservation_id}: {e}", exc_info=True)
 
 
 async def _emit_reservation_sse_event(
@@ -462,16 +476,35 @@ manual confirmation by restaurant staff.
 async def finalize_reservation(
     reservation_id: int,
     request: FinalizeReservationRequest,
+    background_tasks: BackgroundTasks,
     current_user: dict = Depends(require_role(["admin", "client"])),
     reservation_service: ReservationService = Depends(get_reservation_service),
 ):
     """Finalize a reservation by changing status from 'pending' to 'confirmed'."""
-    _check_reservation_access(current_user, reservation_id, reservation_service)
+    reservation = _check_reservation_access(current_user, reservation_id, reservation_service)
+    restaurant_id = reservation.get("restaurant_id")
+    phone_number = reservation.get("phone_number")
+    user_id = reservation.get("user_id")
+    confirmation_number = reservation.get("confirmation_number")
+
+    logger.info(f"Finalizing reservation {reservation_id}, phone_number={phone_number}, user_id={user_id}")
 
     try:
         result = reservation_service.finalize_reservation(
             reservation_id=reservation_id, confirmation_number=request.confirmation_number
         )
+
+        if restaurant_id:
+            background_tasks.add_task(
+                _send_reservation_notification,
+                restaurant_id=restaurant_id,
+                reservation_id=reservation_id,
+                new_status="confirmed",
+                phone_number=phone_number,
+                user_id=user_id,
+                confirmation_number=result.get("confirmation_number") or confirmation_number,
+            )
+
         return result
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -746,7 +779,10 @@ async def update_reservation(
     restaurant_id = reservation.get("restaurant_id")
     old_status = reservation.get("status")
     phone_number = reservation.get("phone_number")
+    user_id = reservation.get("user_id")
     confirmation_number = reservation.get("confirmation_number")
+
+    logger.info(f"Updating reservation {reservation_id} status: {old_status} -> {request.status if request.status else 'unchanged'}, phone_number={phone_number}, user_id={user_id}")
 
     # Store previous state for history logging
     previous_data = {
@@ -819,6 +855,7 @@ async def update_reservation(
                     reservation_id=reservation_id,
                     new_status=request.status,
                     phone_number=phone_number,
+                    user_id=user_id,
                     confirmation_number=result.get("confirmation_number") or confirmation_number,
                 )
 
@@ -878,7 +915,10 @@ async def cancel_reservation_dashboard(
     restaurant_id = reservation.get("restaurant_id")
     previous_status = reservation.get("status")
     phone_number = reservation.get("phone_number")
+    user_id = reservation.get("user_id")
     confirmation_number = reservation.get("confirmation_number")
+
+    logger.info(f"Cancelling reservation {reservation_id}, phone_number={phone_number}, user_id={user_id}")
 
     try:
         result = reservation_service.cancel_reservation(reservation_id=reservation_id)
@@ -915,6 +955,7 @@ async def cancel_reservation_dashboard(
                 reservation_id=reservation_id,
                 new_status="cancelled",
                 phone_number=phone_number,
+                user_id=user_id,
                 confirmation_number=confirmation_number,
             )
 

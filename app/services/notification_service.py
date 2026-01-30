@@ -132,6 +132,13 @@ class NotificationService:
         message_content: str,
         from_number: str,
     ) -> bool:
+        logger.info(
+            "Sending SMS notification log_id=%d to=%s from=%s message_length=%d",
+            log_id,
+            recipient_phone,
+            from_number,
+            len(message_content),
+        )
         try:
             result = self.twilio_client.send_sms(
                 to=recipient_phone,
@@ -140,6 +147,12 @@ class NotificationService:
             )
 
             if result.success:
+                logger.info(
+                    "SMS sent successfully log_id=%d message_sid=%s to=%s",
+                    log_id,
+                    result.message_sid,
+                    recipient_phone,
+                )
                 self.notification_repo.update_status(
                     log_id=log_id,
                     status="sent",
@@ -147,6 +160,12 @@ class NotificationService:
                 )
                 return True
             else:
+                logger.error(
+                    "SMS send failed log_id=%d to=%s error=%s",
+                    log_id,
+                    recipient_phone,
+                    result.error_message,
+                )
                 self.notification_repo.update_status(
                     log_id=log_id,
                     status="failed",
@@ -156,7 +175,7 @@ class NotificationService:
                 return False
 
         except Exception as e:
-            logger.exception("Error sending notification log_id=%d: %s", log_id, e)
+            logger.exception("Error sending notification log_id=%d to=%s: %s", log_id, recipient_phone, e)
             self.notification_repo.update_status(
                 log_id=log_id,
                 status="failed",
