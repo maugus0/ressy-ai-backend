@@ -52,6 +52,18 @@ class TwilioClient:
                 error_message="No sender number provided",
             )
 
+        if not to or not to.strip():
+            return MessageResult(
+                success=False,
+                error_message="Recipient phone number is required",
+            )
+
+        if len(body) > 1600:
+            return MessageResult(
+                success=False,
+                error_message=f"Message too long ({len(body)} chars). Maximum 1600 characters allowed.",
+            )
+
         try:
             message = self.client.messages.create(
                 body=body,

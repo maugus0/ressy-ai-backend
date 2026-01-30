@@ -1,3 +1,4 @@
+import asyncio
 from typing import Optional
 
 from app.integrations.twilio_client import TwilioClient
@@ -139,7 +140,8 @@ class NotificationService:
             len(message_content),
         )
         try:
-            result = self.twilio_client.send_sms(
+            result = await asyncio.to_thread(
+                self.twilio_client.send_sms,
                 to=recipient_phone,
                 body=message_content,
                 from_number=from_number,
@@ -152,11 +154,18 @@ class NotificationService:
                     result.message_sid,
                     recipient_phone,
                 )
-                self.notification_repo.update_status(
-                    log_id=log_id,
-                    status="sent",
-                    twilio_message_sid=result.message_sid,
-                )
+                try:
+                    self.notification_repo.update_status(
+                        log_id=log_id,
+                        status="sent",
+                        twilio_message_sid=result.message_sid,
+                    )
+                except Exception as db_e:
+                    logger.error(
+                        "Failed to update notification status after successful send log_id=%d: %s",
+                        log_id,
+                        db_e,
+                    )
                 return True
             else:
                 logger.error(
@@ -165,22 +174,50 @@ class NotificationService:
                     recipient_phone,
                     result.error_message,
                 )
-                self.notification_repo.update_status(
-                    log_id=log_id,
-                    status="failed",
-                    error_message=result.error_message,
-                )
-                self.notification_repo.increment_retry_count(log_id)
+                try:
+                    self.notification_repo.update_status(
+                        log_id=log_id,
+                        status="failed",
+                        error_message=result.error_message,
+                    )
+                except Exception as db_e:
+                    logger.error(
+                        "Failed to update notification status after failed send log_id=%d: %s",
+                        log_id,
+                        db_e,
+                    )
+                try:
+                    self.notification_repo.increment_retry_count(log_id)
+                except Exception as db_e:
+                    logger.error(
+                        "Failed to increment retry count after failed send log_id=%d: %s",
+                        log_id,
+                        db_e,
+                    )
                 return False
 
         except Exception as e:
             logger.exception("Error sending notification log_id=%d to=%s: %s", log_id, recipient_phone, e)
-            self.notification_repo.update_status(
-                log_id=log_id,
-                status="failed",
-                error_message=str(e),
-            )
-            self.notification_repo.increment_retry_count(log_id)
+            try:
+                self.notification_repo.update_status(
+                    log_id=log_id,
+                    status="failed",
+                    error_message=str(e),
+                )
+            except Exception as db_e:
+                logger.error(
+                    "Failed to update notification status after send error log_id=%d: %s",
+                    log_id,
+                    db_e,
+                )
+            try:
+                self.notification_repo.increment_retry_count(log_id)
+            except Exception as db_e:
+                logger.error(
+                    "Failed to increment retry count after send error log_id=%d: %s",
+                    log_id,
+                    db_e,
+                )
             return False
 
 

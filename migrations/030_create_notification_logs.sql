@@ -6,10 +6,10 @@ CREATE TABLE IF NOT EXISTS Notification_Logs (
     restaurant_id INT NOT NULL,
     entity_type ENUM('order', 'reservation') NOT NULL COMMENT 'Type of entity (order or reservation)',
     entity_id INT NOT NULL COMMENT 'ID of the order or reservation',
-    recipient_phone VARCHAR(20) NOT NULL COMMENT 'Customer phone number',
+    recipient_phone VARCHAR(30) NOT NULL COMMENT 'Customer phone number',
     message_content TEXT NOT NULL COMMENT 'The message content sent',
     status ENUM('pending', 'sent', 'delivered', 'failed') NOT NULL DEFAULT 'pending',
-    twilio_message_sid VARCHAR(50) COMMENT 'Twilio message SID for tracking',
+    twilio_message_sid VARCHAR(100) COMMENT 'Twilio message SID for tracking',
     error_message TEXT COMMENT 'Error message if failed',
     retry_count INT NOT NULL DEFAULT 0 COMMENT 'Number of retry attempts',
     sent_at TIMESTAMP NULL COMMENT 'When the message was sent',
@@ -20,5 +20,6 @@ CREATE TABLE IF NOT EXISTS Notification_Logs (
     INDEX idx_entity (entity_type, entity_id),
     INDEX idx_status (status),
     INDEX idx_twilio_sid (twilio_message_sid),
-    INDEX idx_created_at (created_at)
+    INDEX idx_created_at (created_at),
+    FOREIGN KEY (restaurant_id) REFERENCES Restaurants(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
