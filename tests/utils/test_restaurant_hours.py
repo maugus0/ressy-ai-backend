@@ -74,17 +74,26 @@ def test_is_datetime_within_operating_hours_standard(target_time, expected):
     assert restaurant_hours.is_datetime_within_operating_hours(restaurant, target_time) is expected
 
 
-@pytest.mark.parametrize(
-    "target_time,expected",
-    [
-        (datetime.datetime(2024, 1, 1, 19, 0), True),  # Monday 7pm
-        (datetime.datetime(2024, 1, 2, 1, 30), True),  # Tuesday 1:30am
-        (datetime.datetime(2024, 1, 1, 12, 0), False),  # Monday noon
-    ],
-)
-def test_is_datetime_within_operating_hours_overnight(target_time, expected):
-    restaurant = make_restaurant("18:00:00", "02:00:00")
-    assert restaurant_hours.is_datetime_within_operating_hours(restaurant, target_time) is expected
+def test_is_datetime_within_operating_hours_overnight():
+    """Overnight hours: Monday 18:00-02:00, Tuesday 09:00-17:00.
+
+    Tuesday 1:30am must be open from Monday's overnight, not from Tuesday's hours.
+    Uses different hours per day so the test validates the overnight-boundary logic.
+    """
+    restaurant = make_restaurant_per_day(
+        {
+            "monday": {"open": "18:00:00", "close": "02:00:00"},
+            "tuesday": {"open": "09:00:00", "close": "17:00:00"},
+        }
+    )
+    # Monday 7pm - within Monday's 18:00-02:00
+    assert restaurant_hours.is_datetime_within_operating_hours(restaurant, datetime.datetime(2024, 1, 1, 19, 0)) is True
+    # Tuesday 1:30am - open only because Monday's overnight extends here (Tuesday is 09:00-17:00)
+    assert restaurant_hours.is_datetime_within_operating_hours(restaurant, datetime.datetime(2024, 1, 2, 1, 30)) is True
+    # Monday noon - outside Monday's 18:00-02:00
+    assert (
+        restaurant_hours.is_datetime_within_operating_hours(restaurant, datetime.datetime(2024, 1, 1, 12, 0)) is False
+    )
 
 
 def test_is_datetime_within_operating_hours_missing_defaults_true():
