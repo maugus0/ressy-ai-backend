@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Any
 
 from fastapi import APIRouter, Body, Depends, Query, status
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.middleware.auth_middleware import get_current_admin_user
 from app.models.common_models import PaginationResponse
@@ -16,6 +16,39 @@ def _strip_or_none(value: str | None) -> str | None:
         return None
     cleaned = value.strip()
     return cleaned or None
+
+
+class DayHours(BaseModel):
+    """Operating hours for a single day."""
+
+    open: str | None = Field(None, pattern=r"^\d{2}:\d{2}:\d{2}$", description="Opening time in HH:MM:SS format")
+    close: str | None = Field(None, pattern=r"^\d{2}:\d{2}:\d{2}$", description="Closing time in HH:MM:SS format")
+    is_closed: bool = Field(False, description="Whether the restaurant is closed on this day")
+    is_24_hours: bool = Field(False, description="Whether open 24 hours (when true, open/close times are ignored)")
+    model_config = ConfigDict(extra="ignore")
+
+    @model_validator(mode="after")
+    def require_open_close_when_not_closed_or_24h(self) -> "DayHours":
+        """When is_closed=False and is_24_hours=False, if either open or close is set, both must be set."""
+        if not self.is_closed and not self.is_24_hours:
+            if (self.open is None) != (self.close is None):
+                raise ValueError(
+                    "When is_closed and is_24_hours are both false, open and close must both be provided or both omitted"
+                )
+        return self
+
+
+class OperatingHours(BaseModel):
+    """Weekly operating hours for a restaurant."""
+
+    monday: DayHours = Field(default_factory=DayHours, description="Monday hours")
+    tuesday: DayHours = Field(default_factory=DayHours, description="Tuesday hours")
+    wednesday: DayHours = Field(default_factory=DayHours, description="Wednesday hours")
+    thursday: DayHours = Field(default_factory=DayHours, description="Thursday hours")
+    friday: DayHours = Field(default_factory=DayHours, description="Friday hours")
+    saturday: DayHours = Field(default_factory=DayHours, description="Saturday hours")
+    sunday: DayHours = Field(default_factory=DayHours, description="Sunday hours")
+    model_config = ConfigDict(extra="ignore")
 
 
 class RestaurantFeaturesCreate(BaseModel):
@@ -64,11 +97,12 @@ class CreateRestaurantRequest(BaseModel):
     is_credit_card_required_for_reservation: bool | None = Field(
         False, description="Require credit card for reservations"
     )
-    opening_time: str | None = Field(
-        None, pattern=r"^\d{2}:\d{2}:\d{2}$", description="Opening time in HH:MM:SS (24h) format"
-    )
-    closing_time: str | None = Field(
-        None, pattern=r"^\d{2}:\d{2}:\d{2}$", description="Closing time in HH:MM:SS (24h) format"
+    operating_hours: OperatingHours | None = Field(
+        None,
+        description=(
+            "Weekly operating hours. Defaults to 09:00-22:00 daily for any days not provided. "
+            "When is_closed=true for a day, open/close times are ignored and stored as NULL."
+        ),
     )
     timezone: str | None = Field(None, description="Restaurant timezone (IANA name, e.g. America/Vancouver)")
     reservation_seating_capacity: int | None = Field(
@@ -119,11 +153,12 @@ class UpdateRestaurantRequest(BaseModel):
     is_credit_card_required_for_reservation: bool | None = Field(
         None, description="Require credit card for reservations"
     )
-    opening_time: str | None = Field(
-        None, pattern=r"^\d{2}:\d{2}:\d{2}$", description="Opening time in HH:MM:SS (24h) format"
-    )
-    closing_time: str | None = Field(
-        None, pattern=r"^\d{2}:\d{2}:\d{2}$", description="Closing time in HH:MM:SS (24h) format"
+    operating_hours: OperatingHours | None = Field(
+        None,
+        description=(
+            "Weekly operating hours. Partial update supported: only provided days are updated, "
+            "other days remain unchanged. When is_closed=true for a day, open/close times are cleared."
+        ),
     )
     timezone: str | None = Field(None, description="Restaurant timezone (IANA name, e.g. America/Vancouver)")
     reservation_seating_capacity: int | None = Field(
@@ -171,8 +206,7 @@ class RestaurantResponse(BaseModel):
     forward_minutes: int | None = None
     backward_minutes: int | None = None
     is_credit_card_required_for_reservation: bool | None = None
-    opening_time: str | None = None
-    closing_time: str | None = None
+    operating_hours: OperatingHours | None = None
     timezone: str | None = None
     reservation_seating_capacity: int | None = None
     reservation_advance_days: int | None = None
@@ -248,8 +282,15 @@ router = APIRouter(
                         "twilio_details": {"workspace_sid": "WSxxxx", "phone_sid": "PNxxxx"},
                         "deepgram_details": {"project_id": "dg-project-1"},
                         "open_table_details": {"rid": "99999"},
-                        "opening_time": "09:00:00",
-                        "closing_time": "22:00:00",
+                        "operating_hours": {
+                            "monday": {"open": "09:00:00", "close": "22:00:00", "is_closed": False},
+                            "tuesday": {"open": "09:00:00", "close": "22:00:00", "is_closed": False},
+                            "wednesday": {"open": "09:00:00", "close": "22:00:00", "is_closed": False},
+                            "thursday": {"open": "09:00:00", "close": "22:00:00", "is_closed": False},
+                            "friday": {"open": "09:00:00", "close": "23:00:00", "is_closed": False},
+                            "saturday": {"open": "10:00:00", "close": "23:00:00", "is_closed": False},
+                            "sunday": {"open": "10:00:00", "close": "21:00:00", "is_closed": False},
+                        },
                         "timezone": "America/Vancouver",
                         "reservation_seating_capacity": 50,
                         "reservation_advance_days": 30,
@@ -308,8 +349,15 @@ async def create_restaurant(
                                     "twilio_details": {"workspace_sid": "WSxxxx"},
                                     "deepgram_details": {"project_id": "dg-project-1"},
                                     "open_table_details": {"rid": "99999"},
-                                    "opening_time": "09:00:00",
-                                    "closing_time": "22:00:00",
+                                    "operating_hours": {
+                                        "monday": {"open": "09:00:00", "close": "22:00:00", "is_closed": False},
+                                        "tuesday": {"open": "09:00:00", "close": "22:00:00", "is_closed": False},
+                                        "wednesday": {"open": "09:00:00", "close": "22:00:00", "is_closed": False},
+                                        "thursday": {"open": "09:00:00", "close": "22:00:00", "is_closed": False},
+                                        "friday": {"open": "09:00:00", "close": "22:00:00", "is_closed": False},
+                                        "saturday": {"open": "09:00:00", "close": "22:00:00", "is_closed": False},
+                                        "sunday": {"open": "09:00:00", "close": "22:00:00", "is_closed": False},
+                                    },
                                     "timezone": "America/Vancouver",
                                     "reservation_seating_capacity": 50,
                                     "reservation_advance_days": 30,
@@ -393,8 +441,15 @@ async def list_restaurants(
                             "twilio_details": {"workspace_sid": "WSxxxx"},
                             "deepgram_details": {"project_id": "dg-project-1"},
                             "open_table_details": {"rid": "99999"},
-                            "opening_time": "09:00:00",
-                            "closing_time": "22:00:00",
+                            "operating_hours": {
+                                "monday": {"open": "09:00:00", "close": "22:00:00", "is_closed": False},
+                                "tuesday": {"open": "09:00:00", "close": "22:00:00", "is_closed": False},
+                                "wednesday": {"open": "09:00:00", "close": "22:00:00", "is_closed": False},
+                                "thursday": {"open": "09:00:00", "close": "22:00:00", "is_closed": False},
+                                "friday": {"open": "09:00:00", "close": "22:00:00", "is_closed": False},
+                                "saturday": {"open": "09:00:00", "close": "22:00:00", "is_closed": False},
+                                "sunday": {"open": "09:00:00", "close": "22:00:00", "is_closed": False},
+                            },
                             "timezone": "America/Vancouver",
                             "reservation_seating_capacity": 50,
                             "reservation_advance_days": 30,
@@ -440,8 +495,15 @@ async def get_restaurant(
                         "forward_escalations": True,
                         "escalation_phone_number": "+15550001111",
                         "open_table_details": {"rid": "12345", "api_key": "secret"},
-                        "opening_time": "10:00:00",
-                        "closing_time": "23:00:00",
+                        "operating_hours": {
+                            "monday": {"open": "10:00:00", "close": "23:00:00", "is_closed": False},
+                            "tuesday": {"open": "10:00:00", "close": "23:00:00", "is_closed": False},
+                            "wednesday": {"open": "10:00:00", "close": "23:00:00", "is_closed": False},
+                            "thursday": {"open": "10:00:00", "close": "23:00:00", "is_closed": False},
+                            "friday": {"open": "10:00:00", "close": "00:00:00", "is_closed": False},
+                            "saturday": {"open": "10:00:00", "close": "00:00:00", "is_closed": False},
+                            "sunday": {"open": None, "close": None, "is_closed": True},
+                        },
                         "timezone": "America/Vancouver",
                         "reservation_seating_capacity": 75,
                         "reservation_advance_days": 60,

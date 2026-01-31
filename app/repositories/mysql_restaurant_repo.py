@@ -29,8 +29,15 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
                     r.is_credit_card_required_for_reservation,
                     r.forward_escalations,
                     r.escalation_phone_number,
-                    r.opening_time,
-                    r.closing_time,
+                    r.monday_open, r.monday_close, r.monday_closed,
+                    r.tuesday_open, r.tuesday_close, r.tuesday_closed,
+                    r.wednesday_open, r.wednesday_close, r.wednesday_closed,
+                    r.thursday_open, r.thursday_close, r.thursday_closed,
+                    r.friday_open, r.friday_close, r.friday_closed,
+                    r.saturday_open, r.saturday_close, r.saturday_closed,
+                    r.sunday_open, r.sunday_close, r.sunday_closed,
+                    r.monday_24_hours, r.tuesday_24_hours, r.wednesday_24_hours,
+                    r.thursday_24_hours, r.friday_24_hours, r.saturday_24_hours, r.sunday_24_hours,
                     r.reservation_seating_capacity,
                     r.reservation_advance_days,
                     r.timezone,
@@ -47,10 +54,6 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
             results = self._execute_query(query, (name,))
             if results:
                 result = results[0]
-                if "opening_time" not in result or result.get("opening_time") is None:
-                    result["opening_time"] = "09:00:00"
-                if "closing_time" not in result or result.get("closing_time") is None:
-                    result["closing_time"] = "22:00:00"
                 if "forward_escalations" not in result:
                     result["forward_escalations"] = False
                 if "escalation_phone_number" not in result:
@@ -92,8 +95,6 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
             results = self._execute_query(query, (name,))
             if results:
                 result = results[0]
-                result["opening_time"] = "09:00:00"
-                result["closing_time"] = "22:00:00"
                 result["forward_escalations"] = False
                 result["escalation_phone_number"] = None
                 result["reservation_seating_capacity"] = 50
@@ -102,6 +103,12 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
                 result["orders_enabled"] = True
                 result["reservations_enabled"] = True
                 result["faqs_enabled"] = True
+                # Set default operating hours for all days
+                for day in ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]:
+                    result[f"{day}_open"] = "09:00:00"
+                    result[f"{day}_close"] = "22:00:00"
+                    result[f"{day}_closed"] = False
+                    result[f"{day}_24_hours"] = False
                 return result
             return None
 
@@ -127,8 +134,15 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
                     r.is_credit_card_required_for_reservation,
                     r.forward_escalations,
                     r.escalation_phone_number,
-                    r.opening_time,
-                    r.closing_time,
+                    r.monday_open, r.monday_close, r.monday_closed,
+                    r.tuesday_open, r.tuesday_close, r.tuesday_closed,
+                    r.wednesday_open, r.wednesday_close, r.wednesday_closed,
+                    r.thursday_open, r.thursday_close, r.thursday_closed,
+                    r.friday_open, r.friday_close, r.friday_closed,
+                    r.saturday_open, r.saturday_close, r.saturday_closed,
+                    r.sunday_open, r.sunday_close, r.sunday_closed,
+                    r.monday_24_hours, r.tuesday_24_hours, r.wednesday_24_hours,
+                    r.thursday_24_hours, r.friday_24_hours, r.saturday_24_hours, r.sunday_24_hours,
                     r.reservation_seating_capacity,
                     r.reservation_advance_days,
                     r.timezone,
@@ -145,10 +159,6 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
             results = self._execute_query(query, (twilio_phone_number,))
             if results:
                 result = results[0]
-                if "opening_time" not in result or result.get("opening_time") is None:
-                    result["opening_time"] = "09:00:00"
-                if "closing_time" not in result or result.get("closing_time") is None:
-                    result["closing_time"] = "22:00:00"
                 if "forward_escalations" not in result:
                     result["forward_escalations"] = False
                 if "escalation_phone_number" not in result:
@@ -190,8 +200,6 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
             results = self._execute_query(query, (twilio_phone_number,))
             if results:
                 result = results[0]
-                result["opening_time"] = "09:00:00"
-                result["closing_time"] = "22:00:00"
                 result["forward_escalations"] = False
                 result["escalation_phone_number"] = None
                 result["reservation_seating_capacity"] = 50
@@ -200,6 +208,12 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
                 result["orders_enabled"] = True
                 result["reservations_enabled"] = True
                 result["faqs_enabled"] = True
+                # Set default operating hours for all days
+                for day in ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]:
+                    result[f"{day}_open"] = "09:00:00"
+                    result[f"{day}_close"] = "22:00:00"
+                    result[f"{day}_closed"] = False
+                    result[f"{day}_24_hours"] = False
                 return result
             return None
 
@@ -223,8 +237,15 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
                     r.is_credit_card_required_for_reservation,
                     r.forward_escalations,
                     r.escalation_phone_number,
-                    r.opening_time,
-                    r.closing_time,
+                    r.monday_open, r.monday_close, r.monday_closed,
+                    r.tuesday_open, r.tuesday_close, r.tuesday_closed,
+                    r.wednesday_open, r.wednesday_close, r.wednesday_closed,
+                    r.thursday_open, r.thursday_close, r.thursday_closed,
+                    r.friday_open, r.friday_close, r.friday_closed,
+                    r.saturday_open, r.saturday_close, r.saturday_closed,
+                    r.sunday_open, r.sunday_close, r.sunday_closed,
+                    r.monday_24_hours, r.tuesday_24_hours, r.wednesday_24_hours,
+                    r.thursday_24_hours, r.friday_24_hours, r.saturday_24_hours, r.sunday_24_hours,
                     r.reservation_seating_capacity,
                     r.reservation_advance_days,
                     r.timezone,
@@ -241,10 +262,6 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
             results = self._execute_query(query, (restaurant_id,))
             if results:
                 result = results[0]
-                if "opening_time" not in result or result.get("opening_time") is None:
-                    result["opening_time"] = "09:00:00"
-                if "closing_time" not in result or result.get("closing_time") is None:
-                    result["closing_time"] = "22:00:00"
                 if "forward_escalations" not in result:
                     result["forward_escalations"] = False
                 if "escalation_phone_number" not in result:
@@ -286,8 +303,6 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
             results = self._execute_query(query, (restaurant_id,))
             if results:
                 result = results[0]
-                result["opening_time"] = "09:00:00"
-                result["closing_time"] = "22:00:00"
                 result["forward_escalations"] = False
                 result["escalation_phone_number"] = None
                 result["reservation_seating_capacity"] = 50
@@ -296,6 +311,12 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
                 result["orders_enabled"] = True
                 result["reservations_enabled"] = True
                 result["faqs_enabled"] = True
+                # Set default operating hours for all days
+                for day in ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]:
+                    result[f"{day}_open"] = "09:00:00"
+                    result[f"{day}_close"] = "22:00:00"
+                    result[f"{day}_closed"] = False
+                    result[f"{day}_24_hours"] = False
                 return result
             return None
 
@@ -310,10 +331,21 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
                 twilio_details, deepgram_details, open_table_details,
                 forward_minutes, backward_minutes, is_credit_card_required_for_reservation,
                 forward_escalations, escalation_phone_number,
-                opening_time, closing_time, timezone,
-                reservation_seating_capacity, reservation_advance_days,
+                monday_open, monday_close, monday_closed,
+                tuesday_open, tuesday_close, tuesday_closed,
+                wednesday_open, wednesday_close, wednesday_closed,
+                thursday_open, thursday_close, thursday_closed,
+                friday_open, friday_close, friday_closed,
+                saturday_open, saturday_close, saturday_closed,
+                sunday_open, sunday_close, sunday_closed,
+                monday_24_hours, tuesday_24_hours, wednesday_24_hours,
+                thursday_24_hours, friday_24_hours, saturday_24_hours, sunday_24_hours,
+                timezone, reservation_seating_capacity, reservation_advance_days,
                 created_at, updated_at
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                      %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                      %s, %s, %s, %s, %s, %s, %s,
+                      %s, %s, %s, NOW(), NOW())
         """
         restaurant_id = self._execute_insert(
             query,
@@ -330,8 +362,34 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
                 data.get("is_credit_card_required_for_reservation", False),
                 data.get("forward_escalations", False),
                 data.get("escalation_phone_number"),
-                data.get("opening_time"),
-                data.get("closing_time"),
+                data.get("monday_open"),
+                data.get("monday_close"),
+                data.get("monday_closed", False),
+                data.get("tuesday_open"),
+                data.get("tuesday_close"),
+                data.get("tuesday_closed", False),
+                data.get("wednesday_open"),
+                data.get("wednesday_close"),
+                data.get("wednesday_closed", False),
+                data.get("thursday_open"),
+                data.get("thursday_close"),
+                data.get("thursday_closed", False),
+                data.get("friday_open"),
+                data.get("friday_close"),
+                data.get("friday_closed", False),
+                data.get("saturday_open"),
+                data.get("saturday_close"),
+                data.get("saturday_closed", False),
+                data.get("sunday_open"),
+                data.get("sunday_close"),
+                data.get("sunday_closed", False),
+                data.get("monday_24_hours", False),
+                data.get("tuesday_24_hours", False),
+                data.get("wednesday_24_hours", False),
+                data.get("thursday_24_hours", False),
+                data.get("friday_24_hours", False),
+                data.get("saturday_24_hours", False),
+                data.get("sunday_24_hours", False),
                 data.get("timezone"),
                 data.get("reservation_seating_capacity", 50),
                 data.get("reservation_advance_days", 30),
@@ -403,8 +461,15 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
                 r.is_credit_card_required_for_reservation,
                 r.forward_escalations,
                 r.escalation_phone_number,
-                r.opening_time,
-                r.closing_time,
+                r.monday_open, r.monday_close, r.monday_closed,
+                r.tuesday_open, r.tuesday_close, r.tuesday_closed,
+                r.wednesday_open, r.wednesday_close, r.wednesday_closed,
+                r.thursday_open, r.thursday_close, r.thursday_closed,
+                r.friday_open, r.friday_close, r.friday_closed,
+                r.saturday_open, r.saturday_close, r.saturday_closed,
+                r.sunday_open, r.sunday_close, r.sunday_closed,
+                r.monday_24_hours, r.tuesday_24_hours, r.wednesday_24_hours,
+                r.thursday_24_hours, r.friday_24_hours, r.saturday_24_hours, r.sunday_24_hours,
                 r.reservation_seating_capacity,
                 r.reservation_advance_days,
                 r.timezone,
@@ -490,12 +555,20 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
         if "escalation_phone_number" in data:
             update_fields.append("escalation_phone_number = %s")
             params.append(data["escalation_phone_number"])
-        if "opening_time" in data:
-            update_fields.append("opening_time = %s")
-            params.append(data["opening_time"])
-        if "closing_time" in data:
-            update_fields.append("closing_time = %s")
-            params.append(data["closing_time"])
+        # Handle per-day operating hours
+        for day in ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]:
+            if f"{day}_open" in data:
+                update_fields.append(f"{day}_open = %s")
+                params.append(data[f"{day}_open"])
+            if f"{day}_close" in data:
+                update_fields.append(f"{day}_close = %s")
+                params.append(data[f"{day}_close"])
+            if f"{day}_closed" in data:
+                update_fields.append(f"{day}_closed = %s")
+                params.append(data[f"{day}_closed"])
+            if f"{day}_24_hours" in data:
+                update_fields.append(f"{day}_24_hours = %s")
+                params.append(data[f"{day}_24_hours"])
         if "reservation_seating_capacity" in data:
             update_fields.append("reservation_seating_capacity = %s")
             params.append(data["reservation_seating_capacity"])
