@@ -21,6 +21,7 @@ def make_restaurant(open_time: str, close_time: str, tz: str = "UTC") -> dict:
         restaurant[f"{day}_open"] = open_time
         restaurant[f"{day}_close"] = close_time
         restaurant[f"{day}_closed"] = False
+        restaurant[f"{day}_24_hours"] = False
     return restaurant
 
 
@@ -116,7 +117,7 @@ def make_restaurant_per_day(hours_by_day: dict, tz: str = "UTC") -> dict:
     """Create a restaurant with different hours per day.
 
     hours_by_day format: {
-        "monday": {"open": "09:00:00", "close": "17:00:00", "closed": False},
+        "monday": {"open": "09:00:00", "close": "17:00:00", "closed": False, "24_hours": False},
         ...
     }
     """
@@ -127,11 +128,13 @@ def make_restaurant_per_day(hours_by_day: dict, tz: str = "UTC") -> dict:
             restaurant[f"{day}_open"] = day_hours.get("open")
             restaurant[f"{day}_close"] = day_hours.get("close")
             restaurant[f"{day}_closed"] = day_hours.get("closed", False)
+            restaurant[f"{day}_24_hours"] = day_hours.get("24_hours", False)
         else:
             # Default hours
             restaurant[f"{day}_open"] = "09:00:00"
             restaurant[f"{day}_close"] = "22:00:00"
             restaurant[f"{day}_closed"] = False
+            restaurant[f"{day}_24_hours"] = False
     return restaurant
 
 
@@ -283,3 +286,82 @@ class TestHelperFunctions:
 
         # Midnight close: 18:00 - 00:00 (not overnight by this logic)
         assert restaurant_hours._is_overnight_hours(datetime.time(18, 0), datetime.time(0, 0)) is True
+
+
+class Test24HourOperation:
+    """Tests for 24-hour restaurant operation."""
+
+    def test_is_open_now_24_hours_day(self):
+        """Restaurant with 24-hour Monday should be open at any time on Monday."""
+        restaurant = make_restaurant_per_day(
+            {
+                "monday": {"24_hours": True},
+                "tuesday": {"open": "09:00:00", "close": "17:00:00"},
+            }
+        )
+
+        # Monday 3am - should be open (24 hours)
+        monday_3am = datetime.datetime(2024, 1, 1, 3, 0, tzinfo=datetime.timezone.utc)
+        assert restaurant_hours.is_restaurant_open_now(restaurant, monday_3am) is True
+
+        # Monday noon - should be open
+        monday_noon = datetime.datetime(2024, 1, 1, 12, 0, tzinfo=datetime.timezone.utc)
+        assert restaurant_hours.is_restaurant_open_now(restaurant, monday_noon) is True
+
+        # Monday 11pm - should be open
+        monday_11pm = datetime.datetime(2024, 1, 1, 23, 0, tzinfo=datetime.timezone.utc)
+        assert restaurant_hours.is_restaurant_open_now(restaurant, monday_11pm) is True
+
+    def test_is_datetime_within_24_hours_day(self):
+        """Any time on a 24-hour day should be within operating hours."""
+        restaurant = make_restaurant_per_day(
+            {
+                "monday": {"24_hours": True},
+            }
+        )
+
+        # Any time on Monday
+        assert (
+            restaurant_hours.is_datetime_within_operating_hours(restaurant, datetime.datetime(2024, 1, 1, 0, 0)) is True
+        )
+        assert (
+            restaurant_hours.is_datetime_within_operating_hours(restaurant, datetime.datetime(2024, 1, 1, 12, 0))
+            is True
+        )
+        assert (
+            restaurant_hours.is_datetime_within_operating_hours(restaurant, datetime.datetime(2024, 1, 1, 23, 59))
+            is True
+        )
+
+    def test_24_hours_does_not_extend_to_next_day(self):
+        """24-hour Monday should not make Tuesday early morning open."""
+        restaurant = make_restaurant_per_day(
+            {
+                "monday": {"24_hours": True},
+                "tuesday": {"open": "09:00:00", "close": "17:00:00"},
+            }
+        )
+
+        # Tuesday 3am - should be closed (Tuesday is 09:00-17:00)
+        tuesday_3am = datetime.datetime(2024, 1, 2, 3, 0, tzinfo=datetime.timezone.utc)
+        assert restaurant_hours.is_restaurant_open_now(restaurant, tuesday_3am) is False
+
+    def test_format_operating_window_24_hours(self):
+        """format_operating_window should return 'Open 24 hours' for 24-hour days."""
+        restaurant = make_restaurant_per_day(
+            {
+                "monday": {"24_hours": True},
+            }
+        )
+        assert restaurant_hours.format_operating_window(restaurant, "monday") == "Open 24 hours"
+
+    def test_closed_takes_priority_over_24_hours(self):
+        """If both is_closed and is_24_hours are True, closed wins."""
+        restaurant = {"timezone": "UTC"}
+        restaurant["monday_closed"] = True
+        restaurant["monday_24_hours"] = True
+        restaurant["monday_open"] = None
+        restaurant["monday_close"] = None
+
+        monday = datetime.datetime(2024, 1, 1, 12, 0)
+        assert restaurant_hours.is_datetime_within_operating_hours(restaurant, monday) is False

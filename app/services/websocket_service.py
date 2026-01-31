@@ -209,23 +209,27 @@ class WebSocketService:
 
         # Get today's operating hours for agent context
         today_day_name = now_local.strftime("%A").lower()
-        today_open, today_close, today_is_closed = get_day_operating_hours(restaurant, today_day_name)
+        today_open, today_close, today_is_closed, today_is_24_hours = get_day_operating_hours(
+            restaurant, today_day_name
+        )
         today_hours = {
             "day": today_day_name,
             "open": today_open.strftime("%H:%M:%S") if today_open else None,
             "close": today_close.strftime("%H:%M:%S") if today_close else None,
             "is_closed": today_is_closed,
+            "is_24_hours": today_is_24_hours,
             "display": format_operating_window(restaurant, today_day_name),
         }
 
         # Build operating_hours for all days (for agent to reference full week schedule)
         operating_hours = {}
         for day in DAYS_OF_WEEK:
-            day_open, day_close, day_closed = get_day_operating_hours(restaurant, day)
+            day_open, day_close, day_closed, day_24_hours = get_day_operating_hours(restaurant, day)
             operating_hours[day] = {
                 "open": day_open.strftime("%H:%M:%S") if day_open else None,
                 "close": day_close.strftime("%H:%M:%S") if day_close else None,
                 "is_closed": day_closed,
+                "is_24_hours": day_24_hours,
             }
 
         # Create combined structure showing all items per category with availability status

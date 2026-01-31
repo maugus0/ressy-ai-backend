@@ -39,6 +39,7 @@ class InMemoryRestaurantRepository:
             restaurant[f"{day}_open"] = "09:00:00"
             restaurant[f"{day}_close"] = "22:00:00"
             restaurant[f"{day}_closed"] = False
+            restaurant[f"{day}_24_hours"] = False
         self._restaurants[restaurant_id] = restaurant
         self._counter = max(self._counter, restaurant_id)
         return restaurant
@@ -69,6 +70,7 @@ class InMemoryRestaurantRepository:
             restaurant[f"{day}_open"] = data.get(f"{day}_open", "09:00:00")
             restaurant[f"{day}_close"] = data.get(f"{day}_close", "22:00:00")
             restaurant[f"{day}_closed"] = data.get(f"{day}_closed", False)
+            restaurant[f"{day}_24_hours"] = data.get(f"{day}_24_hours", False)
         self._restaurants[restaurant_id] = restaurant
         return restaurant_id
 

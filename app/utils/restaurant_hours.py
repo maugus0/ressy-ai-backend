@@ -71,11 +71,11 @@ def _is_time_within(open_time: dt_time, close_time: dt_time, current_time: dt_ti
     return current_time >= open_time or current_time < close_time
 
 
-def _get_day_hours(restaurant: dict, day_name: str) -> Tuple[Optional[dt_time], Optional[dt_time], bool]:
+def _get_day_hours(restaurant: dict, day_name: str) -> Tuple[Optional[dt_time], Optional[dt_time], bool, bool]:
     """Get operating hours for a specific day from restaurant data.
 
     Supports both flat column format (monday_open, etc.) and nested operating_hours object.
-    Returns (open_time, close_time, is_closed).
+    Returns (open_time, close_time, is_closed, is_24_hours).
     """
     # Check for nested operating_hours object first (API response format)
     operating_hours = restaurant.get("operating_hours")
@@ -83,15 +83,17 @@ def _get_day_hours(restaurant: dict, day_name: str) -> Tuple[Optional[dt_time], 
         day_hours = operating_hours[day_name]
         if isinstance(day_hours, dict):
             is_closed = bool(day_hours.get("is_closed", False))
+            is_24_hours = bool(day_hours.get("is_24_hours", False))
             open_time = _parse_operating_time(day_hours.get("open"))
             close_time = _parse_operating_time(day_hours.get("close"))
-            return open_time, close_time, is_closed
+            return open_time, close_time, is_closed, is_24_hours
 
     # Fallback to flat column format (database format)
     is_closed = bool(restaurant.get(f"{day_name}_closed", False))
+    is_24_hours = bool(restaurant.get(f"{day_name}_24_hours", False))
     open_time = _parse_operating_time(restaurant.get(f"{day_name}_open"))
     close_time = _parse_operating_time(restaurant.get(f"{day_name}_close"))
-    return open_time, close_time, is_closed
+    return open_time, close_time, is_closed, is_24_hours
 
 
 def is_restaurant_open_now(restaurant: dict, now_utc: Optional[datetime] = None) -> bool:
@@ -112,18 +114,25 @@ def is_restaurant_open_now(restaurant: dict, now_utc: Optional[datetime] = None)
         local_time = local_time.replace(tzinfo=None)
 
     # Check current day's hours first
-    open_time, close_time, is_closed = _get_day_hours(restaurant, day_name)
+    open_time, close_time, is_closed, is_24_hours = _get_day_hours(restaurant, day_name)
 
+    # 24 hours - always open (checked before is_closed for clarity)
+    if is_24_hours and not is_closed:
+        return True
+
+    # Normal hours check for current day (if not closed)
     if not is_closed and open_time and close_time:
         if _is_time_within(open_time, close_time, local_time):
             return True
 
     # Check if previous day had overnight hours that extend into today
     # This handles cases like: Monday 18:00-02:00, and it's now Tuesday 1:30am
+    # Important: This check happens BEFORE we reject for is_closed, because
+    # Monday's overnight hours can extend into a closed Tuesday morning
     previous_day = _get_previous_day(day_name)
-    prev_open, prev_close, prev_closed = _get_day_hours(restaurant, previous_day)
+    prev_open, prev_close, prev_closed, prev_24_hours = _get_day_hours(restaurant, previous_day)
 
-    if not prev_closed and prev_open and prev_close:
+    if not prev_closed and not prev_24_hours and prev_open and prev_close:
         if _is_overnight_hours(prev_open, prev_close):
             # Previous day has overnight hours - check if we're still within the closing time
             if local_time < prev_close:
@@ -162,18 +171,25 @@ def is_datetime_within_operating_hours(restaurant: dict, target_dt: datetime) ->
         local_time = local_time.replace(tzinfo=None)
 
     # Check current day's hours first
-    open_time, close_time, is_closed = _get_day_hours(restaurant, day_name)
+    open_time, close_time, is_closed, is_24_hours = _get_day_hours(restaurant, day_name)
 
+    # 24 hours - always within operating hours (checked before is_closed for clarity)
+    if is_24_hours and not is_closed:
+        return True
+
+    # Normal hours check for current day (if not closed)
     if not is_closed and open_time and close_time:
         if _is_time_within(open_time, close_time, local_time):
             return True
 
     # Check if previous day had overnight hours that extend into today
     # This handles cases like: Monday 18:00-02:00, and target is Tuesday 1:30am
+    # Important: This check happens BEFORE we reject for is_closed, because
+    # Monday's overnight hours can extend into a closed Tuesday morning
     previous_day = _get_previous_day(day_name)
-    prev_open, prev_close, prev_closed = _get_day_hours(restaurant, previous_day)
+    prev_open, prev_close, prev_closed, prev_24_hours = _get_day_hours(restaurant, previous_day)
 
-    if not prev_closed and prev_open and prev_close:
+    if not prev_closed and not prev_24_hours and prev_open and prev_close:
         if _is_overnight_hours(prev_open, prev_close):
             # Previous day has overnight hours - check if target time is within the closing period
             if local_time < prev_close:
@@ -190,8 +206,10 @@ def is_datetime_within_operating_hours(restaurant: dict, target_dt: datetime) ->
     return False
 
 
-def get_day_operating_hours(restaurant: dict, day_name: str) -> Tuple[Optional[dt_time], Optional[dt_time], bool]:
-    """Get operating hours for a specific day. Public interface for _get_day_hours."""
+def get_day_operating_hours(restaurant: dict, day_name: str) -> Tuple[Optional[dt_time], Optional[dt_time], bool, bool]:
+    """Get operating hours for a specific day. Public interface for _get_day_hours.
+    Returns (open_time, close_time, is_closed, is_24_hours).
+    """
     return _get_day_hours(restaurant, day_name)
 
 
@@ -205,10 +223,13 @@ def format_operating_window(restaurant: dict, day_name: Optional[str] = None) ->
             tz, _ = resolve_restaurant_timezone(restaurant)
             day_name = datetime.now(tz).strftime("%A").lower()
 
-        open_time, close_time, is_closed = _get_day_hours(restaurant, day_name)
+        open_time, close_time, is_closed, is_24_hours = _get_day_hours(restaurant, day_name)
 
         if is_closed:
             return "Closed"
+
+        if is_24_hours:
+            return "Open 24 hours"
 
         if open_time and close_time:
             # Use locale-independent formatting; %-I not on Windows, so use %I and strip leading zero.

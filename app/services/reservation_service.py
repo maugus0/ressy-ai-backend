@@ -151,64 +151,82 @@ class ReservationService:
         while current_date <= end_date:
             # Get operating hours for this specific day
             day_name = current_date.strftime("%A").lower()
-            day_open_time, day_close_time, day_is_closed = get_day_operating_hours(restaurant, day_name)
+            day_open_time, day_close_time, day_is_closed, day_is_24_hours = get_day_operating_hours(
+                restaurant, day_name
+            )
 
-            # Skip closed days (but still check for previous day overnight below)
-            if not day_is_closed and day_open_time and day_close_time:
+            # Skip closed days
+            if day_is_closed:
+                current_date += timedelta(days=1)
+                continue
+
+            # Handle 24-hour days - generate slots for entire day
+            if day_is_24_hours:
+                day_start = datetime.combine(current_date, time(0, 0, 0))
+                day_end = datetime.combine(current_date, time(23, 59, 59))
+            elif day_open_time and day_close_time:
                 day_start = datetime.combine(current_date, day_open_time)
-
                 # Handle overnight hours: close time is on the NEXT day
                 if _is_overnight(day_open_time, day_close_time):
                     day_end = datetime.combine(current_date + timedelta(days=1), day_close_time)
                 else:
                     day_end = datetime.combine(current_date, day_close_time)
+            else:
+                current_date += timedelta(days=1)
+                continue
 
-                # Determine the effective start time for this day
-                if current_date == search_start_dt_local.date():
-                    # First day: start from search_start_dt_local (rounded up) or opening time, whichever is later
-                    normalized_start = search_start_dt_local.replace(second=0, microsecond=0)
-                    minutes = normalized_start.minute
-                    remainder = minutes % self.SLOT_INTERVAL_MINUTES
-                    if remainder == 0:
-                        rounded_start = normalized_start
-                    else:
-                        minutes_to_add = self.SLOT_INTERVAL_MINUTES - remainder
-                        rounded_start = normalized_start + timedelta(minutes=minutes_to_add)
-                    slot_start = max(rounded_start, day_start)
+            # Determine the effective start time for this day
+            if current_date == search_start_dt_local.date():
+                # First day: start from search_start_dt_local (rounded up) or opening time, whichever is later
+                normalized_start = search_start_dt_local.replace(second=0, microsecond=0)
+                minutes = normalized_start.minute
+                remainder = minutes % self.SLOT_INTERVAL_MINUTES
+                if remainder == 0:
+                    rounded_start = normalized_start
                 else:
-                    slot_start = day_start
+                    minutes_to_add = self.SLOT_INTERVAL_MINUTES - remainder
+                    rounded_start = normalized_start + timedelta(minutes=minutes_to_add)
+                slot_start = max(rounded_start, day_start)
+            else:
+                slot_start = day_start
 
-                # Determine the effective end time
-                slot_end = day_end
-                # For the last day in search range, cap at end_dt_local
-                if day_end.date() > end_dt_local.date():
-                    # Overnight extends past end_date - cap it
-                    slot_end = min(end_dt_local.replace(second=0, microsecond=0), day_end)
-                elif current_date == end_dt_local.date() and not _is_overnight(day_open_time, day_close_time):
-                    slot_end = min(end_dt_local.replace(second=0, microsecond=0), day_end)
+            # Determine the effective end time
+            slot_end = day_end
+            # For the last day in search range, cap at end_dt_local
+            if day_end.date() > end_dt_local.date():
+                # Overnight extends past end_date - cap it
+                slot_end = min(end_dt_local.replace(second=0, microsecond=0), day_end)
+            elif (
+                current_date == end_dt_local.date()
+                and not day_is_24_hours
+                and day_open_time
+                and day_close_time
+                and not _is_overnight(day_open_time, day_close_time)
+            ):
+                slot_end = min(end_dt_local.replace(second=0, microsecond=0), day_end)
 
-                current_slot = slot_start
-                while current_slot < slot_end:
-                    slot_key = current_slot.replace(second=0, microsecond=0)
-                    if slot_key not in processed_slots:
-                        processed_slots.add(slot_key)
-                        # Convert local slot to UTC for capacity lookup
-                        slot_utc = slot_key.replace(tzinfo=restaurant_tz).astimezone(timezone.utc)
-                        slot_utc_naive = slot_utc.replace(tzinfo=None)
-                        used_capacity = capacity_map.get(slot_utc_naive, 0)
-                        available_capacity = seating_capacity - used_capacity
+            current_slot = slot_start
+            while current_slot < slot_end:
+                slot_key = current_slot.replace(second=0, microsecond=0)
+                if slot_key not in processed_slots:
+                    processed_slots.add(slot_key)
+                    # Convert local slot to UTC for capacity lookup
+                    slot_utc = slot_key.replace(tzinfo=restaurant_tz).astimezone(timezone.utc)
+                    slot_utc_naive = slot_utc.replace(tzinfo=None)
+                    used_capacity = capacity_map.get(slot_utc_naive, 0)
+                    available_capacity = seating_capacity - used_capacity
 
-                        requested_size = party_size or 1
-                        if available_capacity >= requested_size:
-                            slots.append(
-                                {
-                                    "date_time": isoformat_z(slot_utc),
-                                    "available": True,
-                                    "available_capacity": available_capacity,
-                                }
-                            )
+                    requested_size = party_size or 1
+                    if available_capacity >= requested_size:
+                        slots.append(
+                            {
+                                "date_time": isoformat_z(slot_utc),
+                                "available": True,
+                                "available_capacity": available_capacity,
+                            }
+                        )
 
-                    current_slot += timedelta(minutes=self.SLOT_INTERVAL_MINUTES)
+                current_slot += timedelta(minutes=self.SLOT_INTERVAL_MINUTES)
 
             current_date += timedelta(days=1)
 

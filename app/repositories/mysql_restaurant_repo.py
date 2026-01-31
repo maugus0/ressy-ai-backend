@@ -36,6 +36,8 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
                     r.friday_open, r.friday_close, r.friday_closed,
                     r.saturday_open, r.saturday_close, r.saturday_closed,
                     r.sunday_open, r.sunday_close, r.sunday_closed,
+                    r.monday_24_hours, r.tuesday_24_hours, r.wednesday_24_hours,
+                    r.thursday_24_hours, r.friday_24_hours, r.saturday_24_hours, r.sunday_24_hours,
                     r.reservation_seating_capacity,
                     r.reservation_advance_days,
                     r.timezone,
@@ -106,6 +108,7 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
                     result[f"{day}_open"] = "09:00:00"
                     result[f"{day}_close"] = "22:00:00"
                     result[f"{day}_closed"] = False
+                    result[f"{day}_24_hours"] = False
                 return result
             return None
 
@@ -138,6 +141,8 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
                     r.friday_open, r.friday_close, r.friday_closed,
                     r.saturday_open, r.saturday_close, r.saturday_closed,
                     r.sunday_open, r.sunday_close, r.sunday_closed,
+                    r.monday_24_hours, r.tuesday_24_hours, r.wednesday_24_hours,
+                    r.thursday_24_hours, r.friday_24_hours, r.saturday_24_hours, r.sunday_24_hours,
                     r.reservation_seating_capacity,
                     r.reservation_advance_days,
                     r.timezone,
@@ -208,6 +213,7 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
                     result[f"{day}_open"] = "09:00:00"
                     result[f"{day}_close"] = "22:00:00"
                     result[f"{day}_closed"] = False
+                    result[f"{day}_24_hours"] = False
                 return result
             return None
 
@@ -238,6 +244,8 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
                     r.friday_open, r.friday_close, r.friday_closed,
                     r.saturday_open, r.saturday_close, r.saturday_closed,
                     r.sunday_open, r.sunday_close, r.sunday_closed,
+                    r.monday_24_hours, r.tuesday_24_hours, r.wednesday_24_hours,
+                    r.thursday_24_hours, r.friday_24_hours, r.saturday_24_hours, r.sunday_24_hours,
                     r.reservation_seating_capacity,
                     r.reservation_advance_days,
                     r.timezone,
@@ -308,6 +316,7 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
                     result[f"{day}_open"] = "09:00:00"
                     result[f"{day}_close"] = "22:00:00"
                     result[f"{day}_closed"] = False
+                    result[f"{day}_24_hours"] = False
                 return result
             return None
 
@@ -329,10 +338,13 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
                 friday_open, friday_close, friday_closed,
                 saturday_open, saturday_close, saturday_closed,
                 sunday_open, sunday_close, sunday_closed,
+                monday_24_hours, tuesday_24_hours, wednesday_24_hours,
+                thursday_24_hours, friday_24_hours, saturday_24_hours, sunday_24_hours,
                 timezone, reservation_seating_capacity, reservation_advance_days,
                 created_at, updated_at
             ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
                       %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                      %s, %s, %s, %s, %s, %s, %s,
                       %s, %s, %s, NOW(), NOW())
         """
         restaurant_id = self._execute_insert(
@@ -371,6 +383,13 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
                 data.get("sunday_open"),
                 data.get("sunday_close"),
                 data.get("sunday_closed", False),
+                data.get("monday_24_hours", False),
+                data.get("tuesday_24_hours", False),
+                data.get("wednesday_24_hours", False),
+                data.get("thursday_24_hours", False),
+                data.get("friday_24_hours", False),
+                data.get("saturday_24_hours", False),
+                data.get("sunday_24_hours", False),
                 data.get("timezone"),
                 data.get("reservation_seating_capacity", 50),
                 data.get("reservation_advance_days", 30),
@@ -449,6 +468,8 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
                 r.friday_open, r.friday_close, r.friday_closed,
                 r.saturday_open, r.saturday_close, r.saturday_closed,
                 r.sunday_open, r.sunday_close, r.sunday_closed,
+                r.monday_24_hours, r.tuesday_24_hours, r.wednesday_24_hours,
+                r.thursday_24_hours, r.friday_24_hours, r.saturday_24_hours, r.sunday_24_hours,
                 r.reservation_seating_capacity,
                 r.reservation_advance_days,
                 r.timezone,
@@ -545,6 +566,9 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
             if f"{day}_closed" in data:
                 update_fields.append(f"{day}_closed = %s")
                 params.append(data[f"{day}_closed"])
+            if f"{day}_24_hours" in data:
+                update_fields.append(f"{day}_24_hours = %s")
+                params.append(data[f"{day}_24_hours"])
         if "reservation_seating_capacity" in data:
             update_fields.append("reservation_seating_capacity = %s")
             params.append(data["reservation_seating_capacity"])

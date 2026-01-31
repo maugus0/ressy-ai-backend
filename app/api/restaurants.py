@@ -24,6 +24,7 @@ class DayHours(BaseModel):
     open: str | None = Field(None, pattern=r"^\d{2}:\d{2}:\d{2}$", description="Opening time in HH:MM:SS format")
     close: str | None = Field(None, pattern=r"^\d{2}:\d{2}:\d{2}$", description="Closing time in HH:MM:SS format")
     is_closed: bool = Field(False, description="Whether the restaurant is closed on this day")
+    is_24_hours: bool = Field(False, description="Whether open 24 hours (when true, open/close times are ignored)")
     model_config = ConfigDict(extra="ignore")
 
 

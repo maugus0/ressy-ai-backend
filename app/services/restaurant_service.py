@@ -213,6 +213,7 @@ class RestaurantService:
             restaurant.pop(f"{day}_open", None)
             restaurant.pop(f"{day}_close", None)
             restaurant.pop(f"{day}_closed", None)
+            restaurant.pop(f"{day}_24_hours", None)
         restaurant["timezone"] = self._format_timezone_field(restaurant.get("timezone"))
         if "forward_escalations" in restaurant:
             try:
@@ -287,13 +288,16 @@ class RestaurantService:
                 "open": self._format_time_field_optional(restaurant.get(f"{day}_open")),
                 "close": self._format_time_field_optional(restaurant.get(f"{day}_close")),
                 "is_closed": bool(restaurant.get(f"{day}_closed", False)),
+                "is_24_hours": bool(restaurant.get(f"{day}_24_hours", False)),
             }
         return operating_hours
 
     def _flatten_operating_hours(self, operating_hours: Dict[str, Any]) -> Dict[str, Any]:
         """Transform operating_hours object into flat columns for database.
 
-        When is_closed=True, open/close times are set to NULL for data consistency.
+        Priority: is_closed > is_24_hours > open/close times.
+        When is_closed=True, times are NULL and is_24_hours=False.
+        When is_24_hours=True, times are NULL (ignored anyway).
         """
         flat: Dict[str, Any] = {}
         for day in DAYS_OF_WEEK:
@@ -302,18 +306,28 @@ class RestaurantService:
                 continue
 
             is_closed = day_hours.get("is_closed", False)
+            is_24_hours = day_hours.get("is_24_hours", False)
 
             if is_closed:
-                # When marked as closed, clear times to NULL for consistency
+                # Closed takes priority - clear everything
                 flat[f"{day}_open"] = None
                 flat[f"{day}_close"] = None
                 flat[f"{day}_closed"] = True
+                flat[f"{day}_24_hours"] = False
+            elif is_24_hours:
+                # 24 hours - times are ignored, store NULL for consistency
+                flat[f"{day}_open"] = None
+                flat[f"{day}_close"] = None
+                flat[f"{day}_closed"] = False
+                flat[f"{day}_24_hours"] = True
             else:
+                # Normal hours
                 if "open" in day_hours:
                     flat[f"{day}_open"] = day_hours.get("open")
                 if "close" in day_hours:
                     flat[f"{day}_close"] = day_hours.get("close")
                 flat[f"{day}_closed"] = False
+                flat[f"{day}_24_hours"] = False
         return flat
 
     def _validate_operating_hours(self, operating_hours: Dict[str, Any]) -> None:
@@ -418,27 +432,39 @@ class RestaurantService:
                 if day in provided_hours and isinstance(provided_hours[day], dict):
                     day_hours = provided_hours[day]
                     is_closed = day_hours.get("is_closed", False)
+                    is_24_hours = day_hours.get("is_24_hours", False)
+
                     if is_closed:
-                        # When marked closed, times should be NULL (handled in _flatten)
+                        # Closed takes priority
                         payload[f"{day}_open"] = None
                         payload[f"{day}_close"] = None
                         payload[f"{day}_closed"] = True
+                        payload[f"{day}_24_hours"] = False
+                    elif is_24_hours:
+                        # 24 hours - no need for open/close times
+                        payload[f"{day}_open"] = None
+                        payload[f"{day}_close"] = None
+                        payload[f"{day}_closed"] = False
+                        payload[f"{day}_24_hours"] = True
                     else:
-                        # Use provided times or defaults
+                        # Normal hours with defaults
                         payload[f"{day}_open"] = day_hours.get("open") or DEFAULT_OPEN
                         payload[f"{day}_close"] = day_hours.get("close") or DEFAULT_CLOSE
                         payload[f"{day}_closed"] = False
+                        payload[f"{day}_24_hours"] = False
                 else:
                     # Day not provided - use defaults
                     payload[f"{day}_open"] = DEFAULT_OPEN
                     payload[f"{day}_close"] = DEFAULT_CLOSE
                     payload[f"{day}_closed"] = False
+                    payload[f"{day}_24_hours"] = False
         else:
             # No operating_hours provided - use defaults for all days
             for day in DAYS_OF_WEEK:
                 payload[f"{day}_open"] = DEFAULT_OPEN
                 payload[f"{day}_close"] = DEFAULT_CLOSE
                 payload[f"{day}_closed"] = False
+                payload[f"{day}_24_hours"] = False
 
         try:
             restaurant_id = self.restaurant_repo.create(payload)
