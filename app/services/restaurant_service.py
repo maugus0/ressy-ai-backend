@@ -345,6 +345,12 @@ class RestaurantService:
                 )
 
             is_closed = day_hours.get("is_closed", False)
+            is_24_hours = day_hours.get("is_24_hours", False)
+            if is_closed and is_24_hours:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"operating_hours.{day}: a day cannot be both closed and open 24 hours",
+                )
             if not is_closed:
                 open_time = day_hours.get("open")
                 close_time = day_hours.get("close")

@@ -284,7 +284,7 @@ class TestHelperFunctions:
         # Overnight hours: 18:00 - 02:00
         assert restaurant_hours._is_overnight_hours(datetime.time(18, 0), datetime.time(2, 0)) is True
 
-        # Midnight close: 18:00 - 00:00 (not overnight by this logic)
+        # Midnight close: 18:00 - 00:00 (is overnight by this logic: close_time < open_time)
         assert restaurant_hours._is_overnight_hours(datetime.time(18, 0), datetime.time(0, 0)) is True
 
 
@@ -354,6 +354,28 @@ class Test24HourOperation:
             }
         )
         assert restaurant_hours.format_operating_window(restaurant, "monday") == "Open 24 hours"
+
+    def test_format_operating_window_closed(self):
+        """format_operating_window should return 'Closed' when the day is closed."""
+        restaurant = make_restaurant_per_day(
+            {
+                "monday": {"closed": True},
+                "tuesday": {"open": "09:00:00", "close": "17:00:00"},
+            }
+        )
+        assert restaurant_hours.format_operating_window(restaurant, "monday") == "Closed"
+        assert restaurant_hours.format_operating_window(restaurant, "tuesday") != "Closed"
+
+    def test_format_operating_window_normal_hours(self):
+        """format_operating_window should return formatted time range for normal hours."""
+        restaurant = make_restaurant("09:00:00", "17:00:00")
+        result = restaurant_hours.format_operating_window(restaurant, "monday")
+        assert "9:00" in result or "09:00" in result
+        assert "5:00" in result or "17:00" in result
+        assert "-" in result
+        assert result != "Closed"
+        assert result != "Open 24 hours"
+        assert result != "Hours not available"
 
     def test_closed_takes_priority_over_24_hours(self):
         """If both is_closed and is_24_hours are True, closed wins."""

@@ -14,7 +14,6 @@ from app.repositories.mysql_user_restaurant_metadata_repo import (
 )
 from app.utils.logging_config import get_logger
 from app.utils.restaurant_hours import (
-    DAYS_OF_WEEK,
     _parse_operating_time,
     format_operating_window,
     get_day_operating_hours,
@@ -139,11 +138,6 @@ class ReservationService:
         def _is_overnight(open_t: time, close_t: time) -> bool:
             """Check if hours span overnight (close time is before open time)."""
             return close_t < open_t
-
-        def _get_previous_day_name(day: str) -> str:
-            """Get the previous day of the week."""
-            idx = DAYS_OF_WEEK.index(day.lower())
-            return DAYS_OF_WEEK[(idx - 1) % 7]
 
         # Track which dates we've already generated slots for to avoid duplicates
         processed_slots = set()

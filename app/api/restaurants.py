@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Any
 
 from fastapi import APIRouter, Body, Depends, Query, status
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.middleware.auth_middleware import get_current_admin_user
 from app.models.common_models import PaginationResponse
@@ -26,6 +26,16 @@ class DayHours(BaseModel):
     is_closed: bool = Field(False, description="Whether the restaurant is closed on this day")
     is_24_hours: bool = Field(False, description="Whether open 24 hours (when true, open/close times are ignored)")
     model_config = ConfigDict(extra="ignore")
+
+    @model_validator(mode="after")
+    def require_open_close_when_not_closed_or_24h(self) -> "DayHours":
+        """When is_closed=False and is_24_hours=False, if either open or close is set, both must be set."""
+        if not self.is_closed and not self.is_24_hours:
+            if (self.open is None) != (self.close is None):
+                raise ValueError(
+                    "When is_closed and is_24_hours are both false, open and close must both be provided or both omitted"
+                )
+        return self
 
 
 class OperatingHours(BaseModel):
