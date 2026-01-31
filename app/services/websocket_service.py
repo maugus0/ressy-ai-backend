@@ -230,6 +230,7 @@ class WebSocketService:
                 "close": day_close.strftime("%H:%M:%S") if day_close else None,
                 "is_closed": day_closed,
                 "is_24_hours": day_24_hours,
+                "display": format_operating_window(restaurant, day),
             }
 
         # Create combined structure showing all items per category with availability status
