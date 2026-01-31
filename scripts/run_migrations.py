@@ -78,9 +78,16 @@ def run_migration_file(connection, file_path):
                     cursor.execute(statement)
                     connection.commit()
                 except Error as e:
-                    # Some errors are expected (like IF NOT EXISTS)
+                    # Some errors are expected (like IF NOT EXISTS, or DROP INDEX when index missing)
                     error_msg = str(e).lower()
-                    if "already exists" not in error_msg and "duplicate" not in error_msg:
+                    err_code = getattr(e, "errno", None)
+                    skip_warning = (
+                        "already exists" in error_msg
+                        or "duplicate" in error_msg
+                        or err_code == 1091  # Can't DROP; check that column/key exists
+                        or "check that column/key exists" in error_msg
+                    )
+                    if not skip_warning:
                         logger.warning("Warning in %s: %s", file_path.name, e)
                         logger.warning("Statement: %s...", statement[:100])
 

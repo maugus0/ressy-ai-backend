@@ -38,24 +38,9 @@ UPDATE Restaurants SET
     sunday_open = opening_time, sunday_close = closing_time, sunday_closed = FALSE
 WHERE opening_time IS NOT NULL OR closing_time IS NOT NULL;
 
--- Step 3: Remove legacy columns and their index (if exists)
--- Using a procedure to conditionally drop the index if it exists
-DROP PROCEDURE IF EXISTS drop_idx_if_exists;
-DELIMITER $$
-CREATE PROCEDURE drop_idx_if_exists()
-BEGIN
-    DECLARE index_exists INT DEFAULT 0;
-    SELECT COUNT(1) INTO index_exists
-    FROM information_schema.statistics
-    WHERE table_schema = DATABASE()
-      AND table_name = 'Restaurants'
-      AND index_name = 'idx_opening_closing_time';
-    IF index_exists > 0 THEN
-        DROP INDEX idx_opening_closing_time ON Restaurants;
-    END IF;
-END$$
-DELIMITER ;
-CALL drop_idx_if_exists();
-DROP PROCEDURE IF EXISTS drop_idx_if_exists;
+-- Step 3: Remove legacy index and columns
+-- (Migration script runs statements one-by-one; DELIMITER/procedures are not supported.)
+-- Drop index added by 018; if it does not exist (e.g. fresh DB), this will warn and script continues
+DROP INDEX idx_opening_closing_time ON Restaurants;
 
 ALTER TABLE Restaurants DROP COLUMN opening_time, DROP COLUMN closing_time;

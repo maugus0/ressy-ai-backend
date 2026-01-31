@@ -141,7 +141,7 @@ ressy-ai-backend/
 │   └── test_syntax.py        # Syntax validation tests
 ├── migrations/                # Database migration scripts
 │   ├── 001_create_permissions.sql through 016_create_*.sql  # Initial schema
-│   ├── 017_add_reservation_type_flag.sql through 031_add_daily_operating_hours.sql
+│   ├── 017_add_reservation_type_flag.sql through 032_add_24_hours_flag.sql
 │   └── README.md             # Migration documentation
 ├── scripts/                   # Utility scripts
 │   ├── add_sample_admins.py  # Add sample admin users
@@ -1113,7 +1113,7 @@ Migrations should be run in numerical order (001, 002, 003, etc.) as they have d
 
 ### Migration Files
 
-Run in numerical order (001, 002, … 031). Key migrations:
+Run in numerical order (001, 002, … 032). Key migrations:
 
 1. **001_create_permissions.sql** – Permissions table
 2. **002_create_crm_roles.sql** – Crm_roles (depends on Permissions)
@@ -1146,6 +1146,9 @@ Run in numerical order (001, 002, … 031). Key migrations:
 29. **029_add_reservation_capacity_config.sql** – Reservation capacity config
 30. **030_create_restaurant_features.sql** – Restaurant_Features
 31. **031_add_daily_operating_hours.sql** – Per-day operating hours (replaces single opening/closing time)
+32. **032_add_24_hours_flag.sql** – Per-day `is_24_hours` flag (when true, open/close times ignored for that day)
+
+**Restaurant operating hours:** Per-day hours (031) support `open`, `close`, `is_closed`, and `is_24_hours` per day. When `is_24_hours` is true for a day, the restaurant is treated as open all day and open/close times are ignored. The voice agent (Deepgram function-calling in `app/agent_fc/`) uses shared utilities (`app.utils.restaurant_hours`: `is_restaurant_open_now`, `is_datetime_within_operating_hours`, `format_operating_window`), which already handle per-day and 24-hour logic—**no agent function code changes are required** for `is_24_hours`.
 
 ### Database Schema Overview
 
@@ -2129,10 +2132,10 @@ CREATE DATABASE IF NOT EXISTS ressy;
 # 3. Exit MySQL
 exit;
 
-# 4. Run migrations (use script for all 031 files, or run each in order)
+# 4. Run migrations (use script for all 032 files, or run each in order)
 python3 scripts/run_migrations.py
 # Or manually: mysql -u root -p ressy < migrations/001_create_permissions.sql
-# ... then 002 through 031 (see migrations/ directory and Database Migrations section)
+# ... then 002 through 032 (see migrations/ directory and Database Migrations section)
 ```
 
 ### Step 6: Verify Database Connection
