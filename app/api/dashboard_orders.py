@@ -1031,9 +1031,6 @@ async def update_order(
     """Update order details."""
     order = _check_order_access(current_user, order_id, order_service)
     restaurant_id = order.get("restaurant_id")
-    old_status = order.get("status")
-    customer_phone = order.get("customer_phone")
-    user_id = order.get("user_id")
 
     # Store previous state for history logging
     previous_data = {
@@ -1108,16 +1105,6 @@ async def update_order(
                     order_id,
                     result.get("status", ""),
                     result.get("customer_phone") or order.get("customer_phone"),
-                )
-
-            if request.status and request.status != old_status:
-                background_tasks.add_task(
-                    _send_order_notification,
-                    restaurant_id=restaurant_id,
-                    order_id=order_id,
-                    new_status=request.status,
-                    customer_phone=customer_phone,
-                    user_id=user_id,
                 )
 
         return result
@@ -1257,15 +1244,6 @@ async def update_order_status(
                 order.get("customer_phone"),
             )
 
-            background_tasks.add_task(
-                _send_order_notification,
-                restaurant_id=restaurant_id,
-                order_id=order_id,
-                new_status=request.status,
-                customer_phone=customer_phone,
-                user_id=user_id,
-            )
-
         return result
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -1349,8 +1327,6 @@ async def cancel_order(
     order = _check_order_access(current_user, order_id, order_service)
     restaurant_id = order.get("restaurant_id")
     previous_status = order.get("status")
-    customer_phone = order.get("customer_phone")
-    user_id = order.get("user_id")
 
     try:
         result = order_service.cancel_order(order_id=order_id)
@@ -1389,15 +1365,6 @@ async def cancel_order(
                 order_id,
                 "cancelled",
                 order.get("customer_phone"),
-            )
-
-            background_tasks.add_task(
-                _send_order_notification,
-                restaurant_id=restaurant_id,
-                order_id=order_id,
-                new_status="cancelled",
-                customer_phone=customer_phone,
-                user_id=user_id,
             )
 
         return result

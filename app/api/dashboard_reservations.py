@@ -57,6 +57,7 @@ def get_notification_service() -> NotificationService:
     """Dependency to get notification service instance."""
     return NotificationService()
 
+
 async def _emit_reservation_sse_event(
     restaurant_id: int,
     reservation_id: int,
@@ -523,7 +524,7 @@ async def finalize_reservation(
 ):
     """Finalize a reservation by changing status from 'pending' to 'confirmed'."""
     reservation = _check_reservation_access(current_user, reservation_id, reservation_service)
-    
+
     try:
         result = reservation_service.finalize_reservation(
             reservation_id=reservation_id, confirmation_number=request.confirmation_number
@@ -533,10 +534,10 @@ async def finalize_reservation(
             background_tasks,
             notification_service,
             restaurant_service,
-             reservation.get("restaurant_id"),,
+            reservation.get("restaurant_id"),
             reservation_id,
             result.get("status", "confirmed"),
-            reservation.get("phone_number"),,
+            reservation.get("phone_number"),
             result.get("confirmation_number"),
         )
         return result
@@ -948,7 +949,7 @@ async def cancel_reservation_dashboard(
     reservation = _check_reservation_access(current_user, reservation_id, reservation_service)
     restaurant_id = reservation.get("restaurant_id")
     previous_status = reservation.get("status")
-    
+
     try:
         result = reservation_service.cancel_reservation(reservation_id=reservation_id)
 
