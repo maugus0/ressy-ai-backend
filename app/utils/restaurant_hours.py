@@ -238,3 +238,39 @@ def format_operating_window(restaurant: dict, day_name: Optional[str] = None) ->
         # Fallback if parsing/formatting fails.
         pass
     return "Hours not available"
+
+
+def format_nearest_slot_label(slot_local: datetime, now_local: datetime) -> str:
+    """Return a human-friendly label for a slot in the restaurant's local time."""
+    slot_date = slot_local.date()
+    today = now_local.date()
+    time_label = slot_local.strftime("%I:%M %p").lstrip("0")
+    if slot_date == today:
+        return f"Today {time_label}"
+    if slot_date == today + timedelta(days=1):
+        return f"Tomorrow {time_label}"
+    return f"{slot_local.strftime('%a, %b %d')} at {time_label}"
+
+
+def is_datetime_on_slot_boundary(dt_value: datetime, slot_step_minutes: int) -> bool:
+    if slot_step_minutes <= 0:
+        return True
+    if dt_value.second or dt_value.microsecond:
+        return False
+    return (dt_value.hour * 60 + dt_value.minute) % slot_step_minutes == 0
+
+
+def snap_datetime_to_slot(dt_value: datetime, slot_step_minutes: int, direction: str) -> datetime:
+    if slot_step_minutes <= 0:
+        return dt_value.replace(second=0, microsecond=0)
+    normalized = dt_value.replace(second=0, microsecond=0)
+    total_minutes = normalized.hour * 60 + normalized.minute
+    remainder = total_minutes % slot_step_minutes
+    if remainder == 0:
+        return normalized
+    if direction == "ceil":
+        delta = slot_step_minutes - remainder
+        return normalized + timedelta(minutes=delta)
+    if direction == "floor":
+        return normalized - timedelta(minutes=remainder)
+    raise ValueError("direction must be 'ceil' or 'floor'")
