@@ -93,16 +93,42 @@ async def _send_order_notification(
         if not restaurant_twilio_number:
             logger.warning(f"No Twilio number configured for restaurant {restaurant_id}")
             return
+
+        twilio_details = restaurant.get("twilio_details") or {}
+        if isinstance(twilio_details, str):
+            try:
+                twilio_details = json.loads(twilio_details) if twilio_details else {}
+            except json.JSONDecodeError as e:
+                logger.warning(
+                    "Invalid JSON in twilio_details for restaurant %s: %s",
+                    restaurant_id,
+                    e,
+                )
+                twilio_details = {}
+            except Exception as e:
+                logger.warning(
+                    "Unexpected error parsing twilio_details for restaurant %s: %s",
+                    restaurant_id,
+                    e,
+                )
+                twilio_details = {}
+
+        sid = twilio_details.get("account_sid") or twilio_details.get("TWILIO_ACCOUNT_SID")
+        token = twilio_details.get("auth_token") or twilio_details.get("TWILIO_AUTH_TOKEN")
+
         logger.info(
             f"Sending SMS notification for order {order_id} to {customer_phone} from {restaurant_twilio_number}"
         )
-        await send_order_status_notification_async(
+        notification_service = NotificationService()
+        await notification_service.send_order_notification(
             restaurant_id=restaurant_id,
             order_id=order_id,
             new_status=new_status,
             recipient_phone=customer_phone,
             restaurant_name=restaurant_name,
             restaurant_twilio_number=restaurant_twilio_number,
+            twilio_account_sid=sid,
+            twilio_auth_token=token,
         )
     except Exception as e:
         logger.error(f"Failed to send order notification for order {order_id}: {e}", exc_info=True)

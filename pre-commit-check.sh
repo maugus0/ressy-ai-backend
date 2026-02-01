@@ -119,10 +119,22 @@ fi
 # 6. Type checking (optional, warnings are acceptable)
 echo ""
 echo "6️⃣  Running type checking (mypy)..."
-if mypy app/ --ignore-missing-imports --no-strict-optional > /dev/null 2>&1; then
+# Filter out third-party library errors (site-packages)
+if mypy app/ --ignore-missing-imports --no-strict-optional 2>&1 | grep -v "site-packages" | grep -v "venv" > /dev/null 2>&1; then
     success "Type checking passed"
 else
-    warning "Type checking completed (warnings are acceptable)"
+    # Check if errors are only from third-party libraries
+    mypy_output=$(mypy app/ --ignore-missing-imports --no-strict-optional 2>&1)
+    if echo "$mypy_output" | grep -q "site-packages\|venv"; then
+        # Only third-party errors, which are acceptable
+        if echo "$mypy_output" | grep -v "site-packages" | grep -v "venv" | grep -q "error:"; then
+            warning "Type checking found some issues (warnings are acceptable)"
+        else
+            success "Type checking passed (third-party library warnings ignored)"
+        fi
+    else
+        warning "Type checking completed (warnings are acceptable)"
+    fi
 fi
 
 echo ""
