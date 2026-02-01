@@ -3,6 +3,7 @@ Dashboard API routes for in-house reservation management.
 Includes RBAC: admins can access all, managers can only access their restaurant's reservations.
 """
 
+import json
 import logging
 from typing import Any, Dict, Optional
 
@@ -12,7 +13,9 @@ from pydantic import BaseModel, Field
 
 from app.middleware.auth_middleware import require_role
 from app.services.activity_history_service import ActivityHistoryService
+from app.services.notification_service import NotificationService
 from app.services.reservation_service import ReservationService
+from app.services.restaurant_service import RestaurantService
 from app.services.sse_service import ReservationEventSubtype, SSEService
 
 logger = logging.getLogger(__name__)
@@ -45,6 +48,16 @@ def get_history_service() -> ActivityHistoryService:
     return ActivityHistoryService()
 
 
+def get_restaurant_service() -> RestaurantService:
+    """Dependency to get restaurant service instance."""
+    return RestaurantService()
+
+
+def get_notification_service() -> NotificationService:
+    """Dependency to get notification service instance."""
+    return NotificationService()
+
+
 # ---------- Background task helpers ----------
 
 
@@ -69,6 +82,76 @@ async def _emit_reservation_sse_event(
         )
     except Exception as sse_error:
         logger.error(f"Failed to emit SSE event for reservation {reservation_id} ({subtype.value}): {sse_error}")
+
+
+def _queue_reservation_sms(
+    background_tasks: BackgroundTasks,
+    notification_service: NotificationService,
+    restaurant_service: RestaurantService,
+    restaurant_id: Optional[int],
+    reservation_id: int,
+    new_status: str,
+    recipient_phone: Optional[str],
+    confirmation_number: Optional[str],
+) -> None:
+    """Queue SMS notification as a background task (non-blocking).
+
+    Restaurant lookup is performed inside the background task to avoid
+    blocking the API response on database queries.
+    """
+    if not restaurant_id or not (recipient_phone and str(recipient_phone).strip()):
+        return
+
+    async def _send_reservation_sms_notification() -> None:
+        try:
+            # Restaurant lookup moved inside background task for non-blocking API response
+            restaurant = restaurant_service.get_restaurant(restaurant_id)
+            if not restaurant:
+                logger.warning("Restaurant %s not found for reservation SMS", restaurant_id)
+                return
+
+            twilio_number = (restaurant.get("twilio_phone_number") or "").strip()
+            if not twilio_number:
+                logger.debug("No Twilio number configured for restaurant %s", restaurant_id)
+                return
+
+            twilio_details = restaurant.get("twilio_details") or {}
+            if isinstance(twilio_details, str):
+                try:
+                    twilio_details = json.loads(twilio_details) if twilio_details else {}
+                except json.JSONDecodeError as e:
+                    logger.warning(
+                        "Invalid JSON in twilio_details for restaurant %s: %s",
+                        restaurant_id,
+                        e,
+                    )
+                    twilio_details = {}
+                except Exception as e:
+                    logger.warning(
+                        "Unexpected error parsing twilio_details for restaurant %s: %s",
+                        restaurant_id,
+                        e,
+                    )
+                    twilio_details = {}
+
+            sid = twilio_details.get("account_sid") or twilio_details.get("TWILIO_ACCOUNT_SID")
+            token = twilio_details.get("auth_token") or twilio_details.get("TWILIO_AUTH_TOKEN")
+
+            await notification_service.send_reservation_notification(
+                restaurant_id=restaurant_id,
+                reservation_id=reservation_id,
+                new_status=new_status,
+                recipient_phone=str(recipient_phone).strip(),
+                restaurant_name=restaurant.get("name") or "",
+                restaurant_twilio_number=twilio_number,
+                confirmation_number=confirmation_number,
+                twilio_account_sid=sid,
+                twilio_auth_token=token,
+            )
+        except Exception as sms_err:
+            logger.warning("SMS notification for reservation %s failed: %s", reservation_id, sms_err)
+
+    background_tasks.add_task(_send_reservation_sms_notification)
 
 
 # ---------- Pydantic models for request validation ----------
@@ -325,6 +408,8 @@ async def create_reservation_direct(
     current_user: dict = Depends(require_role(["admin", "client"])),
     reservation_service: ReservationService = Depends(get_reservation_service),
     history_service: ActivityHistoryService = Depends(get_history_service),
+    restaurant_service: RestaurantService = Depends(get_restaurant_service),
+    notification_service: NotificationService = Depends(get_notification_service),
 ):
     """Create a confirmed reservation directly from the dashboard."""
     _check_restaurant_access(current_user, restaurant_id)
@@ -376,6 +461,18 @@ async def create_reservation_direct(
             },
         )
 
+        # SMS on reservation created (status confirmed)
+        _queue_reservation_sms(
+            background_tasks,
+            notification_service,
+            restaurant_service,
+            restaurant_id,
+            result["reservation_id"],
+            result.get("status", "confirmed"),
+            request.phone_number,
+            result.get("confirmation_number"),
+        )
+
         return result
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -422,15 +519,29 @@ manual confirmation by restaurant staff.
 async def finalize_reservation(
     reservation_id: int,
     request: FinalizeReservationRequest,
+    background_tasks: BackgroundTasks,
     current_user: dict = Depends(require_role(["admin", "client"])),
     reservation_service: ReservationService = Depends(get_reservation_service),
+    restaurant_service: RestaurantService = Depends(get_restaurant_service),
+    notification_service: NotificationService = Depends(get_notification_service),
 ):
     """Finalize a reservation by changing status from 'pending' to 'confirmed'."""
-    _check_reservation_access(current_user, reservation_id, reservation_service)
+    reservation = _check_reservation_access(current_user, reservation_id, reservation_service)
 
     try:
         result = reservation_service.finalize_reservation(
             reservation_id=reservation_id, confirmation_number=request.confirmation_number
+        )
+        # SMS on status change to confirmed
+        _queue_reservation_sms(
+            background_tasks,
+            notification_service,
+            restaurant_service,
+            reservation.get("restaurant_id"),
+            reservation_id,
+            result.get("status", "confirmed"),
+            reservation.get("phone_number"),
+            result.get("confirmation_number"),
         )
         return result
     except ValueError as e:
@@ -700,6 +811,8 @@ async def update_reservation(
     current_user: dict = Depends(require_role(["admin", "client"])),
     reservation_service: ReservationService = Depends(get_reservation_service),
     history_service: ActivityHistoryService = Depends(get_history_service),
+    restaurant_service: RestaurantService = Depends(get_restaurant_service),
+    notification_service: NotificationService = Depends(get_notification_service),
 ):
     """Update reservation and slot booking details."""
     reservation = _check_reservation_access(current_user, reservation_id, reservation_service)
@@ -768,6 +881,20 @@ async def update_reservation(
                     "party_size": result.get("party_size"),
                 },
             )
+            # SMS on status change (when status was updated)
+            previous_status = (reservation.get("status") or "").strip().lower()
+            current_status = (result.get("status") or "").strip().lower()
+            if current_status and previous_status != current_status:
+                _queue_reservation_sms(
+                    background_tasks,
+                    notification_service,
+                    restaurant_service,
+                    restaurant_id,
+                    reservation_id,
+                    result.get("status", ""),
+                    reservation.get("phone_number"),
+                    result.get("confirmation_number"),
+                )
 
         return result
     except ValueError as e:
@@ -819,6 +946,8 @@ async def cancel_reservation_dashboard(
     current_user: dict = Depends(require_role(["admin", "client"])),
     reservation_service: ReservationService = Depends(get_reservation_service),
     history_service: ActivityHistoryService = Depends(get_history_service),
+    restaurant_service: RestaurantService = Depends(get_restaurant_service),
+    notification_service: NotificationService = Depends(get_notification_service),
 ):
     """Cancel a reservation."""
     reservation = _check_reservation_access(current_user, reservation_id, reservation_service)
@@ -852,6 +981,17 @@ async def cancel_reservation_dashboard(
                     "reservation_id": reservation_id,
                     "status": "cancelled",
                 },
+            )
+            # SMS on status change to cancelled
+            _queue_reservation_sms(
+                background_tasks,
+                notification_service,
+                restaurant_service,
+                restaurant_id,
+                reservation_id,
+                "cancelled",
+                reservation.get("phone_number"),
+                reservation.get("confirmation_number") or result.get("confirmation_number"),
             )
 
         return result

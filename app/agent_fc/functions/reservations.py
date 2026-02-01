@@ -20,6 +20,7 @@ from app.repositories.mysql_user_restaurant_metadata_repo import (
     MySQLUserRestaurantMetadataRepository,
 )
 from app.services.activity_history_service import ActivityHistoryService
+from app.services.notification_service import NotificationService
 from app.services.sse_service import ReservationEventSubtype, SSEService
 from app.utils.restaurant_hours import (
     format_operating_window,
@@ -86,6 +87,65 @@ async def _emit_reservation_sse_event(
         )
     except Exception as sse_error:
         logger.error(f"Failed to emit SSE event for reservation {reservation_id} ({subtype.value}): {sse_error}")
+
+
+async def _send_voice_reservation_sms(
+    restaurant: Dict[str, Any],
+    reservation_id: int,
+    phone_number: str,
+    confirmation_number: Optional[str] = None,
+) -> None:
+    """Send SMS notification for voice-agent-created reservation.
+
+    This is a fire-and-forget background task - SMS failures should not
+    affect the voice call or reservation creation.
+    """
+    import json
+
+    try:
+        twilio_number = (restaurant.get("twilio_phone_number") or "").strip()
+        if not twilio_number:
+            logger.debug("No Twilio number configured for restaurant %s", restaurant.get("id"))
+            return
+
+        twilio_details = restaurant.get("twilio_details") or {}
+        if isinstance(twilio_details, str):
+            try:
+                twilio_details = json.loads(twilio_details) if twilio_details else {}
+            except json.JSONDecodeError as e:
+                logger.warning(
+                    "Invalid JSON in twilio_details for restaurant %s: %s",
+                    restaurant.get("id"),
+                    e,
+                )
+                twilio_details = {}
+            except Exception as e:
+                logger.warning(
+                    "Unexpected error parsing twilio_details for restaurant %s: %s",
+                    restaurant.get("id"),
+                    e,
+                )
+                twilio_details = {}
+
+        sid = twilio_details.get("account_sid") or twilio_details.get("TWILIO_ACCOUNT_SID")
+        token = twilio_details.get("auth_token") or twilio_details.get("TWILIO_AUTH_TOKEN")
+
+        notification_service = NotificationService()
+        await notification_service.send_reservation_notification(
+            restaurant_id=restaurant.get("id"),
+            reservation_id=reservation_id,
+            new_status="pending",  # Voice-created reservations start as pending
+            recipient_phone=phone_number,
+            restaurant_name=restaurant.get("name") or "",
+            restaurant_twilio_number=twilio_number,
+            confirmation_number=confirmation_number,
+            twilio_account_sid=sid,
+            twilio_auth_token=token,
+        )
+        logger.info("SMS sent for voice reservation %s", reservation_id)
+    except Exception as e:
+        # Don't fail the voice call if SMS fails - just log
+        logger.warning("Failed to send SMS for voice reservation %s: %s", reservation_id, e)
 
 
 class CreateReservationArgs(BaseModel):
@@ -370,6 +430,17 @@ async def create_reservation(**kwargs) -> Dict[str, Any]:
                 },
             )
         )
+
+        # Send SMS notification for voice-created reservation (background task)
+        if args.customer_contact:
+            asyncio.create_task(
+                _send_voice_reservation_sms(
+                    restaurant=restaurant,
+                    reservation_id=reservation["reservation_id"],
+                    phone_number=args.customer_contact,
+                    confirmation_number=reservation.get("confirmation_number"),
+                )
+            )
 
         return {
             "status": "SUBMITTED",
