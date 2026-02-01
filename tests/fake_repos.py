@@ -30,11 +30,16 @@ class InMemoryRestaurantRepository:
             "is_credit_card_required_for_reservation": False,
             "forward_escalations": False,
             "escalation_phone_number": None,
-            "opening_time": "09:00:00",
-            "closing_time": "22:00:00",
             "created_at": None,
             "updated_at": None,
         }
+        # Add default operating hours for all days
+        days = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+        for day in days:
+            restaurant[f"{day}_open"] = "09:00:00"
+            restaurant[f"{day}_close"] = "22:00:00"
+            restaurant[f"{day}_closed"] = False
+            restaurant[f"{day}_24_hours"] = False
         self._restaurants[restaurant_id] = restaurant
         self._counter = max(self._counter, restaurant_id)
         return restaurant
@@ -56,11 +61,16 @@ class InMemoryRestaurantRepository:
             "is_credit_card_required_for_reservation": data.get("is_credit_card_required_for_reservation", False),
             "forward_escalations": data.get("forward_escalations", False),
             "escalation_phone_number": data.get("escalation_phone_number"),
-            "opening_time": data.get("opening_time", "09:00:00"),
-            "closing_time": data.get("closing_time", "22:00:00"),
             "created_at": datetime.now(timezone.utc),
             "updated_at": datetime.now(timezone.utc),
         }
+        # Add operating hours for all days
+        days = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+        for day in days:
+            restaurant[f"{day}_open"] = data.get(f"{day}_open", "09:00:00")
+            restaurant[f"{day}_close"] = data.get(f"{day}_close", "22:00:00")
+            restaurant[f"{day}_closed"] = data.get(f"{day}_closed", False)
+            restaurant[f"{day}_24_hours"] = data.get(f"{day}_24_hours", False)
         self._restaurants[restaurant_id] = restaurant
         return restaurant_id
 

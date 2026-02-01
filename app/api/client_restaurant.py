@@ -4,7 +4,12 @@ from typing import Any
 from fastapi import APIRouter, Body, Depends, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from app.api.restaurants import RestaurantFeaturesResponse, RestaurantFeaturesUpdate, get_restaurant_service
+from app.api.restaurants import (
+    OperatingHours,
+    RestaurantFeaturesResponse,
+    RestaurantFeaturesUpdate,
+    get_restaurant_service,
+)
 from app.middleware.auth_middleware import get_current_restaurant_user
 from app.utils.payload_validator import validate_payload
 
@@ -30,8 +35,7 @@ class ClientRestaurantResponse(BaseModel):
     forward_minutes: int | None = None
     backward_minutes: int | None = None
     is_credit_card_required_for_reservation: bool | None = None
-    opening_time: str | None = None
-    closing_time: str | None = None
+    operating_hours: OperatingHours | None = None
     reservation_seating_capacity: int | None = None
     reservation_advance_days: int | None = None
     timezone: str | None = None
@@ -56,12 +60,7 @@ class ClientUpdateRestaurantRequest(BaseModel):
     is_credit_card_required_for_reservation: bool | None = Field(
         None, description="Require credit card for reservations"
     )
-    opening_time: str | None = Field(
-        None, pattern=r"^\d{2}:\d{2}:\d{2}$", description="Opening time in HH:MM:SS (24h) format"
-    )
-    closing_time: str | None = Field(
-        None, pattern=r"^\d{2}:\d{2}:\d{2}$", description="Closing time in HH:MM:SS (24h) format"
-    )
+    operating_hours: OperatingHours | None = Field(None, description="Weekly operating hours")
     reservation_seating_capacity: int | None = Field(
         None, ge=1, le=1000, description="Total seating capacity for reservations"
     )
@@ -119,8 +118,15 @@ router = APIRouter(
                             "forward_minutes": 45,
                             "backward_minutes": 15,
                             "is_credit_card_required_for_reservation": False,
-                            "opening_time": "09:00:00",
-                            "closing_time": "22:00:00",
+                            "operating_hours": {
+                                "monday": {"open": "09:00:00", "close": "22:00:00", "is_closed": False},
+                                "tuesday": {"open": "09:00:00", "close": "22:00:00", "is_closed": False},
+                                "wednesday": {"open": "09:00:00", "close": "22:00:00", "is_closed": False},
+                                "thursday": {"open": "09:00:00", "close": "22:00:00", "is_closed": False},
+                                "friday": {"open": "09:00:00", "close": "22:00:00", "is_closed": False},
+                                "saturday": {"open": "09:00:00", "close": "22:00:00", "is_closed": False},
+                                "sunday": {"open": "09:00:00", "close": "22:00:00", "is_closed": False},
+                            },
                             "reservation_seating_capacity": 50,
                             "reservation_advance_days": 30,
                             "timezone": "America/Vancouver",
@@ -184,8 +190,15 @@ async def get_restaurant(
                             "forward_minutes": 30,
                             "backward_minutes": 15,
                             "is_credit_card_required_for_reservation": False,
-                            "opening_time": "09:00:00",
-                            "closing_time": "22:00:00",
+                            "operating_hours": {
+                                "monday": {"open": "09:00:00", "close": "22:00:00", "is_closed": False},
+                                "tuesday": {"open": "09:00:00", "close": "22:00:00", "is_closed": False},
+                                "wednesday": {"open": "09:00:00", "close": "22:00:00", "is_closed": False},
+                                "thursday": {"open": "09:00:00", "close": "22:00:00", "is_closed": False},
+                                "friday": {"open": "09:00:00", "close": "22:00:00", "is_closed": False},
+                                "saturday": {"open": "09:00:00", "close": "22:00:00", "is_closed": False},
+                                "sunday": {"open": "09:00:00", "close": "22:00:00", "is_closed": False},
+                            },
                             "reservation_seating_capacity": 60,
                             "reservation_advance_days": 14,
                             "timezone": "America/Vancouver",

@@ -10,6 +10,7 @@ from app.config import settings
 from app.repositories.mysql_restaurant_features_repo import MySQLRestaurantFeaturesRepository
 from app.repositories.mysql_restaurant_repo import MySQLRestaurantRepository
 from app.services.admin_user_common import build_pagination
+from app.utils.restaurant_hours import DAYS_OF_WEEK
 
 
 class RestaurantService:
@@ -205,8 +206,14 @@ class RestaurantService:
                 restaurant[field] = (
                     json.loads(restaurant[field]) if isinstance(restaurant[field], str) else restaurant[field]
                 )
-        restaurant["opening_time"] = self._format_time_field(restaurant.get("opening_time"), default="09:00:00")
-        restaurant["closing_time"] = self._format_time_field(restaurant.get("closing_time"), default="22:00:00")
+        # Build operating_hours object from day columns
+        restaurant["operating_hours"] = self._build_operating_hours(restaurant)
+        # Remove flat day columns from response (keep only operating_hours object)
+        for day in DAYS_OF_WEEK:
+            restaurant.pop(f"{day}_open", None)
+            restaurant.pop(f"{day}_close", None)
+            restaurant.pop(f"{day}_closed", None)
+            restaurant.pop(f"{day}_24_hours", None)
         restaurant["timezone"] = self._format_timezone_field(restaurant.get("timezone"))
         if "forward_escalations" in restaurant:
             try:
@@ -263,6 +270,95 @@ class RestaurantService:
             return converted
         return str(value)
 
+    @staticmethod
+    def _format_time_field_optional(value: Any) -> Optional[str]:
+        """Format time field, returning None if not set."""
+        if value is None:
+            return None
+        if isinstance(value, str):
+            return value
+        converted = RestaurantService._time_like_to_string(value)
+        return converted
+
+    def _build_operating_hours(self, restaurant: Dict[str, Any]) -> Dict[str, Any]:
+        """Transform day columns into operating_hours object for API response."""
+        operating_hours = {}
+        for day in DAYS_OF_WEEK:
+            operating_hours[day] = {
+                "open": self._format_time_field_optional(restaurant.get(f"{day}_open")),
+                "close": self._format_time_field_optional(restaurant.get(f"{day}_close")),
+                "is_closed": bool(restaurant.get(f"{day}_closed", False)),
+                "is_24_hours": bool(restaurant.get(f"{day}_24_hours", False)),
+            }
+        return operating_hours
+
+    def _flatten_operating_hours(self, operating_hours: Dict[str, Any]) -> Dict[str, Any]:
+        """Transform operating_hours object into flat columns for database.
+
+        Priority: is_closed > is_24_hours > open/close times.
+        When is_closed=True, times are NULL and is_24_hours=False.
+        When is_24_hours=True, times are NULL (ignored anyway).
+        """
+        flat: Dict[str, Any] = {}
+        for day in DAYS_OF_WEEK:
+            day_hours = operating_hours.get(day, {})
+            if not isinstance(day_hours, dict):
+                continue
+
+            is_closed = day_hours.get("is_closed", False)
+            is_24_hours = day_hours.get("is_24_hours", False)
+
+            if is_closed:
+                # Closed takes priority - clear everything
+                flat[f"{day}_open"] = None
+                flat[f"{day}_close"] = None
+                flat[f"{day}_closed"] = True
+                flat[f"{day}_24_hours"] = False
+            elif is_24_hours:
+                # 24 hours - times are ignored, store NULL for consistency
+                flat[f"{day}_open"] = None
+                flat[f"{day}_close"] = None
+                flat[f"{day}_closed"] = False
+                flat[f"{day}_24_hours"] = True
+            else:
+                # Normal hours
+                if "open" in day_hours:
+                    flat[f"{day}_open"] = day_hours.get("open")
+                if "close" in day_hours:
+                    flat[f"{day}_close"] = day_hours.get("close")
+                flat[f"{day}_closed"] = False
+                flat[f"{day}_24_hours"] = False
+        return flat
+
+    def _validate_operating_hours(self, operating_hours: Dict[str, Any]) -> None:
+        """Validate operating_hours structure and values."""
+        if not isinstance(operating_hours, dict):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="operating_hours must be an object")
+
+        for day in DAYS_OF_WEEK:
+            if day not in operating_hours:
+                continue
+            day_hours = operating_hours[day]
+            if not isinstance(day_hours, dict):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST, detail=f"operating_hours.{day} must be an object"
+                )
+
+            is_closed = day_hours.get("is_closed", False)
+            is_24_hours = day_hours.get("is_24_hours", False)
+            if is_closed and is_24_hours:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"operating_hours.{day}: a day cannot be both closed and open 24 hours",
+                )
+            if not is_closed:
+                open_time = day_hours.get("open")
+                close_time = day_hours.get("close")
+                if open_time:
+                    self._normalize_time_field(open_time, f"{day}_open")
+                if close_time:
+                    self._normalize_time_field(close_time, f"{day}_close")
+
     def _get_or_404(self, restaurant_id: int) -> Dict[str, Any]:
         """Fetch a restaurant or raise 404."""
         restaurant = self.restaurant_repo.get_by_id(int(restaurant_id))
@@ -304,14 +400,16 @@ class RestaurantService:
         self._validate_minutes(data.get("backward_minutes"), "backward_minutes")
         self._validate_seating_capacity(data.get("reservation_seating_capacity"))
         self._validate_advance_days(data.get("reservation_advance_days"))
-        opening_time = self._normalize_time_field(data.get("opening_time"), "opening_time", default="09:00:00")
-        closing_time = self._normalize_time_field(data.get("closing_time"), "closing_time", default="22:00:00")
         timezone_value = self._normalize_timezone(data.get("timezone"))
         self._ensure_unique_name(name)
         self._ensure_unique_twilio_number(data.get("twilio_phone_number"))
         feature_flags = self._merge_feature_flags({}, data.get("features"))
 
-        payload = {
+        # Validate and flatten operating_hours if provided
+        if "operating_hours" in data:
+            self._validate_operating_hours(data["operating_hours"])
+
+        payload: Dict[str, Any] = {
             "name": name,
             "address": data.get("address"),
             "phone_number": data.get("phone_number"),
@@ -324,12 +422,55 @@ class RestaurantService:
             "is_credit_card_required_for_reservation": data.get("is_credit_card_required_for_reservation", False),
             "forward_escalations": data.get("forward_escalations", False),
             "escalation_phone_number": data.get("escalation_phone_number"),
-            "opening_time": opening_time,
-            "closing_time": closing_time,
             "timezone": timezone_value,
             "reservation_seating_capacity": data.get("reservation_seating_capacity", 50),
             "reservation_advance_days": data.get("reservation_advance_days", 30),
         }
+
+        # Handle operating_hours - flatten to day columns with defaults for missing days
+        DEFAULT_OPEN = "09:00:00"
+        DEFAULT_CLOSE = "22:00:00"
+
+        if "operating_hours" in data:
+            provided_hours = data["operating_hours"]
+            # Apply defaults for any missing days to prevent NULL values
+            for day in DAYS_OF_WEEK:
+                if day in provided_hours and isinstance(provided_hours[day], dict):
+                    day_hours = provided_hours[day]
+                    is_closed = day_hours.get("is_closed", False)
+                    is_24_hours = day_hours.get("is_24_hours", False)
+
+                    if is_closed:
+                        # Closed takes priority
+                        payload[f"{day}_open"] = None
+                        payload[f"{day}_close"] = None
+                        payload[f"{day}_closed"] = True
+                        payload[f"{day}_24_hours"] = False
+                    elif is_24_hours:
+                        # 24 hours - no need for open/close times
+                        payload[f"{day}_open"] = None
+                        payload[f"{day}_close"] = None
+                        payload[f"{day}_closed"] = False
+                        payload[f"{day}_24_hours"] = True
+                    else:
+                        # Normal hours with defaults
+                        payload[f"{day}_open"] = day_hours.get("open") or DEFAULT_OPEN
+                        payload[f"{day}_close"] = day_hours.get("close") or DEFAULT_CLOSE
+                        payload[f"{day}_closed"] = False
+                        payload[f"{day}_24_hours"] = False
+                else:
+                    # Day not provided - use defaults
+                    payload[f"{day}_open"] = DEFAULT_OPEN
+                    payload[f"{day}_close"] = DEFAULT_CLOSE
+                    payload[f"{day}_closed"] = False
+                    payload[f"{day}_24_hours"] = False
+        else:
+            # No operating_hours provided - use defaults for all days
+            for day in DAYS_OF_WEEK:
+                payload[f"{day}_open"] = DEFAULT_OPEN
+                payload[f"{day}_close"] = DEFAULT_CLOSE
+                payload[f"{day}_closed"] = False
+                payload[f"{day}_24_hours"] = False
 
         try:
             restaurant_id = self.restaurant_repo.create(payload)
@@ -415,10 +556,12 @@ class RestaurantService:
             self._validate_seating_capacity(data.get("reservation_seating_capacity"))
         if "reservation_advance_days" in data:
             self._validate_advance_days(data.get("reservation_advance_days"))
-        if "opening_time" in data:
-            data["opening_time"] = self._normalize_time_field(data.get("opening_time"), "opening_time", allow_none=True)
-        if "closing_time" in data:
-            data["closing_time"] = self._normalize_time_field(data.get("closing_time"), "closing_time", allow_none=True)
+        # Handle operating_hours - validate and flatten to day columns
+        if "operating_hours" in data:
+            self._validate_operating_hours(data["operating_hours"])
+            flat_hours = self._flatten_operating_hours(data["operating_hours"])
+            data.update(flat_hours)
+            del data["operating_hours"]
         if "timezone" in data:
             data["timezone"] = self._normalize_timezone(data.get("timezone"))
 

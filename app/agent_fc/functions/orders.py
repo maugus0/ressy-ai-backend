@@ -20,6 +20,7 @@ from app.repositories.mysql_user_restaurant_metadata_repo import (
     MySQLUserRestaurantMetadataRepository,
 )
 from app.services.activity_history_service import ActivityHistoryService
+from app.services.notification_service import NotificationService
 from app.services.sse_service import OrderEventSubtype, SSEService
 from app.utils.restaurant_hours import format_operating_window, is_restaurant_open_now
 from app.utils.timezone import coerce_datetime
@@ -141,6 +142,63 @@ async def _emit_order_sse_event(
         )
     except Exception as sse_error:
         logger.error(f"Failed to emit SSE event for order {order_id} ({subtype.value}): {sse_error}")
+
+
+async def _send_voice_order_sms(
+    restaurant: Dict[str, Any],
+    order_id: int,
+    customer_phone: str,
+) -> None:
+    """Send SMS notification for voice-agent-created order.
+
+    This is a fire-and-forget background task - SMS failures should not
+    affect the voice call or order creation.
+    """
+    import json
+
+    try:
+        twilio_number = (restaurant.get("twilio_phone_number") or "").strip()
+        if not twilio_number:
+            logger.debug("No Twilio number configured for restaurant %s", restaurant.get("id"))
+            return
+
+        twilio_details = restaurant.get("twilio_details") or {}
+        if isinstance(twilio_details, str):
+            try:
+                twilio_details = json.loads(twilio_details) if twilio_details else {}
+            except json.JSONDecodeError as e:
+                logger.warning(
+                    "Invalid JSON in twilio_details for restaurant %s: %s",
+                    restaurant.get("id"),
+                    e,
+                )
+                twilio_details = {}
+            except Exception as e:
+                logger.warning(
+                    "Unexpected error parsing twilio_details for restaurant %s: %s",
+                    restaurant.get("id"),
+                    e,
+                )
+                twilio_details = {}
+
+        sid = twilio_details.get("account_sid") or twilio_details.get("TWILIO_ACCOUNT_SID")
+        token = twilio_details.get("auth_token") or twilio_details.get("TWILIO_AUTH_TOKEN")
+
+        notification_service = NotificationService()
+        await notification_service.send_order_notification(
+            restaurant_id=restaurant.get("id"),
+            order_id=order_id,
+            new_status="pending",  # Voice-created orders start as pending
+            recipient_phone=customer_phone,
+            restaurant_name=restaurant.get("name") or "",
+            restaurant_twilio_number=twilio_number,
+            twilio_account_sid=sid,
+            twilio_auth_token=token,
+        )
+        logger.info("SMS sent for voice order %s", order_id)
+    except Exception as e:
+        # Don't fail the voice call if SMS fails - just log
+        logger.warning("Failed to send SMS for voice order %s: %s", order_id, e)
 
 
 def _normalize_boolean(value: Any) -> bool:
@@ -377,6 +435,16 @@ async def create_order(**kwargs) -> Dict[str, Any]:
                 },
             )
         )
+
+        # Send SMS notification for voice-created order (background task)
+        if args.customer_contact:
+            asyncio.create_task(
+                _send_voice_order_sms(
+                    restaurant=restaurant,
+                    order_id=order_id,
+                    customer_phone=args.customer_contact,
+                )
+            )
 
     return {
         "status": "CREATED",

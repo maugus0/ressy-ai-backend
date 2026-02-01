@@ -15,6 +15,8 @@ from app.repositories.mysql_user_restaurant_metadata_repo import (
 from app.utils.logging_config import get_logger
 from app.utils.restaurant_hours import (
     _parse_operating_time,
+    format_operating_window,
+    get_day_operating_hours,
     is_datetime_within_operating_hours,
     resolve_restaurant_timezone,
 )
@@ -53,9 +55,9 @@ class ReservationService:
     def _validate_opening_hours(self, slot_dt: datetime, restaurant: Dict[str, Any]) -> None:
         """Validate that reservation is during opening hours using shared utility."""
         if not is_datetime_within_operating_hours(restaurant, slot_dt):
-            opening = self._parse_time(restaurant.get("opening_time"), "09:00:00")
-            closing = self._parse_time(restaurant.get("closing_time"), "22:00:00")
-            raise ValueError(f"Reservations can only be made during opening hours ({opening} - {closing})")
+            day_name = slot_dt.strftime("%A").lower()
+            hours_display = format_operating_window(restaurant, day_name)
+            raise ValueError(f"Reservations can only be made during opening hours ({hours_display})")
 
     def _check_capacity(self, restaurant_id: int, slot_dt: datetime, party_size: int, seating_capacity: int) -> None:
         """Check if there's enough capacity for the party size."""
@@ -95,8 +97,6 @@ class ReservationService:
             raise ValueError(f"Restaurant with ID {restaurant_id} not found")
         restaurant_tz, _ = resolve_restaurant_timezone(restaurant)
 
-        opening_time = self._parse_time(restaurant.get("opening_time", "09:00:00"), "09:00:00")
-        closing_time = self._parse_time(restaurant.get("closing_time", "22:00:00"), "22:00:00")
         seating_capacity = restaurant.get("reservation_seating_capacity", 50)
         advance_days = restaurant.get("reservation_advance_days", 30)
 
@@ -130,14 +130,44 @@ class ReservationService:
             reservation_type=self.RESERVATION_TYPE,
         )
 
-        # Generate all possible slots based on opening/closing times
+        # Generate all possible slots based on per-day operating hours
         slots = []
         current_date = search_start_dt_local.date()
         end_date = end_dt_local.date()
 
+        def _is_overnight(open_t: time, close_t: time) -> bool:
+            """Check if hours span overnight (close time is before open time)."""
+            return close_t < open_t
+
+        # Track which dates we've already generated slots for to avoid duplicates
+        processed_slots = set()
+
         while current_date <= end_date:
-            day_start = datetime.combine(current_date, opening_time)
-            day_end = datetime.combine(current_date, closing_time)
+            # Get operating hours for this specific day
+            day_name = current_date.strftime("%A").lower()
+            day_open_time, day_close_time, day_is_closed, day_is_24_hours = get_day_operating_hours(
+                restaurant, day_name
+            )
+
+            # Skip closed days
+            if day_is_closed:
+                current_date += timedelta(days=1)
+                continue
+
+            # Handle 24-hour days - generate slots for entire day
+            if day_is_24_hours:
+                day_start = datetime.combine(current_date, time(0, 0, 0))
+                day_end = datetime.combine(current_date, time(23, 59, 59))
+            elif day_open_time and day_close_time:
+                day_start = datetime.combine(current_date, day_open_time)
+                # Handle overnight hours: close time is on the NEXT day
+                if _is_overnight(day_open_time, day_close_time):
+                    day_end = datetime.combine(current_date + timedelta(days=1), day_close_time)
+                else:
+                    day_end = datetime.combine(current_date, day_close_time)
+            else:
+                current_date += timedelta(days=1)
+                continue
 
             # Determine the effective start time for this day
             if current_date == search_start_dt_local.date():
@@ -154,31 +184,41 @@ class ReservationService:
             else:
                 slot_start = day_start
 
-            # Determine the effective end time for this day
-            if current_date == end_dt_local.date():
-                # Last day: end at end_dt_local or closing time, whichever is earlier
+            # Determine the effective end time
+            slot_end = day_end
+            # For the last day in search range, cap at end_dt_local
+            if day_end.date() > end_dt_local.date():
+                # Overnight extends past end_date - cap it
                 slot_end = min(end_dt_local.replace(second=0, microsecond=0), day_end)
-            else:
-                slot_end = day_end
+            elif (
+                current_date == end_dt_local.date()
+                and not day_is_24_hours
+                and day_open_time
+                and day_close_time
+                and not _is_overnight(day_open_time, day_close_time)
+            ):
+                slot_end = min(end_dt_local.replace(second=0, microsecond=0), day_end)
 
             current_slot = slot_start
             while current_slot < slot_end:
-                slot_dt_normalized = current_slot.replace(second=0, microsecond=0)
-                # Convert local slot to UTC for capacity lookup
-                slot_utc = slot_dt_normalized.replace(tzinfo=restaurant_tz).astimezone(timezone.utc)
-                slot_utc_naive = slot_utc.replace(tzinfo=None)
-                used_capacity = capacity_map.get(slot_utc_naive, 0)
-                available_capacity = seating_capacity - used_capacity
+                slot_key = current_slot.replace(second=0, microsecond=0)
+                if slot_key not in processed_slots:
+                    processed_slots.add(slot_key)
+                    # Convert local slot to UTC for capacity lookup
+                    slot_utc = slot_key.replace(tzinfo=restaurant_tz).astimezone(timezone.utc)
+                    slot_utc_naive = slot_utc.replace(tzinfo=None)
+                    used_capacity = capacity_map.get(slot_utc_naive, 0)
+                    available_capacity = seating_capacity - used_capacity
 
-                requested_size = party_size or 1
-                if available_capacity >= requested_size:
-                    slots.append(
-                        {
-                            "date_time": isoformat_z(slot_utc),
-                            "available": True,
-                            "available_capacity": available_capacity,
-                        }
-                    )
+                    requested_size = party_size or 1
+                    if available_capacity >= requested_size:
+                        slots.append(
+                            {
+                                "date_time": isoformat_z(slot_utc),
+                                "available": True,
+                                "available_capacity": available_capacity,
+                            }
+                        )
 
                 current_slot += timedelta(minutes=self.SLOT_INTERVAL_MINUTES)
 

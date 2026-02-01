@@ -17,31 +17,56 @@ def test_create_restaurant_with_defaults():
     service, _ = _build_service()
     restaurant = service.create_restaurant({"name": "Pasta Place"})
     assert restaurant["name"] == "Pasta Place"
-    assert restaurant["opening_time"] == "09:00:00"
-    assert restaurant["closing_time"] == "22:00:00"
+    assert restaurant["operating_hours"]["monday"]["open"] == "09:00:00"
+    assert restaurant["operating_hours"]["monday"]["close"] == "22:00:00"
 
 
 def test_create_restaurant_with_custom_hours():
     service, _ = _build_service()
     restaurant = service.create_restaurant(
-        {"name": "Late Night", "opening_time": "10:30:00", "closing_time": "23:45:00"}
+        {
+            "name": "Late Night",
+            "operating_hours": {
+                "monday": {"open": "10:30:00", "close": "23:45:00", "is_closed": False},
+                "tuesday": {"open": "10:30:00", "close": "23:45:00", "is_closed": False},
+                "wednesday": {"open": "10:30:00", "close": "23:45:00", "is_closed": False},
+                "thursday": {"open": "10:30:00", "close": "23:45:00", "is_closed": False},
+                "friday": {"open": "10:30:00", "close": "23:45:00", "is_closed": False},
+                "saturday": {"open": "10:30:00", "close": "23:45:00", "is_closed": False},
+                "sunday": {"open": "10:30:00", "close": "23:45:00", "is_closed": False},
+            },
+        }
     )
-    assert restaurant["opening_time"] == "10:30:00"
-    assert restaurant["closing_time"] == "23:45:00"
+    assert restaurant["operating_hours"]["monday"]["open"] == "10:30:00"
+    assert restaurant["operating_hours"]["monday"]["close"] == "23:45:00"
 
 
 def test_create_restaurant_invalid_time_rejected():
     service, _ = _build_service()
     with pytest.raises(HTTPException):
-        service.create_restaurant({"name": "Bad Time", "opening_time": "25:00:00"})
+        service.create_restaurant(
+            {
+                "name": "Bad Time",
+                "operating_hours": {
+                    "monday": {"open": "25:00:00", "close": "22:00:00", "is_closed": False},
+                },
+            }
+        )
 
 
 def test_update_restaurant_times():
     service, repo = _build_service()
     rid = repo.create({"name": "Update Me"})
-    updated = service.update_restaurant(rid, {"opening_time": "08:00:00", "closing_time": "21:00:00"})
-    assert updated["opening_time"] == "08:00:00"
-    assert updated["closing_time"] == "21:00:00"
+    updated = service.update_restaurant(
+        rid,
+        {
+            "operating_hours": {
+                "monday": {"open": "08:00:00", "close": "21:00:00", "is_closed": False},
+            }
+        },
+    )
+    assert updated["operating_hours"]["monday"]["open"] == "08:00:00"
+    assert updated["operating_hours"]["monday"]["close"] == "21:00:00"
 
 
 def test_duplicate_name_rejected():

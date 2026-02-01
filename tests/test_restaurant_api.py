@@ -32,15 +32,22 @@ def test_create_and_get_restaurant_with_hours(client_with_overrides):
         "/api/v1/restaurants/",
         json={
             "name": "Evening Eats",
-            "opening_time": "10:00:00",
-            "closing_time": "23:30:00",
+            "operating_hours": {
+                "monday": {"open": "10:00:00", "close": "23:30:00", "is_closed": False},
+                "tuesday": {"open": "10:00:00", "close": "23:30:00", "is_closed": False},
+                "wednesday": {"open": "10:00:00", "close": "23:30:00", "is_closed": False},
+                "thursday": {"open": "10:00:00", "close": "23:30:00", "is_closed": False},
+                "friday": {"open": "10:00:00", "close": "23:30:00", "is_closed": False},
+                "saturday": {"open": "10:00:00", "close": "23:30:00", "is_closed": False},
+                "sunday": {"open": "10:00:00", "close": "23:30:00", "is_closed": False},
+            },
             "forward_minutes": 30,
         },
     )
     assert resp.status_code == 201, resp.text
     created = resp.json()
-    assert created["opening_time"] == "10:00:00"
-    assert created["closing_time"] == "23:30:00"
+    assert created["operating_hours"]["monday"]["open"] == "10:00:00"
+    assert created["operating_hours"]["monday"]["close"] == "23:30:00"
 
     get_resp = client.get(f"/api/v1/restaurants/{created['id']}")
     assert get_resp.status_code == 200
@@ -54,8 +61,8 @@ def test_list_includes_default_hours(client_with_overrides):
     list_resp = client.get("/api/v1/restaurants/")
     assert list_resp.status_code == 200
     body = list_resp.json()
-    assert body["items"][0]["opening_time"] == "09:00:00"
-    assert body["items"][0]["closing_time"] == "22:00:00"
+    assert body["items"][0]["operating_hours"]["monday"]["open"] == "09:00:00"
+    assert body["items"][0]["operating_hours"]["monday"]["close"] == "22:00:00"
 
 
 def test_update_restaurant_hours(client_with_overrides):
@@ -64,11 +71,16 @@ def test_update_restaurant_hours(client_with_overrides):
     rid = create_resp.json()["id"]
 
     update_resp = client.put(
-        f"/api/v1/restaurants/{rid}", json={"opening_time": "08:00:00", "closing_time": "20:00:00"}
+        f"/api/v1/restaurants/{rid}",
+        json={
+            "operating_hours": {
+                "monday": {"open": "08:00:00", "close": "20:00:00", "is_closed": False},
+            }
+        },
     )
     assert update_resp.status_code == 200
-    assert update_resp.json()["opening_time"] == "08:00:00"
-    assert update_resp.json()["closing_time"] == "20:00:00"
+    assert update_resp.json()["operating_hours"]["monday"]["open"] == "08:00:00"
+    assert update_resp.json()["operating_hours"]["monday"]["close"] == "20:00:00"
 
 
 def test_forward_escalations_requires_number_on_update(client_with_overrides):
@@ -82,8 +94,17 @@ def test_forward_escalations_requires_number_on_update(client_with_overrides):
 
 def test_invalid_hours_rejected(client_with_overrides):
     client = client_with_overrides
-    resp = client.post("/api/v1/restaurants/", json={"name": "Bad", "opening_time": "25:00:00"})
-    assert resp.status_code == 400
+    resp = client.post(
+        "/api/v1/restaurants/",
+        json={
+            "name": "Bad",
+            "operating_hours": {
+                "monday": {"open": "25:00:00", "close": "22:00:00", "is_closed": False},
+            },
+        },
+    )
+    # Invalid time format should be rejected - 422 (Pydantic) or 400 (service layer)
+    assert resp.status_code in (400, 422)
 
 
 def test_duplicate_name_rejected(client_with_overrides):

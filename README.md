@@ -8,6 +8,9 @@ FastAPI backend for a multitenant, function-calling voice agent. It streams Twil
 - [Project Structure](#project-structure)
 - [Prerequisites](#prerequisites)
 - [Setup](#setup)
+  - [Environment Configuration](#3-environment-configuration)
+  - [Cost Calculation](#4-cost-calculation)
+  - [Database Setup](#5-database-setup)
 - [Running the Application](#running-the-application)
 - [Development Workflow](#development-workflow)
 - [Code Quality Standards](#code-quality-standards)
@@ -137,10 +140,8 @@ ressy-ai-backend/
 │   ├── test_ressy_admin_service.py # Ressy admin service tests
 │   └── test_syntax.py        # Syntax validation tests
 ├── migrations/                # Database migration scripts
-│   ├── 001-016_create_*.sql  # Initial schema migrations
-│   ├── 017_create_auth_sessions.sql
-│   ├── 018_add_reservation_type_flag.sql
-│   ├── 019_add_restaurant_opening_closing_times.sql
+│   ├── 001_create_permissions.sql through 016_create_*.sql  # Initial schema
+│   ├── 017_add_reservation_type_flag.sql through 032_add_24_hours_flag.sql
 │   └── README.md             # Migration documentation
 ├── scripts/                   # Utility scripts
 │   ├── add_sample_admins.py  # Add sample admin users
@@ -189,13 +190,167 @@ pip install -r requirements-dev.txt
 
 ### 3. Environment Configuration
 
-Create a `.env` file in the repository root:
+Create a `.env` file in the repository root. The application supports both `DB_*` and `MYSQL_*` prefixes for database configuration.
+
+> ⚠️ **Security**: Never commit real credentials to version control. Use placeholder values in examples. Ensure `.env` is listed in `.gitignore`.
+
+#### 3.1 Database Configuration
+
+**Required (primary):**
+
+| Variable | Type | Default | Description |
+|----------|------|---------|-------------|
+| `DB_HOST` | string | — | MySQL host |
+| `DB_NAME` | string | — | Database name (e.g. `ressy`) |
+| `DB_USERNAME` | string | — | MySQL user |
+| `DB_PASSWORD` | string | — | MySQL password |
+| `DB_PORT` | integer | `3306` | MySQL port |
+
+**Alternative (also supported):** `MYSQL_HOST`, `MYSQL_DATABASE`, `MYSQL_USER`, `MYSQL_PASSWORD`, `MYSQL_PORT` — same meaning as `DB_*`; useful for Docker or existing conventions.
+
+**Connection pool (optional):**
+
+| Variable | Type | Default | Description |
+|----------|------|---------|-------------|
+| `DB_POOL_SIZE` | integer | `10` | Maximum connections in the pool. Increase for high load. |
+| `DB_POOL_NAME` | string | `ressy_pool` | Pool identifier for logging |
+| `DB_CONNECTION_TIMEOUT` | integer | `20` | Connection timeout in seconds |
+| `DB_POOL_LOG_CONNECTIONS` | boolean | `false` | Set to `true` to log connection open/close (debugging) |
+
+#### 3.2 Twilio Configuration (Optional)
+
+Required for voice calls and Twilio webhooks. App can run without them for non-voice features.
+
+| Variable | Type | Required | Default | Description |
+|----------|------|----------|---------|-------------|
+| `TWILIO_ACCOUNT_SID` | string | Yes* | `""` | Twilio Account SID for voice and SMS (fallback) |
+| `TWILIO_AUTH_TOKEN` | string | Yes* | `""` | Twilio Auth Token for voice and SMS (fallback) |
+| `TWILIO_COST_PER_SECOND` | float | No | `0.0003` | Twilio cost per second (USD) for call analytics |
+| `TWILIO_MULTIPLIER` | float | No | `1.0` | Multiplier applied to Twilio cost in analytics |
+| `NOTIFICATION_MAX_RETRIES` | int | No | `3` | Max retry attempts for failed SMS notifications |
+
+*Required for voice and SMS functionality to work. App runs without them, but voice and SMS features will be disabled.
+
+**SMS Notifications:** When order or reservation status changes, customers automatically receive SMS notifications via Twilio. All messages use a warm, personalized "Ressy" brand voice and end with "Yours sincerely, Ressy AI" signature.
+
+**Credential Priority (Restaurant First, Fallback to .env):**
+
+1. **Primary:** The system first checks the restaurant's `twilio_details` JSON field for `account_sid` and `auth_token`. This is the **preferred configuration** because the "From" number (`twilio_phone_number`) must belong to the Twilio account whose credentials are used—otherwise Twilio returns error 21660 (credential mismatch).
+
+2. **Fallback:** If the restaurant has no `twilio_details` configured, the system falls back to the `.env` variables `TWILIO_ACCOUNT_SID` and `TWILIO_AUTH_TOKEN`. In this case, the restaurant's `twilio_phone_number` must belong to the .env Twilio account.
+
+**Restaurant `twilio_details` JSON Format:**
+```json
+{
+  "account_sid": "ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+  "auth_token": "your_auth_token_here"
+}
+```
+
+**Notification Logging:** All notifications are logged in the `Notification_Logs` table for auditing and retry handling. Failed notifications are marked with `status='failed'` and `retry_count` is incremented. The `get_pending_for_retry()` repository method supports future implementation of a background retry job—no retry worker is included in this release.
+
+**Requirements:** Install the `twilio` package (`pip install -r requirements.txt`).
+
+#### 3.3 Deepgram Configuration
+
+| Variable | Type | Default | Description |
+|----------|------|---------|-------------|
+| `DEEPGRAM_API_KEY` | string | — | **Required** for voice/STS features |
+| `DEEPGRAM_THINK_PROMPT_FILE` | string | — | Path to think-prompt template (e.g. `prompts/dg_context_prompt.json`) |
+| `DEEPGRAM_COST_PER_SECOND` | float | `0.0013333333` | Deepgram cost per second (USD) for call analytics |
+| `DEEPGRAM_MULTIPLIER` | float | `1.0` | Multiplier applied to Deepgram cost in analytics |
+| `DEEPGRAM_AUDIO_INPUT_ENCODING` | string | `mulaw` | Input audio encoding |
+| `DEEPGRAM_AUDIO_INPUT_SAMPLE_RATE` | integer | `8000` | Input sample rate (Hz) |
+| `DEEPGRAM_AGENT_LANGUAGE` | string | `en` | Agent language |
+| `DEEPGRAM_LISTEN_MODEL` | string | `nova-3` | Listen (ASR) model |
+| `DEEPGRAM_THINK_MODEL` | string | `gpt-4o-mini` | Think (LLM) model |
+| `DEEPGRAM_SPEAK_MODEL` | string | `aura-2-harmonia-en` | Speak (TTS) model |
+
+#### 3.4 AWS Configuration (Optional)
+
+Used when AWS services are integrated (e.g. region for SDKs).
+
+| Variable | Type | Default | Description |
+|----------|------|---------|-------------|
+| `AWS_REGION` | string | `ca-central-1` | AWS region |
+| `AWS_ACCESS_KEY_ID` | string | — | AWS access key |
+| `AWS_SECRET_ACCESS_KEY` | string | — | AWS secret key |
+
+#### 3.5 Outbound Call Configuration (Developer Testing)
+
+Required for the `/api/v1/testing/outbound-call` endpoint. Optional for inbound-only usage.
+
+| Variable | Type | Default | Description |
+|----------|------|---------|-------------|
+| `OUTBOUND_CALL_STATUS_SECRET` | string | — | Secret query param for Twilio status callback; protects `/api/v1/testing/twilio-status` |
+| `PUBLIC_BASE_URL` | string | `http://localhost:5001` | Public URL reachable by Twilio (e.g. ngrok URL for streaming and callbacks) |
+
+#### 3.6 Application Settings
+
+| Variable | Type | Default | Description |
+|----------|------|---------|-------------|
+| `USE_MOCK_DATA` | boolean | `true` | Use in-memory mocks instead of MySQL when `true` |
+| `ALLOW_DB_FAILURE` | boolean | `false` | If `true`, app continues when DB is unavailable (useful for tests) |
+| `LOG_LEVEL` | string | `INFO` | Logging level: `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL` |
+| `RESSY_MULTIPLIER` | float | `5.0` | Multiplier for Ressy platform cost in call analytics |
+| `RESTAURANT_TIMEZONE` | string | `America/Vancouver` | Default restaurant timezone (IANA) |
+
+#### 3.7 Docker-Specific Settings
+
+| Variable | Type | Default | Description |
+|----------|------|---------|-------------|
+| `RUN_STARTUP_SCRIPTS` | boolean | `true` | When `true`, runs startup scripts (migrations, seeding). **Preferred** over `SEED_DATABASE`. |
+| `SEED_DATABASE` | boolean | `true` | Legacy toggle for seeding; superseded by `RUN_STARTUP_SCRIPTS` when set |
+| `DOCKER_MYSQL_PORT` | integer | `3307` | Host port for MySQL container (container internal port remains 3306) |
+
+#### 3.8 JWT Configuration (RS256)
+
+Authentication uses **RS256** with RSA keys (not HS256).
+
+| Variable | Type | Default | Description |
+|----------|------|---------|-------------|
+| `JWT_PRIVATE_KEY` | string | — | RSA private key (PEM); escape newlines as `\n` in `.env` |
+| `JWT_PUBLIC_KEY` | string | — | RSA public key (PEM); escape newlines as `\n` in `.env` |
+| `JWT_ACCESS_TOKEN_EXP_SECONDS` | integer | `3600` | Access token expiry (seconds) |
+| `JWT_REFRESH_TOKEN_EXP_SECONDS` | integer | `2592000` | Refresh token expiry (30 days) |
+| `JWT_ISSUER` | string | `ressy.ai/auth` | Token issuer |
+| `JWT_ADMIN_AUDIENCE` | string | `ressy-admin-api` | Admin API audience |
+| `JWT_CLIENT_AUDIENCE` | string | `ressy-client-api` | Client API audience |
+| `JWT_AUTH_AUDIENCE` | string | `ressy-auth` | Auth service audience |
+
+**Example `.env` (placeholders only):**
 
 ```env
-# Deepgram Configuration
-DEEPGRAM_API_KEY=your_deepgram_api_key
+# -------- Database (required) --------
+DB_HOST=localhost
+DB_NAME=ressy
+DB_USERNAME=root
+DB_PASSWORD=your_password_here
+DB_PORT=3306
 
-# Deepgram Agent Configuration (Optional - defaults provided)
+MYSQL_HOST=localhost
+MYSQL_DATABASE=ressy
+MYSQL_USER=root
+MYSQL_PASSWORD=your_password_here
+MYSQL_PORT=3306
+
+# -------- Database pool (optional) --------
+DB_POOL_SIZE=10
+DB_POOL_NAME=ressy_pool
+DB_CONNECTION_TIMEOUT=20
+DB_POOL_LOG_CONNECTIONS=false
+
+# -------- Twilio (optional) --------
+TWILIO_ACCOUNT_SID=your_account_sid_here
+TWILIO_AUTH_TOKEN=your_auth_token_here
+TWILIO_COST_PER_SECOND=0.0003
+TWILIO_MULTIPLIER=1.0
+
+# -------- Deepgram (required for voice) --------
+DEEPGRAM_API_KEY=your_deepgram_api_key_here
+DEEPGRAM_THINK_PROMPT_FILE=prompts/dg_context_prompt.json
+DEEPGRAM_COST_PER_SECOND=0.0013333333
+DEEPGRAM_MULTIPLIER=1.0
 DEEPGRAM_AUDIO_INPUT_ENCODING=mulaw
 DEEPGRAM_AUDIO_INPUT_SAMPLE_RATE=8000
 DEEPGRAM_AGENT_LANGUAGE=en
@@ -203,32 +358,28 @@ DEEPGRAM_LISTEN_MODEL=nova-3
 DEEPGRAM_THINK_MODEL=gpt-4o-mini
 DEEPGRAM_SPEAK_MODEL=aura-2-harmonia-en
 
-# Outbound Calls (Developer Testing)
-# Public base URL reachable by Twilio/ngrok (used for WS streaming and status callbacks)
-PUBLIC_BASE_URL=https://your-ngrok-domain.ngrok-free.dev
-# Optional: protects the Twilio status callback endpoint
-OUTBOUND_CALL_STATUS_SECRET=your_random_secret
-
-# MySQL Database Configuration
-DB_HOST=localhost
-DB_NAME=ressy
-DB_USERNAME=root
-DB_PASSWORD=your_password
-DB_PORT=3306
-
-# Alternative MySQL environment variables (also supported)
-MYSQL_HOST=localhost
-MYSQL_DATABASE=ressy
-MYSQL_USER=root
-MYSQL_PASSWORD=your_password
-MYSQL_PORT=3306
-
-# AWS Configuration (if using DynamoDB)
+# -------- AWS (optional) --------
 AWS_REGION=ca-central-1
-AWS_ACCESS_KEY_ID=your_access_key
-AWS_SECRET_ACCESS_KEY=your_secret_key
+AWS_ACCESS_KEY_ID=your_access_key_here
+AWS_SECRET_ACCESS_KEY=your_secret_key_here
 
-# JWT Configuration
+# -------- Outbound call testing (optional) --------
+OUTBOUND_CALL_STATUS_SECRET=your_random_secret_string_here
+PUBLIC_BASE_URL=https://your-domain.ngrok-free.dev
+
+# -------- Application --------
+USE_MOCK_DATA=false
+ALLOW_DB_FAILURE=false
+LOG_LEVEL=DEBUG
+RESSY_MULTIPLIER=5.0
+RESTAURANT_TIMEZONE=America/Vancouver
+
+# -------- Docker --------
+RUN_STARTUP_SCRIPTS=true
+SEED_DATABASE=true
+DOCKER_MYSQL_PORT=3307
+
+# -------- JWT (RS256) --------
 JWT_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----"
 JWT_PUBLIC_KEY="-----BEGIN PUBLIC KEY-----\n...\n-----END PUBLIC KEY-----"
 JWT_ACCESS_TOKEN_EXP_SECONDS=3600
@@ -237,25 +388,9 @@ JWT_ISSUER=ressy.ai/auth
 JWT_ADMIN_AUDIENCE=ressy-admin-api
 JWT_CLIENT_AUDIENCE=ressy-client-api
 JWT_AUTH_AUDIENCE=ressy-auth
-
-# Application Settings
-USE_MOCK_DATA=false
-ALLOW_DB_FAILURE=false  # Set to 'true' for testing without database
-
-# Timezone Configuration
-RESTAURANT_TIMEZONE=America/Vancouver
-
-# Call Cost Settings (USD)
-# Admin call detail returns a cost breakdown: twilio_cost, deepgram_cost, ressy_cost.
-# Defaults are set to "highest discussed" per-second costs, but can be overridden here.
-TWILIO_COST_PER_SECOND=0.0003
-DEEPGRAM_COST_PER_SECOND=0.0013333333
-TWILIO_MULTIPLIER=1.0
-DEEPGRAM_MULTIPLIER=1.0
-RESSY_MULTIPLIER=1.0
 ```
 
-> Store RSA keys as multiline PEM strings; when injecting via environment variables, escape newlines as `\n` if your process manager requires single-line values.
+> Store RSA keys as multiline PEM strings; when using a single-line value in `.env`, escape newlines as `\n`.
 
 #### Production JWT setup
 
@@ -265,7 +400,7 @@ RESSY_MULTIPLIER=1.0
    openssl rsa -in jwt_private.pem -pubout -out jwt_public.pem
    ```
 2. Configure env vars (example):
-   ```
+   ```env
    JWT_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n<escaped private pem>\n-----END PRIVATE KEY-----"
    JWT_PUBLIC_KEY="-----BEGIN PUBLIC KEY-----\n<escaped public pem>\n-----END PUBLIC KEY-----"
    JWT_ISSUER=ressy.ai/auth
@@ -278,9 +413,23 @@ RESSY_MULTIPLIER=1.0
 3. Deploy the **private key** only to the auth component; deploy the **public key** to any service that validates tokens (if split).
 4. Rotate keys via env updates and rolling restarts; ensure both old/new public keys are trusted during rotation if you need overlap.
 
-### 4. Database Setup
+### 4. Cost Calculation
 
-Run database migrations:
+Call analytics (e.g. Admin CRM call detail `GET /api/v1/admin/calls/{call_id}`) include a cost breakdown:
+
+- **Twilio cost**: `(call duration in seconds) × TWILIO_COST_PER_SECOND × TWILIO_MULTIPLIER`
+- **Deepgram cost**: `(call duration in seconds) × DEEPGRAM_COST_PER_SECOND × DEEPGRAM_MULTIPLIER`
+- **Ressy cost**: `(Twilio + Deepgram base) × RESSY_MULTIPLIER`
+
+Defaults are set to the highest per-second rates discussed (Twilio ~$0.0003/s, Deepgram ~$0.0013333333/s). Override in `.env` as needed. Cost variables are optional and do not affect voice functionality.
+
+### 5. Database Setup
+
+#### Database Connection Pool Settings
+
+Connection pool behavior is controlled by optional environment variables (see [§ 3.1 Database Configuration](#31-database-configuration)): `DB_POOL_SIZE`, `DB_POOL_NAME`, `DB_CONNECTION_TIMEOUT`, `DB_POOL_LOG_CONNECTIONS`. Defaults are sensible for typical workloads; increase `DB_POOL_SIZE` for high concurrency. These are optional.
+
+#### Run database migrations
 
 ```bash
 # Using the migration script
@@ -336,36 +485,26 @@ docker-compose down -v
 
 **Environment Variables:**
 
-Copy `.env.example` to `.env` and configure:
+Copy `.env.example` to `.env` and configure (see [§ 3. Environment Configuration](#3-environment-configuration) for full reference). Key variables for Docker:
 
-```bash
-cp .env.example .env
-# Edit .env with your values
-```
+- **Database**: `DB_PASSWORD` (or `MYSQL_PASSWORD`) — MySQL root password; `DOCKER_MYSQL_PORT` — host port for MySQL (default: `3307`, container uses `3306`).
+- **Startup**: `RUN_STARTUP_SCRIPTS` — preferred toggle; when `true`, runs migrations and seeding. `SEED_DATABASE` — legacy toggle; superseded by `RUN_STARTUP_SCRIPTS` when set. Use `RUN_STARTUP_SCRIPTS=false` to skip migrations and seeding.
+- **Auth**: `JWT_PRIVATE_KEY` / `JWT_PUBLIC_KEY` — RSA keys (RS256).
+- **Voice**: `DEEPGRAM_API_KEY`, `DEEPGRAM_THINK_PROMPT_FILE`, `DEEPGRAM_LISTEN_MODEL`, `DEEPGRAM_THINK_MODEL`, `DEEPGRAM_SPEAK_MODEL`.
+- **Outbound testing**: `PUBLIC_BASE_URL` (e.g. ngrok URL), `OUTBOUND_CALL_STATUS_SECRET`.
+- **Cost (optional)**: `TWILIO_COST_PER_SECOND`, `DEEPGRAM_COST_PER_SECOND`, `TWILIO_MULTIPLIER`, `DEEPGRAM_MULTIPLIER`, `RESSY_MULTIPLIER`.
+- **App**: `LOG_LEVEL`, `RESTAURANT_TIMEZONE`, `USE_MOCK_DATA`, `ALLOW_DB_FAILURE`.
 
-Key variables:
-- `DB_PASSWORD` - MySQL root password (default: `rootpassword`)
-- `DOCKER_MYSQL_PORT` - MySQL port mapping on host (default: `3307`, container uses `3306`)
-- `SEED_DATABASE` - Legacy toggle; set to `false` to skip running startup scripts (default: `true`)
-- `RUN_STARTUP_SCRIPTS` - Preferred toggle; overrides `SEED_DATABASE` when set
-- `JWT_PRIVATE_KEY` / `JWT_PUBLIC_KEY` - RSA keys for authentication (RS256)
-- `DEEPGRAM_API_KEY` - Required for voice features
-- `DEEPGRAM_LISTEN_MODEL`, `DEEPGRAM_THINK_MODEL`, `DEEPGRAM_SPEAK_MODEL` - Deepgram Agent model configuration
-- `PUBLIC_BASE_URL` - Public URL (e.g. ngrok) reachable by Twilio for voice/WebSocket flows
-- `TWILIO_COST_PER_SECOND` / `DEEPGRAM_COST_PER_SECOND` + multipliers - Cost calculation settings
-- `RESTAURANT_TIMEZONE` - Timezone for restaurant operations (default: `America/Vancouver`)
-
-**Disabling database seeding:**
-
-```bash
-# Set in .env or pass directly
-SEED_DATABASE=false docker-compose up --build -d
-```
-
-**Disabling startup scripts (preferred):**
+**Disabling startup scripts (preferred over legacy SEED_DATABASE):**
 
 ```bash
 RUN_STARTUP_SCRIPTS=false docker-compose up --build -d
+```
+
+**Legacy: disabling database seeding only:**
+
+```bash
+SEED_DATABASE=false docker-compose up --build -d
 ```
 
 ### Docker (Backend Only)
@@ -678,7 +817,14 @@ All endpoints are organized by tags in the Swagger documentation:
   - `DELETE /api/v1/admin/calls/{call_id}/transcript` - Delete transcript only
 
 - **Outbound Calls (Developer Testing)** (`/api/v1/testing*`):
-  - `POST /api/v1/testing/outbound-call` - Place an outbound call to your phone from a restaurant's Twilio number (admin auth required)
+  - `POST /api/v1/testing/outbound-call` — Place an outbound call to your phone from a restaurant's Twilio number (admin auth required). **Requirements**: `PUBLIC_BASE_URL` (public URL reachable by Twilio, e.g. ngrok) and optionally `OUTBOUND_CALL_STATUS_SECRET` to protect the Twilio status callback. For developer testing only; see [§ 3.5 Outbound Call Configuration](#35-outbound-call-configuration-developer-testing) and Twilio integration.
+  - Example cURL (replace `{token}`, `{restaurant_id}`, `{to_number}`):
+    ```bash
+    curl -X POST "http://localhost:5001/api/v1/testing/outbound-call" \
+      -H "Authorization: Bearer {token}" \
+      -H "Content-Type: application/json" \
+      -d '{"restaurant_id": 1, "to_number": "+15551234567"}'
+    ```
 
 - **Calls (Client CRM)** (`/api/v1/client/calls*`) – auto-scoped to authenticated restaurant:
   - `GET /api/v1/client/calls` - Paginated calls with filters/sort
@@ -990,30 +1136,42 @@ Migrations should be run in numerical order (001, 002, 003, etc.) as they have d
 
 ### Migration Files
 
-1. **001_create_permissions.sql** - Creates the Permissions table (no dependencies)
-2. **002_create_crm_roles.sql** - Creates the Crm_roles table (depends on Permissions)
-3. **003_create_users.sql** - Creates the Users table (no dependencies)
-4. **004_create_restaurants.sql** - Creates the Restaurants table (no dependencies)
-5. **005_create_menus.sql** - Creates the Menus table (depends on Restaurants)
-6. **006_create_orders.sql** - Creates the Orders table (depends on Users)
-7. **007_create_order_details.sql** - Creates the Order_Details table (depends on Orders and Menus)
-8. **008_create_faqs.sql** - Creates the FAQs table (depends on Restaurants)
-9. **009_create_notifications.sql** - Creates the Notifications table (depends on Orders)
-11. **011_create_table_availability_requests.sql** - Creates the Table_Availability_Requests table (depends on Restaurants)
-12. **012_create_slot_bookings.sql** - Creates the Slot_Bookings table (depends on Restaurants)
-13. **013_create_reservations.sql** - Creates the Reservations table (depends on Table_Availability_Requests, Slot_Bookings, and Users)
-14. **014_create_ressy_administrator.sql** - Creates the Ressy_Administrator table (depends on Crm_roles)
-15. **015_create_restaurant_administrators.sql** - Creates the Restaurant_Administrators table (depends on Restaurants and Crm_roles)
-16. **016_create_calls.sql** - Creates the Calls table (stores call session information)
-17. **017_create_auth_sessions.sql** - Adds last_login/last_active columns to administrators and creates Auth_Sessions for JWT refresh flows
-18. **018_add_reservation_type_flag.sql** - Adds reservation type flag
-19. **019_add_restaurant_opening_closing_times.sql** - Adds restaurant opening/closing times
-20. **020_add_party_size_and_special_request.sql** - Adds party size and special request fields
-21. **021_add_notes_to_reservations.sql** - Adds notes field to reservations
-22. **022_add_call_transcript_to_calls.sql** - Adds `call_transcript` JSON column and indexes to `Calls`
-23. **023_create_user_restaurant_metadata.sql** - Creates User_Restaurant_Metadata table for associating users with restaurants
-24. **024_add_restaurant_id_deleted_at_to_orders.sql** - Adds restaurant_id and deleted_at columns to Orders table
-25. **025_create_opentable_api_logs.sql** - Creates OpenTable API logs table
+Run in numerical order (001, 002, … 032). Key migrations:
+
+1. **001_create_permissions.sql** – Permissions table
+2. **002_create_crm_roles.sql** – Crm_roles (depends on Permissions)
+3. **003_create_users.sql** – Users table
+4. **004_create_restaurants.sql** – Restaurants table
+5. **005_create_menus.sql** – Menus (depends on Restaurants)
+6. **006_create_orders.sql** – Orders (depends on Users)
+7. **007_create_order_details.sql** – Order_Details (depends on Orders, Menus)
+8. **008_create_faqs.sql** – FAQs (depends on Restaurants)
+9. **009_create_notifications.sql** – Notifications (depends on Orders)
+10. **010_create_table_availability_requests.sql** – Table_Availability_Requests
+11. **011_create_slot_bookings.sql** – Slot_Bookings
+12. **012_create_reservations.sql** – Reservations
+13. **013_create_ressy_administrator.sql** – Ressy_Administrator
+14. **014_create_restaurant_administrators.sql** – Restaurant_Administrators
+15. **015_create_calls.sql** – Calls table
+16. **016_create_auth_sessions.sql** – Auth_Sessions for JWT refresh
+17. **017_add_reservation_type_flag.sql** – Reservation type flag
+18. **018_add_restaurant_opening_closing_times.sql** – Restaurant opening/closing times
+19. **019_add_party_size_and_special_request.sql** – Party size and special request
+20. **020_add_notes_to_reservations.sql** – Notes on reservations
+21. **021_add_call_transcript_to_calls.sql** – Call transcript JSON on Calls
+22. **022_create_user_restaurant_metadata.sql** – User_Restaurant_Metadata
+23. **023_add_restaurant_id_deleted_at_to_orders.sql** – restaurant_id, deleted_at on Orders
+24. **024_create_user_activity_history.sql** – User activity history
+25. **025_add_unique_phone_number_constraint.sql** – Unique phone constraint
+26. **026_add_escalation_forwarding_to_restaurants.sql** – Escalation forwarding
+27. **027_create_escalations.sql** – Escalations table
+28. **028_add_restaurant_timezone.sql** – Restaurant timezone
+29. **029_add_reservation_capacity_config.sql** – Reservation capacity config
+30. **030_create_restaurant_features.sql** – Restaurant_Features
+31. **031_add_daily_operating_hours.sql** – Per-day operating hours (replaces single opening/closing time)
+32. **032_add_24_hours_flag.sql** – Per-day `is_24_hours` flag (when true, open/close times ignored for that day)
+
+**Restaurant operating hours:** Per-day hours (031) support `open`, `close`, `is_closed`, and `is_24_hours` per day. When `is_24_hours` is true for a day, the restaurant is treated as open all day and open/close times are ignored. The voice agent (Deepgram function-calling in `app/agent_fc/`) uses shared utilities (`app.utils.restaurant_hours`: `is_restaurant_open_now`, `is_datetime_within_operating_hours`, `format_operating_window`), which already handle per-day and 24-hour logic—**no agent function code changes are required** for `is_24_hours`.
 
 ### Database Schema Overview
 
@@ -1908,35 +2066,24 @@ pip3 install -r requirements-dev.txt
 
 ### Step 4: Set Up Environment Variables
 
-Create or update a `.env` file in the project root:
+Create or update a `.env` file in the project root. See [§ 3. Environment Configuration](#3-environment-configuration) for the full list (40+ variables). Minimum for local run:
 
 ```bash
-# Create .env file if it doesn't exist
 touch .env
 ```
 
-Edit the `.env` file with your configuration:
+Edit `.env` with at least:
 
 ```env
-# Deepgram Configuration (REQUIRED for voice features)
-DEEPGRAM_API_KEY=your_deepgram_api_key_here
-
-# MySQL Database Configuration (REQUIRED)
+# Database (REQUIRED unless USE_MOCK_DATA=true)
 DB_HOST=localhost
 DB_NAME=ressy
 DB_USERNAME=root
-DB_PASSWORD=your_mysql_password
+DB_PASSWORD=your_mysql_password_here
 DB_PORT=3306
 
-# Alternative MySQL variables (also supported)
-MYSQL_HOST=localhost
-MYSQL_DATABASE=ressy
-MYSQL_USER=root
-MYSQL_PASSWORD=your_mysql_password
-MYSQL_PORT=3306
-
-# JWT Configuration (REQUIRED for authentication - RS256 with RSA keys)
-# Generate keys: openssl genrsa -out jwt_private.pem 2048 && openssl rsa -in jwt_private.pem -pubout -out jwt_public.pem
+# JWT (REQUIRED for auth - RS256)
+# Generate: openssl genrsa -out jwt_private.pem 2048 && openssl rsa -in jwt_private.pem -pubout -out jwt_public.pem
 JWT_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----"
 JWT_PUBLIC_KEY="-----BEGIN PUBLIC KEY-----\n...\n-----END PUBLIC KEY-----"
 JWT_ACCESS_TOKEN_EXP_SECONDS=3600
@@ -1946,22 +2093,34 @@ JWT_ADMIN_AUDIENCE=ressy-admin-api
 JWT_CLIENT_AUDIENCE=ressy-client-api
 JWT_AUTH_AUDIENCE=ressy-auth
 
-# Deepgram Agent Configuration (Optional - defaults provided)
-DEEPGRAM_AUDIO_INPUT_ENCODING=mulaw
-DEEPGRAM_AUDIO_INPUT_SAMPLE_RATE=8000
-DEEPGRAM_AGENT_LANGUAGE=en
-DEEPGRAM_LISTEN_MODEL=nova-3
-DEEPGRAM_THINK_MODEL=gpt-4o-mini
-DEEPGRAM_SPEAK_MODEL=aura-2-amalthea-en
+# Deepgram (REQUIRED for voice)
+DEEPGRAM_API_KEY=your_deepgram_api_key_here
+DEEPGRAM_THINK_PROMPT_FILE=prompts/dg_context_prompt.json
 
-# Timezone Configuration
-RESTAURANT_TIMEZONE=America/Vancouver
-
-# Application Settings
+# Application
 USE_MOCK_DATA=false
 ALLOW_DB_FAILURE=false
+LOG_LEVEL=INFO
+RESTAURANT_TIMEZONE=America/Vancouver
 
-# AWS Configuration (if using AWS features)
+# Optional: cost calculation (Admin call detail); defaults are fine
+# TWILIO_COST_PER_SECOND=0.0003
+# DEEPGRAM_COST_PER_SECOND=0.0013333333
+# RESSY_MULTIPLIER=5.0
+
+# Optional: outbound call testing (need PUBLIC_BASE_URL reachable by Twilio, e.g. ngrok)
+# PUBLIC_BASE_URL=https://your-ngrok.ngrok-free.dev
+# OUTBOUND_CALL_STATUS_SECRET=your_random_secret
+
+# Optional: Docker (when using docker-compose)
+# RUN_STARTUP_SCRIPTS=true
+# DOCKER_MYSQL_PORT=3307
+
+# Optional: database pool (defaults are fine for most cases)
+# DB_POOL_SIZE=10
+# DB_CONNECTION_TIMEOUT=20
+
+# AWS (if using AWS features)
 AWS_REGION=ca-central-1
 AWS_ACCESS_KEY_ID=your_access_key
 AWS_SECRET_ACCESS_KEY=your_secret_key
@@ -1996,31 +2155,10 @@ CREATE DATABASE IF NOT EXISTS ressy;
 # 3. Exit MySQL
 exit;
 
-# 4. Run migrations manually (in order)
-mysql -u root -p ressy < migrations/001_create_permissions.sql
-mysql -u root -p ressy < migrations/002_create_crm_roles.sql
-mysql -u root -p ressy < migrations/003_create_users.sql
-mysql -u root -p ressy < migrations/004_create_restaurants.sql
-mysql -u root -p ressy < migrations/005_create_menus.sql
-mysql -u root -p ressy < migrations/006_create_orders.sql
-mysql -u root -p ressy < migrations/007_create_order_details.sql
-mysql -u root -p ressy < migrations/008_create_faqs.sql
-mysql -u root -p ressy < migrations/009_create_notifications.sql
-mysql -u root -p ressy < migrations/011_create_table_availability_requests.sql
-mysql -u root -p ressy < migrations/012_create_slot_bookings.sql
-mysql -u root -p ressy < migrations/013_create_reservations.sql
-mysql -u root -p ressy < migrations/014_create_ressy_administrator.sql
-mysql -u root -p ressy < migrations/015_create_restaurant_administrators.sql
-mysql -u root -p ressy < migrations/016_create_calls.sql
-mysql -u root -p ressy < migrations/017_create_auth_sessions.sql
-mysql -u root -p ressy < migrations/018_add_reservation_type_flag.sql
-mysql -u root -p ressy < migrations/019_add_restaurant_opening_closing_times.sql
-mysql -u root -p ressy < migrations/020_add_party_size_and_special_request.sql
-mysql -u root -p ressy < migrations/021_add_notes_to_reservations.sql
-mysql -u root -p ressy < migrations/022_add_call_transcript_to_calls.sql
-mysql -u root -p ressy < migrations/023_create_user_restaurant_metadata.sql
-mysql -u root -p ressy < migrations/024_add_restaurant_id_deleted_at_to_orders.sql
-mysql -u root -p ressy < migrations/025_create_opentable_api_logs.sql
+# 4. Run migrations (use script for all 032 files, or run each in order)
+python3 scripts/run_migrations.py
+# Or manually: mysql -u root -p ressy < migrations/001_create_permissions.sql
+# ... then 002 through 032 (see migrations/ directory and Database Migrations section)
 ```
 
 ### Step 6: Verify Database Connection
@@ -2131,6 +2269,18 @@ docker run -p 5001:5001 --env-file .env ressy-ai-backend
 **Solution**:
 - Set `ALLOW_DB_FAILURE=true` in `.env` for testing (not recommended for production)
 - Or ensure MySQL is running and credentials are correct
+- If using a connection pool, increase `DB_CONNECTION_TIMEOUT` (default 20s) or check `DB_POOL_SIZE`
+
+### Issue: Outbound call testing fails or Twilio status callback returns 403
+
+**Solution**:
+- Set `PUBLIC_BASE_URL` to a URL reachable by Twilio (e.g. your ngrok URL)
+- Optionally set `OUTBOUND_CALL_STATUS_SECRET` and pass it as the `secret` query param in Twilio StatusCallback URL
+
+### Issue: Too much or too little logging
+
+**Solution**:
+- Set `LOG_LEVEL` in `.env` to `DEBUG`, `INFO`, `WARNING`, `ERROR`, or `CRITICAL` (default: `INFO`)
 
 ## ✅ Success Checklist
 
