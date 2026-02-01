@@ -229,7 +229,7 @@ Required for voice calls and Twilio webhooks. App can run without them for non-v
 | `TWILIO_MULTIPLIER` | float | No | `1.0` | Multiplier applied to Twilio cost in analytics |
 | `NOTIFICATION_MAX_RETRIES` | int | No | `3` | Max retry attempts for failed SMS notifications |
 
-*Required for voice and SMS. App runs without them but voice and SMS features will be disabled.
+*Required for voice and SMS functionality to work. App runs without them, but voice and SMS features will be disabled.
 
 **SMS Notifications:** When order or reservation status changes, customers automatically receive SMS notifications via Twilio. All messages use a warm, personalized "Ressy" brand voice and end with "Yours sincerely, Ressy AI" signature.
 
@@ -247,7 +247,7 @@ Required for voice calls and Twilio webhooks. App can run without them for non-v
 }
 ```
 
-**Notification Logging:** All notifications are logged in the `Notification_Logs` table for auditing and retry handling. Failed notifications are marked for retry (up to `NOTIFICATION_MAX_RETRIES` attempts).
+**Notification Logging:** All notifications are logged in the `Notification_Logs` table for auditing and retry handling. Failed notifications are marked with `status='failed'` and `retry_count` is incremented. The `get_pending_for_retry()` repository method supports future implementation of a background retry job—no retry worker is included in this release.
 
 **Requirements:** Install the `twilio` package (`pip install -r requirements.txt`).
 
