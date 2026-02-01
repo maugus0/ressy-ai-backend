@@ -221,12 +221,35 @@ Create a `.env` file in the repository root. The application supports both `DB_*
 
 Required for voice calls and Twilio webhooks. App can run without them for non-voice features.
 
-| Variable | Type | Default | Description |
-|----------|------|---------|-------------|
-| `TWILIO_ACCOUNT_SID` | string | — | Twilio account SID |
-| `TWILIO_AUTH_TOKEN` | string | — | Twilio auth token |
-| `TWILIO_COST_PER_SECOND` | float | `0.0003` | Twilio cost per second (USD) for call analytics |
-| `TWILIO_MULTIPLIER` | float | `1.0` | Multiplier applied to Twilio cost in analytics |
+| Variable | Type | Required | Default | Description |
+|----------|------|----------|---------|-------------|
+| `TWILIO_ACCOUNT_SID` | string | Yes* | `""` | Twilio Account SID for voice and SMS (fallback) |
+| `TWILIO_AUTH_TOKEN` | string | Yes* | `""` | Twilio Auth Token for voice and SMS (fallback) |
+| `TWILIO_COST_PER_SECOND` | float | No | `0.0003` | Twilio cost per second (USD) for call analytics |
+| `TWILIO_MULTIPLIER` | float | No | `1.0` | Multiplier applied to Twilio cost in analytics |
+| `NOTIFICATION_MAX_RETRIES` | int | No | `3` | Max retry attempts for failed SMS notifications |
+
+*Required for voice and SMS. App runs without them but voice and SMS features will be disabled.
+
+**SMS Notifications:** When order or reservation status changes, customers automatically receive SMS notifications via Twilio. All messages use a warm, personalized "Ressy" brand voice and end with "Yours sincerely, Ressy AI" signature.
+
+**Credential Priority (Restaurant First, Fallback to .env):**
+
+1. **Primary:** The system first checks the restaurant's `twilio_details` JSON field for `account_sid` and `auth_token`. This is the **preferred configuration** because the "From" number (`twilio_phone_number`) must belong to the Twilio account whose credentials are used—otherwise Twilio returns error 21660 (credential mismatch).
+
+2. **Fallback:** If the restaurant has no `twilio_details` configured, the system falls back to the `.env` variables `TWILIO_ACCOUNT_SID` and `TWILIO_AUTH_TOKEN`. In this case, the restaurant's `twilio_phone_number` must belong to the .env Twilio account.
+
+**Restaurant `twilio_details` JSON Format:**
+```json
+{
+  "account_sid": "ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+  "auth_token": "your_auth_token_here"
+}
+```
+
+**Notification Logging:** All notifications are logged in the `Notification_Logs` table for auditing and retry handling. Failed notifications are marked for retry (up to `NOTIFICATION_MAX_RETRIES` attempts).
+
+**Requirements:** Install the `twilio` package (`pip install -r requirements.txt`).
 
 #### 3.3 Deepgram Configuration
 

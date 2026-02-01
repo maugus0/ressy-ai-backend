@@ -3,6 +3,7 @@ Dashboard API routes for order management.
 Includes RBAC: admins can access all, managers can only access their restaurant's orders.
 """
 
+import json
 import logging
 from typing import Any, Dict, List, Optional
 
@@ -13,6 +14,8 @@ from pydantic import BaseModel, Field
 from app.middleware.auth_middleware import require_role
 from app.services.activity_history_service import ActivityHistoryService
 from app.services.dashboard_order_service import DashboardOrderService
+from app.services.notification_service import NotificationService
+from app.services.restaurant_service import RestaurantService
 from app.services.sse_service import OrderEventSubtype, SSEService
 
 logger = logging.getLogger(__name__)
@@ -45,6 +48,16 @@ def get_history_service() -> ActivityHistoryService:
     return ActivityHistoryService()
 
 
+def get_restaurant_service() -> RestaurantService:
+    """Dependency to get restaurant service instance."""
+    return RestaurantService()
+
+
+def get_notification_service() -> NotificationService:
+    """Dependency to get notification service instance."""
+    return NotificationService()
+
+
 # ---------- Background task helpers ----------
 
 
@@ -69,6 +82,52 @@ async def _emit_order_sse_event(
         )
     except Exception as sse_error:
         logger.error(f"Failed to emit SSE event for order {order_id} ({subtype.value}): {sse_error}")
+
+
+def _queue_order_sms(
+    background_tasks: BackgroundTasks,
+    notification_service: NotificationService,
+    restaurant_service: RestaurantService,
+    restaurant_id: Optional[int],
+    order_id: int,
+    new_status: str,
+    customer_phone: Optional[str],
+) -> None:
+    """Queue SMS for an order status change. No-op if restaurant_id or phone missing."""
+    if not restaurant_id or not (customer_phone and str(customer_phone).strip()):
+        return
+    try:
+        restaurant = restaurant_service.get_restaurant(restaurant_id)
+        twilio_number = (restaurant.get("twilio_phone_number") or "").strip()
+        if not twilio_number:
+            return
+        twilio_details = restaurant.get("twilio_details") or {}
+        if isinstance(twilio_details, str):
+            try:
+                twilio_details = json.loads(twilio_details) if twilio_details else {}
+            except Exception:
+                twilio_details = {}
+        sid = twilio_details.get("account_sid") or twilio_details.get("TWILIO_ACCOUNT_SID")
+        token = twilio_details.get("auth_token") or twilio_details.get("TWILIO_AUTH_TOKEN")
+
+        async def _send_order_sms_notification() -> None:
+            try:
+                await notification_service.send_order_notification(
+                    restaurant_id=restaurant_id,
+                    order_id=order_id,
+                    new_status=new_status,
+                    recipient_phone=str(customer_phone).strip(),
+                    restaurant_name=restaurant.get("name") or "",
+                    restaurant_twilio_number=twilio_number,
+                    twilio_account_sid=sid,
+                    twilio_auth_token=token,
+                )
+            except Exception as sms_err:
+                logger.warning("SMS notification for order %s failed: %s", order_id, sms_err)
+
+        background_tasks.add_task(_send_order_sms_notification)
+    except Exception as err:
+        logger.warning("Could not queue order SMS for %s: %s", order_id, err)
 
 
 # ---------- Pydantic models for request validation ----------
@@ -570,6 +629,8 @@ async def create_order(
     current_user: dict = Depends(require_role(["admin", "client"])),
     order_service: DashboardOrderService = Depends(get_order_service),
     history_service: ActivityHistoryService = Depends(get_history_service),
+    restaurant_service: RestaurantService = Depends(get_restaurant_service),
+    notification_service: NotificationService = Depends(get_notification_service),
 ):
     """Create a new order from the dashboard."""
     _check_restaurant_access(current_user, restaurant_id)
@@ -618,6 +679,17 @@ async def create_order(
                 "total_amount": result["total_amount"],
                 "customer_name": result.get("customer_name"),
             },
+        )
+
+        # SMS on order created (initial status)
+        _queue_order_sms(
+            background_tasks,
+            notification_service,
+            restaurant_service,
+            restaurant_id,
+            result["order_id"],
+            result.get("status", "pending"),
+            request.customer_phone or result.get("customer_phone"),
         )
 
         return result
@@ -934,6 +1006,8 @@ async def update_order(
     current_user: dict = Depends(require_role(["admin", "client"])),
     order_service: DashboardOrderService = Depends(get_order_service),
     history_service: ActivityHistoryService = Depends(get_history_service),
+    restaurant_service: RestaurantService = Depends(get_restaurant_service),
+    notification_service: NotificationService = Depends(get_notification_service),
 ):
     """Update order details."""
     order = _check_order_access(current_user, order_id, order_service)
@@ -1000,6 +1074,17 @@ async def update_order(
                     "total_amount": result.get("total_amount"),
                 },
             )
+            # SMS on status change (when status was updated)
+            if request.status is not None and result.get("status") != order.get("status"):
+                _queue_order_sms(
+                    background_tasks,
+                    notification_service,
+                    restaurant_service,
+                    restaurant_id,
+                    order_id,
+                    result.get("status", ""),
+                    result.get("customer_phone") or order.get("customer_phone"),
+                )
 
         return result
     except ValueError as e:
@@ -1079,6 +1164,8 @@ async def update_order_status(
     current_user: dict = Depends(require_role(["admin", "client"])),
     order_service: DashboardOrderService = Depends(get_order_service),
     history_service: ActivityHistoryService = Depends(get_history_service),
+    restaurant_service: RestaurantService = Depends(get_restaurant_service),
+    notification_service: NotificationService = Depends(get_notification_service),
 ):
     """Update order status."""
     order = _check_order_access(current_user, order_id, order_service)
@@ -1118,6 +1205,16 @@ async def update_order_status(
                     "order_id": order_id,
                     "status": request.status,
                 },
+            )
+            # SMS on status change
+            _queue_order_sms(
+                background_tasks,
+                notification_service,
+                restaurant_service,
+                restaurant_id,
+                order_id,
+                request.status,
+                order.get("customer_phone"),
             )
 
         return result
@@ -1196,6 +1293,8 @@ async def cancel_order(
     current_user: dict = Depends(require_role(["admin", "client"])),
     order_service: DashboardOrderService = Depends(get_order_service),
     history_service: ActivityHistoryService = Depends(get_history_service),
+    restaurant_service: RestaurantService = Depends(get_restaurant_service),
+    notification_service: NotificationService = Depends(get_notification_service),
 ):
     """Cancel an order."""
     order = _check_order_access(current_user, order_id, order_service)
@@ -1229,6 +1328,16 @@ async def cancel_order(
                     "order_id": order_id,
                     "status": "cancelled",
                 },
+            )
+            # SMS on status change to cancelled
+            _queue_order_sms(
+                background_tasks,
+                notification_service,
+                restaurant_service,
+                restaurant_id,
+                order_id,
+                "cancelled",
+                order.get("customer_phone"),
             )
 
         return result
