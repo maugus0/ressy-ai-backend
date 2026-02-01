@@ -12,7 +12,6 @@ from fastapi.security import HTTPBearer
 from pydantic import BaseModel, Field
 
 from app.middleware.auth_middleware import require_role
-from app.repositories.mysql_user_repo import MySQLUserRepository
 from app.services.activity_history_service import ActivityHistoryService
 from app.services.dashboard_order_service import DashboardOrderService
 from app.services.notification_service import NotificationService
@@ -57,81 +56,6 @@ def get_restaurant_service() -> RestaurantService:
 def get_notification_service() -> NotificationService:
     """Dependency to get notification service instance."""
     return NotificationService()
-
-
-# ---------- Background task helpers ----------
-
-
-async def _send_order_notification(
-    restaurant_id: int,
-    order_id: int,
-    new_status: str,
-    customer_phone: Optional[str],
-    user_id: Optional[int] = None,
-) -> None:
-    if not customer_phone and user_id:
-        try:
-            user_repo = MySQLUserRepository()
-            user = user_repo.get_user_by_id(user_id)
-            if user and user.get("phone_number"):
-                customer_phone = user.get("phone_number")
-                logger.info(f"Order {order_id}: Retrieved phone {customer_phone} from user_id {user_id}")
-        except Exception as e:
-            logger.warning(f"Order {order_id}: Failed to lookup user {user_id} for phone number: {e}")
-
-    if not customer_phone:
-        logger.info(f"Order {order_id}: No customer_phone found (user_id={user_id}), skipping notification")
-        return
-    try:
-        restaurant_service = RestaurantService()
-        restaurant = restaurant_service.get_restaurant(restaurant_id)
-        if not restaurant:
-            logger.warning(f"Restaurant {restaurant_id} not found for order notification")
-            return
-        restaurant_name = restaurant.get("name", "the restaurant")
-        restaurant_twilio_number = restaurant.get("twilio_phone_number")
-        if not restaurant_twilio_number:
-            logger.warning(f"No Twilio number configured for restaurant {restaurant_id}")
-            return
-
-        twilio_details = restaurant.get("twilio_details") or {}
-        if isinstance(twilio_details, str):
-            try:
-                twilio_details = json.loads(twilio_details) if twilio_details else {}
-            except json.JSONDecodeError as e:
-                logger.warning(
-                    "Invalid JSON in twilio_details for restaurant %s: %s",
-                    restaurant_id,
-                    e,
-                )
-                twilio_details = {}
-            except Exception as e:
-                logger.warning(
-                    "Unexpected error parsing twilio_details for restaurant %s: %s",
-                    restaurant_id,
-                    e,
-                )
-                twilio_details = {}
-
-        sid = twilio_details.get("account_sid") or twilio_details.get("TWILIO_ACCOUNT_SID")
-        token = twilio_details.get("auth_token") or twilio_details.get("TWILIO_AUTH_TOKEN")
-
-        logger.info(
-            f"Sending SMS notification for order {order_id} to {customer_phone} from {restaurant_twilio_number}"
-        )
-        notification_service = NotificationService()
-        await notification_service.send_order_notification(
-            restaurant_id=restaurant_id,
-            order_id=order_id,
-            new_status=new_status,
-            recipient_phone=customer_phone,
-            restaurant_name=restaurant_name,
-            restaurant_twilio_number=restaurant_twilio_number,
-            twilio_account_sid=sid,
-            twilio_auth_token=token,
-        )
-    except Exception as e:
-        logger.error(f"Failed to send order notification for order {order_id}: {e}", exc_info=True)
 
 
 async def _emit_order_sse_event(
