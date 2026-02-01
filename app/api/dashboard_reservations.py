@@ -94,70 +94,64 @@ def _queue_reservation_sms(
     recipient_phone: Optional[str],
     confirmation_number: Optional[str],
 ) -> None:
-    """Queue SMS for a reservation status change. No-op if restaurant_id or phone missing."""
+    """Queue SMS notification as a background task (non-blocking).
+
+    Restaurant lookup is performed inside the background task to avoid
+    blocking the API response on database queries.
+    """
     if not restaurant_id or not (recipient_phone and str(recipient_phone).strip()):
         return
-    try:
-        restaurant = restaurant_service.get_restaurant(restaurant_id)
-        twilio_number = (restaurant.get("twilio_phone_number") or "").strip()
-        if not twilio_number:
-            return
-        twilio_details = restaurant.get("twilio_details") or {}
-        if isinstance(twilio_details, str):
-            try:
-                twilio_details = json.loads(twilio_details) if twilio_details else {}
-            except Exception:
-                twilio_details = {}
-        sid = twilio_details.get("account_sid") or twilio_details.get("TWILIO_ACCOUNT_SID")
-        token = twilio_details.get("auth_token") or twilio_details.get("TWILIO_AUTH_TOKEN")
-        background_tasks.add_task(
-            _send_reservation_sms_notification,
-            notification_service,
-            restaurant_id,
-            reservation_id,
-            new_status,
-            str(recipient_phone).strip(),
-            restaurant.get("name") or "",
-            twilio_number,
-            confirmation_number,
-            sid,
-            token,
-        )
-    except Exception as err:
-        logger.warning("Could not queue reservation SMS for %s: %s", reservation_id, err)
 
+    async def _send_reservation_sms_notification() -> None:
+        try:
+            # Restaurant lookup moved inside background task for non-blocking API response
+            restaurant = restaurant_service.get_restaurant(restaurant_id)
+            if not restaurant:
+                logger.warning("Restaurant %s not found for reservation SMS", restaurant_id)
+                return
 
-async def _send_reservation_sms_notification(
-    notification_service: NotificationService,
-    restaurant_id: int,
-    reservation_id: int,
-    new_status: str,
-    recipient_phone: str,
-    restaurant_name: str,
-    restaurant_twilio_number: str,
-    confirmation_number: Optional[str],
-    twilio_account_sid: Optional[str] = None,
-    twilio_auth_token: Optional[str] = None,
-) -> None:
-    """
-    Background task to send SMS for reservation status.
-    Uses restaurant's Twilio credentials when provided so the 'From' number
-    matches that account; otherwise falls back to .env credentials.
-    """
-    try:
-        await notification_service.send_reservation_notification(
-            restaurant_id=restaurant_id,
-            reservation_id=reservation_id,
-            new_status=new_status,
-            recipient_phone=recipient_phone,
-            restaurant_name=restaurant_name,
-            restaurant_twilio_number=restaurant_twilio_number,
-            confirmation_number=confirmation_number,
-            twilio_account_sid=twilio_account_sid,
-            twilio_auth_token=twilio_auth_token,
-        )
-    except Exception as sms_error:
-        logger.warning("SMS notification for reservation %s failed: %s", reservation_id, sms_error)
+            twilio_number = (restaurant.get("twilio_phone_number") or "").strip()
+            if not twilio_number:
+                logger.debug("No Twilio number configured for restaurant %s", restaurant_id)
+                return
+
+            twilio_details = restaurant.get("twilio_details") or {}
+            if isinstance(twilio_details, str):
+                try:
+                    twilio_details = json.loads(twilio_details) if twilio_details else {}
+                except json.JSONDecodeError as e:
+                    logger.warning(
+                        "Invalid JSON in twilio_details for restaurant %s: %s",
+                        restaurant_id,
+                        e,
+                    )
+                    twilio_details = {}
+                except Exception as e:
+                    logger.warning(
+                        "Unexpected error parsing twilio_details for restaurant %s: %s",
+                        restaurant_id,
+                        e,
+                    )
+                    twilio_details = {}
+
+            sid = twilio_details.get("account_sid") or twilio_details.get("TWILIO_ACCOUNT_SID")
+            token = twilio_details.get("auth_token") or twilio_details.get("TWILIO_AUTH_TOKEN")
+
+            await notification_service.send_reservation_notification(
+                restaurant_id=restaurant_id,
+                reservation_id=reservation_id,
+                new_status=new_status,
+                recipient_phone=str(recipient_phone).strip(),
+                restaurant_name=restaurant.get("name") or "",
+                restaurant_twilio_number=twilio_number,
+                confirmation_number=confirmation_number,
+                twilio_account_sid=sid,
+                twilio_auth_token=token,
+            )
+        except Exception as sms_err:
+            logger.warning("SMS notification for reservation %s failed: %s", reservation_id, sms_err)
+
+    background_tasks.add_task(_send_reservation_sms_notification)
 
 
 # ---------- Pydantic models for request validation ----------
@@ -888,7 +882,9 @@ async def update_reservation(
                 },
             )
             # SMS on status change (when status was updated)
-            if request.status is not None and result.get("status") != reservation.get("status"):
+            previous_status = (reservation.get("status") or "").strip().lower()
+            current_status = (result.get("status") or "").strip().lower()
+            if current_status and previous_status != current_status:
                 _queue_reservation_sms(
                     background_tasks,
                     notification_service,

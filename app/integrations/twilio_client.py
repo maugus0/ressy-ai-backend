@@ -31,6 +31,18 @@ def _validate_phone_number(phone: str) -> tuple[bool, str]:
     return False, f"Invalid phone number format: {phone}"
 
 
+def _truncate_at_word_boundary(text: str, max_length: int) -> str:
+    """Truncate text at word boundary to avoid cutting words mid-way."""
+    if len(text) <= max_length:
+        return text
+    truncated = text[:max_length]
+    # Find last space to avoid cutting mid-word
+    last_space = truncated.rfind(" ")
+    if last_space > max_length * 0.8:  # Only use word boundary if not too far back
+        return truncated[:last_space]
+    return truncated
+
+
 @dataclass
 class MessageResult:
     """Result of an SMS send attempt."""
@@ -65,6 +77,7 @@ class TwilioClient:
             else:
                 self.client = None
         except ImportError:
+            logger.warning("Twilio SDK not installed - SMS functionality disabled")
             self.client = None
 
     def send_sms(
@@ -81,31 +94,53 @@ class TwilioClient:
         The 'From' number must belong to the Twilio account whose credentials are used.
         """
         client = self.client
+
+        # Use restaurant-specific credentials if provided
         if account_sid and auth_token:
             try:
                 from twilio.rest import Client
 
                 client = Client(account_sid, auth_token)
             except ImportError:
-                client = None
+                logger.error("Twilio SDK not installed - run: pip install twilio")
+                return MessageResult(
+                    success=False,
+                    error_message="Twilio SDK not installed. Please install the twilio package.",
+                )
             except Exception as e:
-                logger.warning("Could not create Twilio client from provided credentials: %s", e)
-                client = None
+                logger.warning(
+                    "Could not create Twilio client with provided credentials: %s",
+                    e,
+                )
+                return MessageResult(
+                    success=False,
+                    error_message=f"Invalid Twilio credentials: {str(e)}",
+                )
 
         if not client:
-            logger.warning("Twilio client not initialized, skipping SMS")
-            return MessageResult(success=False, error_message="Twilio not configured")
+            if not account_sid and not auth_token:
+                return MessageResult(
+                    success=False,
+                    error_message="Twilio not configured. Set TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN in environment.",
+                )
+            return MessageResult(
+                success=False,
+                error_message="Twilio client initialization failed. Check credentials.",
+            )
 
         is_valid, error_msg = _validate_phone_number(to)
         if not is_valid:
             logger.warning("Invalid phone number: %s", error_msg)
             return MessageResult(success=False, error_message=error_msg)
 
+        # Truncate at word boundary if message too long
         if len(body) > 1600:
             logger.warning("SMS message too long (%d chars), truncating to 1600", len(body))
-            body = body[:1597] + "..."
+            body = _truncate_at_word_boundary(body, 1597) + "..."
 
         try:
+            from twilio.base.exceptions import TwilioRestException
+
             message = client.messages.create(
                 body=body,
                 from_=from_number,
@@ -118,7 +153,18 @@ class TwilioClient:
                 from_number,
             )
             return MessageResult(success=True, message_sid=message.sid)
+        except TwilioRestException as e:
+            logger.error(
+                "Twilio API error: code=%s msg=%s to=%s",
+                e.code,
+                e.msg,
+                mask_phone_number(to),
+            )
+            return MessageResult(
+                success=False,
+                error_message=f"Twilio error ({e.code}): {e.msg}",
+            )
         except Exception as e:
             err_msg = str(e)
-            logger.exception("SMS send failed to=%s: %s", mask_phone_number(to), err_msg)
+            logger.exception("Unexpected error sending SMS to=%s: %s", mask_phone_number(to), err_msg)
             return MessageResult(success=False, error_message=err_msg)

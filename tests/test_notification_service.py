@@ -427,3 +427,128 @@ class TestTwilioClient:
 
         assert _validate_phone_number("")[0] is False
         assert _validate_phone_number("123")[0] is False
+
+
+# ============================================================================
+# Word Boundary Truncation Tests
+# ============================================================================
+
+
+class TestWordBoundaryTruncation:
+    """Tests for word boundary truncation."""
+
+    def test_truncate_at_word_boundary(self):
+        """Verify truncation happens at word boundary."""
+        from app.integrations.twilio_client import _truncate_at_word_boundary
+
+        text = "This is a test message with multiple words"
+        truncated = _truncate_at_word_boundary(text, 25)
+
+        assert len(truncated) <= 25
+        assert not truncated.endswith(" ")  # Should not end with space
+
+    def test_truncate_short_text_unchanged(self):
+        """Verify short text is not modified."""
+        from app.integrations.twilio_client import _truncate_at_word_boundary
+
+        text = "Short"
+        truncated = _truncate_at_word_boundary(text, 100)
+        assert truncated == text
+
+    def test_truncate_exact_length(self):
+        """Verify text at exact max length is unchanged."""
+        from app.integrations.twilio_client import _truncate_at_word_boundary
+
+        text = "Exactly 10"
+        truncated = _truncate_at_word_boundary(text, 10)
+        assert truncated == text
+
+
+# ============================================================================
+# Thread-Safe Singleton Tests
+# ============================================================================
+
+
+class TestThreadSafeSingletons:
+    """Tests for thread-safe singleton initialization."""
+
+    def test_get_twilio_client_returns_same_instance(self):
+        """Verify singleton returns same instance."""
+        from app.services.notification_service import _get_twilio_client
+
+        client1 = _get_twilio_client()
+        client2 = _get_twilio_client()
+        assert client1 is client2
+
+    def test_thread_lock_exists(self):
+        """Verify thread lock is used for singleton initialization."""
+        import threading
+
+        from app.services import notification_service
+
+        assert hasattr(notification_service, "_init_lock")
+        assert isinstance(notification_service._init_lock, type(threading.Lock()))
+
+
+# ============================================================================
+# Status Validation Tests
+# ============================================================================
+
+
+class TestStatusValidation:
+    """Tests for status validation in message builders."""
+
+    def setup_method(self):
+        self.service = NotificationService(
+            notification_repo=Mock(),
+            twilio_client=Mock(),
+        )
+
+    def test_unknown_order_status_uses_fallback(self):
+        """Verify unknown status uses fallback message."""
+        message = self.service._build_order_status_message(
+            order_id=123,
+            new_status="unknown_weird_status",
+            restaurant_name="Test Restaurant",
+        )
+
+        assert message  # Should not be empty
+        assert "unknown_weird_status" in message  # Fallback includes status
+        assert "Ressy AI" in message
+
+    def test_unknown_reservation_status_uses_fallback(self):
+        """Verify unknown status uses fallback message."""
+        message = self.service._build_reservation_status_message(
+            reservation_id=456,
+            new_status="weird_status",
+            restaurant_name="Test Restaurant",
+        )
+
+        assert message
+        assert "weird_status" in message
+        assert "Ressy AI" in message
+
+
+# ============================================================================
+# Additional Error Handling Tests
+# ============================================================================
+
+
+class TestTwilioClientErrorMessages:
+    """Tests for specific Twilio error messages."""
+
+    def test_send_sms_returns_specific_error_for_missing_credentials(self):
+        """Verify error message is specific when credentials are missing."""
+        from app.integrations.twilio_client import TwilioClient
+
+        client = TwilioClient()
+        client.client = None  # Simulate missing credentials
+
+        result = client.send_sms(
+            to="+15551234567",
+            body="Test",
+            from_number="+15559876543",
+        )
+
+        assert result.success is False
+        assert "not configured" in result.error_message.lower() or "TWILIO" in result.error_message

@@ -37,41 +37,34 @@ class MySQLNotificationLogRepository(MySQLBaseRepository):
         twilio_message_sid: Optional[str] = None,
         error_message: Optional[str] = None,
     ) -> int:
-        """Update status (and optionally twilio_message_sid, error_message) for a log row."""
-        if twilio_message_sid is not None and error_message is not None:
-            query = """
-                UPDATE Notification_Logs
-                SET status = %s, twilio_message_sid = %s, error_message = %s,
-                    sent_at = CASE WHEN %s = 'sent' THEN NOW() ELSE sent_at END,
-                    updated_at = NOW()
-                WHERE id = %s
-            """
-            params = (status, twilio_message_sid, error_message, status, log_id)
-        elif twilio_message_sid is not None:
-            query = """
-                UPDATE Notification_Logs
-                SET status = %s, twilio_message_sid = %s,
-                    sent_at = CASE WHEN %s = 'sent' THEN NOW() ELSE sent_at END,
-                    updated_at = NOW()
-                WHERE id = %s
-            """
-            params = (status, twilio_message_sid, status, log_id)
-        elif error_message is not None:
-            query = """
-                UPDATE Notification_Logs
-                SET status = %s, error_message = %s, updated_at = NOW()
-                WHERE id = %s
-            """
-            params = (status, error_message, log_id)
-        else:
-            query = """
-                UPDATE Notification_Logs
-                SET status = %s,
-                    sent_at = CASE WHEN %s = 'sent' THEN NOW() ELSE sent_at END,
-                    updated_at = NOW()
-                WHERE id = %s
-            """
-            params = (status, status, log_id)
+        """Update notification log status.
+
+        Common cases:
+        - Success: status='sent', twilio_message_sid provided
+        - Failure: status='failed', error_message provided
+
+        Uses COALESCE to only update fields when values are provided,
+        preserving existing values when parameters are None.
+        """
+        query = """
+            UPDATE Notification_Logs
+            SET
+                status = %s,
+                twilio_message_sid = COALESCE(%s, twilio_message_sid),
+                error_message = COALESCE(%s, error_message),
+                sent_at = CASE WHEN %s = 'sent' THEN NOW() ELSE sent_at END,
+                delivered_at = CASE WHEN %s = 'delivered' THEN NOW() ELSE delivered_at END,
+                updated_at = NOW()
+            WHERE id = %s
+        """
+        params = (
+            status,
+            twilio_message_sid,
+            error_message,
+            status,
+            status,
+            log_id,
+        )
         return self._execute_update(query, params)
 
     def increment_retry_count(self, log_id: int) -> int:

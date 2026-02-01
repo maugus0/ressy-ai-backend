@@ -5,6 +5,8 @@ All SMS messages use warm, personalized "Ressy" brand voice with genuine care
 for the customer. Messages end with "Yours sincerely, Ressy AI" signature.
 """
 
+import asyncio
+import threading
 from typing import Optional
 
 from app.integrations.twilio_client import MessageResult, TwilioClient
@@ -17,21 +19,33 @@ logger = get_logger(__name__)
 # Signature appended to all SMS messages
 SMS_SIGNATURE = "\n\nYours sincerely,\nRessy AI"
 
+# Valid statuses for orders and reservations (for validation warnings)
+VALID_ORDER_STATUSES = {"pending", "confirmed", "preparing", "ready", "completed", "cancelled"}
+VALID_RESERVATION_STATUSES = {"pending", "confirmed", "seated", "completed", "cancelled", "no_show"}
+
+# Thread-safe singleton pattern
 _notification_repo: Optional[MySQLNotificationLogRepository] = None
 _twilio_client: Optional[TwilioClient] = None
+_init_lock = threading.Lock()
 
 
 def _get_notification_repo() -> MySQLNotificationLogRepository:
+    """Get or create singleton notification repository (thread-safe)."""
     global _notification_repo
     if _notification_repo is None:
-        _notification_repo = MySQLNotificationLogRepository()
+        with _init_lock:
+            if _notification_repo is None:
+                _notification_repo = MySQLNotificationLogRepository()
     return _notification_repo
 
 
 def _get_twilio_client() -> TwilioClient:
+    """Get or create singleton Twilio client (thread-safe)."""
     global _twilio_client
     if _twilio_client is None:
-        _twilio_client = TwilioClient()
+        with _init_lock:
+            if _twilio_client is None:
+                _twilio_client = TwilioClient()
     return _twilio_client
 
 
@@ -61,6 +75,16 @@ class NotificationService:
 
         Uses Ressy brand voice: friendly, caring, and conversational.
         """
+        normalized_status = new_status.lower().strip()
+
+        # Log warning for unknown statuses (still sends fallback message)
+        if normalized_status not in VALID_ORDER_STATUSES:
+            logger.warning(
+                "Unknown order status '%s' for order %s - using fallback message",
+                new_status,
+                order_id,
+            )
+
         status_messages = {
             "pending": (
                 f"Hey there! Your order #{order_id} at {restaurant_name} is in - "
@@ -89,7 +113,7 @@ class NotificationService:
             ),
         }
         message = status_messages.get(
-            new_status.lower(),
+            normalized_status,
             f"Hi! Just a quick update: your order #{order_id} at {restaurant_name} "
             f"status is now: {new_status}. Questions? Give the restaurant a call!",
         )
@@ -107,6 +131,15 @@ class NotificationService:
         Uses Ressy brand voice: friendly, caring, and conversational.
         """
         ref = confirmation_number if confirmation_number else f"#{reservation_id}"
+        normalized_status = new_status.lower().strip()
+
+        # Log warning for unknown statuses (still sends fallback message)
+        if normalized_status not in VALID_RESERVATION_STATUSES:
+            logger.warning(
+                "Unknown reservation status '%s' for reservation %s - using fallback message",
+                new_status,
+                reservation_id,
+            )
 
         status_messages = {
             "pending": (
@@ -142,7 +175,7 @@ class NotificationService:
             ),
         }
         message = status_messages.get(
-            new_status.lower(),
+            normalized_status,
             f"Hi! Quick update on your reservation ({ref}) at {restaurant_name}: "
             f"status is now {new_status}. Questions? Feel free to reach out to the restaurant!",
         )
@@ -160,6 +193,7 @@ class NotificationService:
         twilio_auth_token: Optional[str] = None,
     ) -> Optional[int]:
         """Log and send SMS for order status change. Returns log id or None if skipped.
+
         Uses restaurant's twilio_account_sid/twilio_auth_token when provided so the
         'From' number matches that account; otherwise uses default Twilio client (.env).
         """
@@ -167,25 +201,54 @@ class NotificationService:
             return None
         if not (restaurant_twilio_number and restaurant_twilio_number.strip()):
             return None
+
         recipient_phone = recipient_phone.strip()
         restaurant_twilio_number = restaurant_twilio_number.strip()
         message_content = self._build_order_status_message(order_id, new_status, restaurant_name)
-        log_id = self.notification_repo.create_log(
-            restaurant_id=restaurant_id,
-            entity_type="order",
-            entity_id=order_id,
-            recipient_phone=recipient_phone,
-            message_content=message_content,
-        )
-        await self._send_notification(
-            log_id=log_id,
-            recipient_phone=recipient_phone,
-            message_content=message_content,
-            from_number=restaurant_twilio_number,
-            account_sid=twilio_account_sid,
-            auth_token=twilio_auth_token,
-        )
-        return log_id
+
+        log_id: Optional[int] = None
+        try:
+            # Wrap sync DB call to avoid blocking event loop
+            log_id = await asyncio.to_thread(
+                self.notification_repo.create_log,
+                restaurant_id=restaurant_id,
+                entity_type="order",
+                entity_id=order_id,
+                recipient_phone=recipient_phone,
+                message_content=message_content,
+            )
+            await self._send_notification(
+                log_id=log_id,
+                recipient_phone=recipient_phone,
+                message_content=message_content,
+                from_number=restaurant_twilio_number,
+                account_sid=twilio_account_sid,
+                auth_token=twilio_auth_token,
+            )
+            return log_id
+        except Exception as exc:
+            logger.exception(
+                "Failed to send order notification for restaurant_id=%s, order_id=%s, recipient=%s",
+                restaurant_id,
+                order_id,
+                mask_phone_number(recipient_phone),
+            )
+            # Ensure log doesn't remain stuck in 'pending' status
+            if log_id is not None:
+                try:
+                    await asyncio.to_thread(
+                        self.notification_repo.update_status,
+                        log_id=log_id,
+                        status="failed",
+                        error_message=str(exc),
+                    )
+                except Exception as db_err:
+                    logger.error(
+                        "Failed to update notification log status to 'failed' for log_id=%s: %s",
+                        log_id,
+                        db_err,
+                    )
+            return log_id
 
     async def send_reservation_notification(
         self,
@@ -200,6 +263,7 @@ class NotificationService:
         twilio_auth_token: Optional[str] = None,
     ) -> Optional[int]:
         """Log and send SMS for reservation status change. Returns log id or None if skipped.
+
         Uses restaurant's twilio_account_sid/twilio_auth_token when provided so the
         'From' number matches that account; otherwise uses default Twilio client (.env).
         """
@@ -207,27 +271,56 @@ class NotificationService:
             return None
         if not (restaurant_twilio_number and restaurant_twilio_number.strip()):
             return None
+
         recipient_phone = recipient_phone.strip()
         restaurant_twilio_number = restaurant_twilio_number.strip()
         message_content = self._build_reservation_status_message(
             reservation_id, new_status, restaurant_name, confirmation_number
         )
-        log_id = self.notification_repo.create_log(
-            restaurant_id=restaurant_id,
-            entity_type="reservation",
-            entity_id=reservation_id,
-            recipient_phone=recipient_phone,
-            message_content=message_content,
-        )
-        await self._send_notification(
-            log_id=log_id,
-            recipient_phone=recipient_phone,
-            message_content=message_content,
-            from_number=restaurant_twilio_number,
-            account_sid=twilio_account_sid,
-            auth_token=twilio_auth_token,
-        )
-        return log_id
+
+        log_id: Optional[int] = None
+        try:
+            # Wrap sync DB call to avoid blocking event loop
+            log_id = await asyncio.to_thread(
+                self.notification_repo.create_log,
+                restaurant_id=restaurant_id,
+                entity_type="reservation",
+                entity_id=reservation_id,
+                recipient_phone=recipient_phone,
+                message_content=message_content,
+            )
+            await self._send_notification(
+                log_id=log_id,
+                recipient_phone=recipient_phone,
+                message_content=message_content,
+                from_number=restaurant_twilio_number,
+                account_sid=twilio_account_sid,
+                auth_token=twilio_auth_token,
+            )
+            return log_id
+        except Exception as exc:
+            logger.exception(
+                "Failed to send reservation notification for restaurant_id=%s, reservation_id=%s, recipient=%s",
+                restaurant_id,
+                reservation_id,
+                mask_phone_number(recipient_phone),
+            )
+            # Ensure log doesn't remain stuck in 'pending' status
+            if log_id is not None:
+                try:
+                    await asyncio.to_thread(
+                        self.notification_repo.update_status,
+                        log_id=log_id,
+                        status="failed",
+                        error_message=str(exc),
+                    )
+                except Exception as db_err:
+                    logger.error(
+                        "Failed to update notification log status to 'failed' for log_id=%s: %s",
+                        log_id,
+                        db_err,
+                    )
+            return log_id
 
     async def _send_notification(
         self,
@@ -239,7 +332,9 @@ class NotificationService:
         auth_token: Optional[str] = None,
     ) -> None:
         """Send SMS and update log status (sent/failed).
+
         Uses account_sid/auth_token when both provided (restaurant's Twilio account).
+        Database operations are wrapped with asyncio.to_thread() to avoid blocking.
         """
         logger.info(
             "Sending SMS notification log_id=%d to=%s from=%s message_length=%d",
@@ -248,6 +343,7 @@ class NotificationService:
             from_number,
             len(message_content),
         )
+
         result: MessageResult = self.twilio_client.send_sms(
             to=recipient_phone,
             body=message_content,
@@ -255,16 +351,23 @@ class NotificationService:
             account_sid=account_sid,
             auth_token=auth_token,
         )
+
         if result.success:
-            self.notification_repo.update_status(
+            # Wrap sync DB call to avoid blocking event loop
+            await asyncio.to_thread(
+                self.notification_repo.update_status,
                 log_id=log_id,
                 status="sent",
                 twilio_message_sid=result.message_sid,
             )
         else:
-            self.notification_repo.update_status(
+            await asyncio.to_thread(
+                self.notification_repo.update_status,
                 log_id=log_id,
                 status="failed",
                 error_message=result.error_message,
             )
-            self.notification_repo.increment_retry_count(log_id)
+            await asyncio.to_thread(
+                self.notification_repo.increment_retry_count,
+                log_id,
+            )

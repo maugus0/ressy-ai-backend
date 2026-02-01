@@ -93,41 +93,63 @@ def _queue_order_sms(
     new_status: str,
     customer_phone: Optional[str],
 ) -> None:
-    """Queue SMS for an order status change. No-op if restaurant_id or phone missing."""
+    """Queue SMS notification as a background task (non-blocking).
+
+    Restaurant lookup is performed inside the background task to avoid
+    blocking the API response on database queries.
+    """
     if not restaurant_id or not (customer_phone and str(customer_phone).strip()):
         return
-    try:
-        restaurant = restaurant_service.get_restaurant(restaurant_id)
-        twilio_number = (restaurant.get("twilio_phone_number") or "").strip()
-        if not twilio_number:
-            return
-        twilio_details = restaurant.get("twilio_details") or {}
-        if isinstance(twilio_details, str):
-            try:
-                twilio_details = json.loads(twilio_details) if twilio_details else {}
-            except Exception:
-                twilio_details = {}
-        sid = twilio_details.get("account_sid") or twilio_details.get("TWILIO_ACCOUNT_SID")
-        token = twilio_details.get("auth_token") or twilio_details.get("TWILIO_AUTH_TOKEN")
 
-        async def _send_order_sms_notification() -> None:
-            try:
-                await notification_service.send_order_notification(
-                    restaurant_id=restaurant_id,
-                    order_id=order_id,
-                    new_status=new_status,
-                    recipient_phone=str(customer_phone).strip(),
-                    restaurant_name=restaurant.get("name") or "",
-                    restaurant_twilio_number=twilio_number,
-                    twilio_account_sid=sid,
-                    twilio_auth_token=token,
-                )
-            except Exception as sms_err:
-                logger.warning("SMS notification for order %s failed: %s", order_id, sms_err)
+    async def _send_order_sms_notification() -> None:
+        try:
+            # Restaurant lookup moved inside background task for non-blocking API response
+            restaurant = restaurant_service.get_restaurant(restaurant_id)
+            if not restaurant:
+                logger.warning("Restaurant %s not found for order SMS", restaurant_id)
+                return
 
-        background_tasks.add_task(_send_order_sms_notification)
-    except Exception as err:
-        logger.warning("Could not queue order SMS for %s: %s", order_id, err)
+            twilio_number = (restaurant.get("twilio_phone_number") or "").strip()
+            if not twilio_number:
+                logger.debug("No Twilio number configured for restaurant %s", restaurant_id)
+                return
+
+            twilio_details = restaurant.get("twilio_details") or {}
+            if isinstance(twilio_details, str):
+                try:
+                    twilio_details = json.loads(twilio_details) if twilio_details else {}
+                except json.JSONDecodeError as e:
+                    logger.warning(
+                        "Invalid JSON in twilio_details for restaurant %s: %s",
+                        restaurant_id,
+                        e,
+                    )
+                    twilio_details = {}
+                except Exception as e:
+                    logger.warning(
+                        "Unexpected error parsing twilio_details for restaurant %s: %s",
+                        restaurant_id,
+                        e,
+                    )
+                    twilio_details = {}
+
+            sid = twilio_details.get("account_sid") or twilio_details.get("TWILIO_ACCOUNT_SID")
+            token = twilio_details.get("auth_token") or twilio_details.get("TWILIO_AUTH_TOKEN")
+
+            await notification_service.send_order_notification(
+                restaurant_id=restaurant_id,
+                order_id=order_id,
+                new_status=new_status,
+                recipient_phone=str(customer_phone).strip(),
+                restaurant_name=restaurant.get("name") or "",
+                restaurant_twilio_number=twilio_number,
+                twilio_account_sid=sid,
+                twilio_auth_token=token,
+            )
+        except Exception as sms_err:
+            logger.warning("SMS notification for order %s failed: %s", order_id, sms_err)
+
+    background_tasks.add_task(_send_order_sms_notification)
 
 
 # ---------- Pydantic models for request validation ----------
@@ -1075,7 +1097,9 @@ async def update_order(
                 },
             )
             # SMS on status change (when status was updated)
-            if request.status is not None and result.get("status") != order.get("status"):
+            previous_status = (order.get("status") or "").strip().lower()
+            current_status = (result.get("status") or "").strip().lower()
+            if current_status and previous_status != current_status:
                 _queue_order_sms(
                     background_tasks,
                     notification_service,
