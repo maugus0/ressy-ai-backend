@@ -81,6 +81,23 @@ class FunctionCallRouter:
 
         payload = arg_model.model_dump()
         merged_payload = {**payload, **self._default_arguments}
+
+        # Enforce Twilio-provided phone number: override any AI-provided customer_contact
+        # with the actual caller number from Twilio. This prevents the AI from using
+        # phone numbers that customers might mention during the call.
+        twilio_caller_number = self._default_arguments.get("_twilio_caller_number")
+        if twilio_caller_number and "customer_contact" in registered.arg_model.model_fields:
+            ai_provided = payload.get("customer_contact")
+            if ai_provided and ai_provided != twilio_caller_number:
+                self._logger.warning(
+                    "Overriding AI-provided customer_contact='%s' with Twilio caller number='%s' "
+                    "for function=%s id=%s",
+                    ai_provided,
+                    twilio_caller_number,
+                    request.name,
+                    request.id,
+                )
+            merged_payload["customer_contact"] = twilio_caller_number
         attempts = 1 + max(self._settings.max_retries, 0)
 
         for attempt in range(1, attempts + 1):

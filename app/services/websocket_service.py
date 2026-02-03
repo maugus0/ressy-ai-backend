@@ -27,6 +27,7 @@ from app.services.faq_service import FAQService
 from app.services.menu_service import MenuService
 from app.services.restaurant_service import RestaurantService
 from app.utils import prompt_loader
+from app.utils.helpers import normalize_phone_from_words
 from app.utils.logging_config import get_logger
 from app.utils.restaurant_hours import (
     DAYS_OF_WEEK,
@@ -1531,7 +1532,13 @@ class WebSocketService:
                             "call_sid": call_sid,
                         }
                         if caller_number:
-                            default_args["customer_contact"] = caller_number
+                            # Normalize Twilio phone number (should already be in E.164, but normalize for consistency)
+                            normalized_caller_number = normalize_phone_from_words(caller_number)
+                            # Store Twilio-provided phone number in protected key for enforcement
+                            # The router will override any AI-provided customer_contact with this value
+                            default_args["_twilio_caller_number"] = normalized_caller_number
+                            # Also set as default for backward compatibility, but router will enforce override
+                            default_args["customer_contact"] = normalized_caller_number
                         router.set_default_arguments(default_args)
 
                         timeout_seconds = float(getattr(settings, "AGENT_CALL_TIMEOUT_SECONDS", 900))
