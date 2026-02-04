@@ -827,12 +827,14 @@ async def check_reservation_availability(**kwargs) -> Dict[str, Any]:
             is_on_boundary = is_datetime_on_slot_boundary(requested_start, slot_step_minutes)
             requested_within_hours = is_datetime_within_operating_hours(restaurant, requested_start)
             requested_in_range = requested_start <= max_booking_date
+            requested_in_future = requested_start >= now_local
             used_capacity = capacity_map.get(requested_slot, 0) if is_on_boundary else 0
             available_capacity = seating_capacity - used_capacity
             available = (
                 is_on_boundary
                 and requested_within_hours
                 and requested_in_range
+                and requested_in_future
                 and available_capacity >= args.party_size
             )
             nearest_forward_slot = None
@@ -865,6 +867,8 @@ async def check_reservation_availability(**kwargs) -> Dict[str, Any]:
                         f"Reservations can only be made up to {advance_days} days in advance. "
                         "Please choose an earlier date."
                     )
+                elif not requested_in_future:
+                    message = "The requested time has already passed. Please choose a future time."
                 elif not requested_within_hours:
                     tz_label = resolve_restaurant_timezone(restaurant)[1]
                     message = (

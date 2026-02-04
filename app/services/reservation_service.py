@@ -61,6 +61,14 @@ class ReservationService:
             hours_display = format_operating_window(restaurant, day_name)
             raise ValueError(f"Reservations can only be made during opening hours ({hours_display})")
 
+    def _validate_future_time(self, slot_dt: datetime, restaurant: Dict[str, Any]) -> None:
+        """Validate that reservation is not in the past using restaurant local time."""
+        restaurant_tz, _ = resolve_restaurant_timezone(restaurant)
+        slot_local = slot_dt.replace(tzinfo=restaurant_tz)
+        now_local = datetime.now(timezone.utc).astimezone(restaurant_tz)
+        if slot_local < now_local:
+            raise ValueError("Reservations cannot be made for times in the past.")
+
     def _check_capacity(self, restaurant_id: int, slot_dt: datetime, party_size: int, seating_capacity: int) -> None:
         """Check if there's enough capacity for the party size."""
         used_capacity = self.reservation_repo.get_slot_confirmed_capacity(
@@ -350,6 +358,7 @@ class ReservationService:
         except ValueError:
             raise ValueError(f"Invalid date_time format: {date_time}")
 
+        self._validate_future_time(slot_dt_local, restaurant)
         self._validate_opening_hours(slot_dt_local, restaurant)
 
         slot_dt_utc = slot_dt_local.replace(tzinfo=restaurant_tz).astimezone(timezone.utc)
@@ -673,6 +682,7 @@ class ReservationService:
         except ValueError:
             raise ValueError(f"Invalid date_time format: {date_time}")
 
+        self._validate_future_time(slot_dt_local, restaurant)
         self._validate_opening_hours(slot_dt_local, restaurant)
 
         slot_dt_utc = slot_dt_local.replace(tzinfo=restaurant_tz).astimezone(timezone.utc)
@@ -813,17 +823,24 @@ class ReservationService:
             if not restaurant:
                 raise ValueError(f"Restaurant with ID {reservation.get('restaurant_id')} not found")
             slot_dt = new_date_time if new_date_time is not None else reservation.get("date_time")
+            original_slot_dt = reservation.get("date_time")
             if isinstance(slot_dt, datetime):
                 slot_dt = slot_dt.replace(second=0, microsecond=0)
             else:
                 slot_dt = parse_datetime(str(slot_dt)).replace(tzinfo=None, second=0, microsecond=0)
+            if isinstance(original_slot_dt, datetime):
+                original_slot_dt = original_slot_dt.replace(second=0, microsecond=0)
+            else:
+                original_slot_dt = parse_datetime(str(original_slot_dt)).replace(tzinfo=None, second=0, microsecond=0)
+            if new_date_time is not None:
+                self._validate_future_time(slot_dt, restaurant)
             seating_capacity = restaurant.get("reservation_seating_capacity", 50)
             used_capacity = self.reservation_repo.get_slot_confirmed_capacity(
                 restaurant_id=int(reservation.get("restaurant_id")),
                 date_time=slot_dt,
                 reservation_type=self.RESERVATION_TYPE,
             )
-            if reservation.get("status") == "confirmed":
+            if reservation.get("status") == "confirmed" and slot_dt == original_slot_dt:
                 used_capacity -= reservation.get("party_size") or 0
             if (party_size_value or 0) > seating_capacity - used_capacity:
                 raise ValueError("Not enough capacity to confirm this reservation at the requested time.")
