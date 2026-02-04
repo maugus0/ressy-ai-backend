@@ -8,7 +8,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.agent_fc.functions.common_restaurant import load_restaurant
 from app.agent_fc.functions.function_context import split_call_context
@@ -22,7 +22,6 @@ from app.repositories.mysql_user_restaurant_metadata_repo import (
 from app.services.activity_history_service import ActivityHistoryService
 from app.services.notification_service import NotificationService
 from app.services.sse_service import OrderEventSubtype, SSEService
-from app.utils.helpers import normalize_phone_from_words
 from app.utils.restaurant_hours import format_operating_window, is_restaurant_open_now
 from app.utils.timezone import coerce_datetime
 
@@ -51,24 +50,12 @@ class CreateOrderArgs(BaseModel):
     notes: Optional[str] = None
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
-    @field_validator("customer_contact")
-    @classmethod
-    def normalize_customer_contact(cls, v: str) -> str:
-        """Normalize phone number from words to digits."""
-        return normalize_phone_from_words(v)
-
 
 class LookupOrderArgs(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     customer_contact: str
     restaurant_id: int
-
-    @field_validator("customer_contact")
-    @classmethod
-    def normalize_customer_contact(cls, v: str) -> str:
-        """Normalize phone number from words to digits."""
-        return normalize_phone_from_words(v)
 
 
 class LookupOrderByIdArgs(BaseModel):
@@ -77,12 +64,6 @@ class LookupOrderByIdArgs(BaseModel):
     order_id: int
     customer_contact: str
     restaurant_id: int
-
-    @field_validator("customer_contact")
-    @classmethod
-    def normalize_customer_contact(cls, v: str) -> str:
-        """Normalize phone number from words to digits."""
-        return normalize_phone_from_words(v)
 
 
 class CheckItemsAvailabilityArgs(BaseModel):
@@ -104,12 +85,6 @@ class UpdateOrderDetailsArgs(BaseModel):
     total_amount: Optional[float] = None
     notes: Optional[str] = None
     status: Optional[str] = None  # Allow status changes (e.g., "cancelled") within update window
-
-    @field_validator("customer_contact")
-    @classmethod
-    def normalize_customer_contact(cls, v: str) -> str:
-        """Normalize phone number from words to digits."""
-        return normalize_phone_from_words(v)
 
 
 # ---------- Repository/Service Factory Functions ----------
@@ -498,7 +473,10 @@ async def lookup_order(**kwargs) -> Dict[str, Any]:
 
     order = await _run_service_call(_lookup)
     if not order:
-        return {"status": "NOT_FOUND", "message": "No order found for this contact at this restaurant."}
+        return {
+            "status": "NOT_FOUND",
+            "message": "Sorry, no order found for your phone number at this restaurant.",
+        }
     return {"status": "FOUND", "order": order}
 
 
@@ -539,7 +517,7 @@ async def lookup_order_by_id(**kwargs) -> Dict[str, Any]:
     if not order:
         return {
             "status": "NOT_FOUND",
-            "message": "No order found with that ID for this contact at this restaurant.",
+            "message": "Sorry, no order found with that ID for your phone number at this restaurant.",
         }
     return {"status": "FOUND", "order": order}
 
@@ -760,7 +738,10 @@ async def update_order_details(**kwargs) -> Dict[str, Any]:
         }
 
     if not result:
-        return {"status": "NOT_FOUND", "message": "No order found to update for this restaurant."}
+        return {
+            "status": "NOT_FOUND",
+            "message": "Sorry, no order found for your phone number at this restaurant.",
+        }
 
     updated_order = result
 
