@@ -122,7 +122,8 @@ echo "6️⃣  Running type checking (mypy)..."
 if mypy app/ --ignore-missing-imports --no-strict-optional > /dev/null 2>&1; then
     success "Type checking passed"
 else
-    warning "Type checking completed (warnings are acceptable)"
+     warning "Type checking completed (warnings are acceptable)"
+    fi
 fi
 
 echo ""
