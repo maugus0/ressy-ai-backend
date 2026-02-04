@@ -58,6 +58,14 @@ class LookupOrderArgs(BaseModel):
     restaurant_id: int
 
 
+class LookupOrderByIdArgs(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    order_id: int
+    customer_contact: str
+    restaurant_id: int
+
+
 class CheckItemsAvailabilityArgs(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -465,7 +473,52 @@ async def lookup_order(**kwargs) -> Dict[str, Any]:
 
     order = await _run_service_call(_lookup)
     if not order:
-        return {"status": "NOT_FOUND", "message": "No order found for this contact at this restaurant."}
+        return {
+            "status": "NOT_FOUND",
+            "message": "Sorry, no order found for your phone number at this restaurant.",
+        }
+    return {"status": "FOUND", "order": order}
+
+
+async def lookup_order_by_id(**kwargs) -> Dict[str, Any]:
+    """
+    Look up a specific order by order ID, verifying it belongs to the caller and restaurant.
+
+    This function requires all three parameters (order_id, restaurant_id, customer_contact)
+    to match, ensuring no private data is leaked. The order will only be returned if:
+    - The order_id exists
+    - The order belongs to the specified restaurant_id
+    - The order belongs to the user associated with customer_contact (phone number)
+    """
+    context, model_kwargs = split_call_context(kwargs, LookupOrderByIdArgs)
+    args = LookupOrderByIdArgs.model_validate(model_kwargs)
+    call_sid = context.get("call_sid")
+    logger.info(
+        "lookup_order_by_id invoked order_id=%s customer_contact=%s restaurant_id=%s call_sid=%s",
+        args.order_id,
+        args.customer_contact,
+        args.restaurant_id,
+        call_sid,
+    )
+
+    def _lookup():
+        user_repo = _get_user_repo()
+        order_repo = _get_order_repo()
+
+        # First, get user_id from phone number
+        user_id = user_repo.get_user_id_by_phone_or_email(args.customer_contact, None)
+        if not user_id:
+            return None
+
+        # Then verify order belongs to this user, restaurant, and matches the order_id
+        return order_repo.get_order_by_id_with_verification(args.order_id, args.restaurant_id, user_id)
+
+    order = await _run_service_call(_lookup)
+    if not order:
+        return {
+            "status": "NOT_FOUND",
+            "message": "Sorry, no order found with that ID for your phone number at this restaurant.",
+        }
     return {"status": "FOUND", "order": order}
 
 
@@ -685,7 +738,10 @@ async def update_order_details(**kwargs) -> Dict[str, Any]:
         }
 
     if not result:
-        return {"status": "NOT_FOUND", "message": "No order found to update for this restaurant."}
+        return {
+            "status": "NOT_FOUND",
+            "message": "Sorry, no order found for your phone number at this restaurant.",
+        }
 
     updated_order = result
 

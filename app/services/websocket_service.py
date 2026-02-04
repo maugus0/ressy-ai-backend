@@ -620,6 +620,11 @@ class WebSocketService:
                 arg_model=orders.LookupOrderArgs,
             )
             registry.register(
+                name="lookup_order_by_id",
+                handler=orders.lookup_order_by_id,
+                arg_model=orders.LookupOrderByIdArgs,
+            )
+            registry.register(
                 name="update_order_details",
                 handler=orders.update_order_details,
                 arg_model=orders.UpdateOrderDetailsArgs,

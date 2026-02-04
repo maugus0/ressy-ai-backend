@@ -116,6 +116,11 @@ class Settings:
         "yes",
     )
 
+    # Twilio SMS Configuration
+    TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID", "")
+    TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN", "")
+    NOTIFICATION_MAX_RETRIES = int(os.getenv("NOTIFICATION_MAX_RETRIES", "3"))
+
     # Database Tables
     RESTAURANTS_TABLE: str = "Restaurants"
     MENUS_TABLE: str = "Menus"

@@ -81,6 +81,40 @@ class MySQLOrderRepository(MySQLBaseRepository):
         results = self._execute_query(query, (order_id,))
         return results[0] if results else {}
 
+    def get_order_by_id_with_verification(self, order_id: int, restaurant_id: int, user_id: int) -> Dict:
+        """
+        Get order by ID with verification that it belongs to the specified restaurant and user.
+        This ensures security by requiring all three parameters to match.
+
+        Args:
+            order_id: Order ID
+            restaurant_id: Restaurant ID (must match)
+            user_id: User ID (must match)
+
+        Returns:
+            Order dict if found and matches all criteria, empty dict otherwise
+        """
+        query = """
+            SELECT
+                id,
+                user_id,
+                restaurant_id,
+                status,
+                total_amount,
+                order_details,
+                customization,
+                created_at,
+                updated_at
+            FROM Orders
+            WHERE id = %s
+                AND restaurant_id = %s
+                AND user_id = %s
+                AND deleted_at IS NULL
+            LIMIT 1
+        """
+        results = self._execute_query(query, (order_id, restaurant_id, user_id))
+        return results[0] if results else {}
+
     def get_order_with_user(self, order_id: int) -> Dict:
         """
         Get order with user details joined.

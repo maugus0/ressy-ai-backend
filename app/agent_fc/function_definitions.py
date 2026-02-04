@@ -30,6 +30,7 @@ def get_function_definitions(feature_flags: Optional[Dict[str, Any]] = None) -> 
 
     create_order_schema = orders.CreateOrderArgs.model_json_schema()
     lookup_order_schema = orders.LookupOrderArgs.model_json_schema()
+    lookup_order_by_id_schema = orders.LookupOrderByIdArgs.model_json_schema()
     create_res_schema = reservations.CreateReservationArgs.model_json_schema()
     update_res_schema = reservations.UpdateReservationArgs.model_json_schema()
     lookup_res_schema = reservations.LookupReservationArgs.model_json_schema()
@@ -55,6 +56,15 @@ def get_function_definitions(feature_flags: Optional[Dict[str, Any]] = None) -> 
                     name="lookup_order",
                     description="Look up the latest order for a caller using their phone number.",
                     schema=lookup_order_schema,
+                ),
+                _definition(
+                    name="lookup_order_by_id",
+                    description=(
+                        "Look up a specific order by order ID. Use this when the caller provides an order ID/number "
+                        "(e.g., 'What's the status of order 12345?'). Requires order_id, restaurant_id, and customer_contact "
+                        "(phone number) to verify the order belongs to the caller and restaurant."
+                    ),
+                    schema=lookup_order_by_id_schema,
                 ),
                 _definition(
                     name="update_order_details",

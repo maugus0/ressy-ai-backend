@@ -58,9 +58,6 @@ def get_notification_service() -> NotificationService:
     return NotificationService()
 
 
-# ---------- Background task helpers ----------
-
-
 async def _emit_order_sse_event(
     restaurant_id: int,
     order_id: int,
@@ -1195,6 +1192,12 @@ async def update_order_status(
     order = _check_order_access(current_user, order_id, order_service)
     restaurant_id = order.get("restaurant_id")
     old_status = order.get("status")
+    customer_phone = order.get("customer_phone")
+    user_id = order.get("user_id")
+
+    logger.info(
+        f"Updating order {order_id} status: {old_status} -> {request.status}, customer_phone={customer_phone}, user_id={user_id}"
+    )
 
     try:
         result = order_service.update_order_status(order_id=order_id, status=request.status)

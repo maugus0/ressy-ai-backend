@@ -100,6 +100,10 @@ class TwilioClient:
             try:
                 from twilio.rest import Client
 
+                logger.debug(
+                    "Using provided Twilio credentials (account_sid: %s...)",
+                    account_sid[:10] if account_sid else "None",
+                )
                 client = Client(account_sid, auth_token)
             except ImportError:
                 logger.error("Twilio SDK not installed - run: pip install twilio")
@@ -116,6 +120,16 @@ class TwilioClient:
                     success=False,
                     error_message=f"Invalid Twilio credentials: {str(e)}",
                 )
+        else:
+            if account_sid or auth_token:
+                logger.warning(
+                    "Incomplete Twilio credentials provided - need both account_sid and auth_token. "
+                    "Falling back to default client. account_sid present: %s, auth_token present: %s",
+                    bool(account_sid),
+                    bool(auth_token),
+                )
+            else:
+                logger.debug("No Twilio credentials provided, using default client from environment")
 
         if not client:
             if not account_sid and not auth_token:

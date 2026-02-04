@@ -5,7 +5,7 @@ from typing import Any, Optional
 from urllib.parse import quote, urlencode
 from xml.sax.saxutils import escape
 
-import requests
+import requests  # type: ignore[import-untyped]
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 

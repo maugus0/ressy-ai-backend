@@ -483,7 +483,7 @@ async def lookup_reservation(**kwargs) -> Dict[str, Any]:
     if not reservation:
         return {
             "status": "NOT_FOUND",
-            "message": "No reservation found for this contact at this restaurant.",
+            "message": "Sorry, no reservation found for your phone number at this restaurant.",
         }
     return {"status": "FOUND", "reservation": reservation}
 
@@ -671,7 +671,7 @@ async def update_reservation(**kwargs) -> Dict[str, Any]:
     if not result:
         return {
             "status": "NOT_FOUND",
-            "message": "No reservation found to update for this restaurant.",
+            "message": "Sorry, no reservation found for your phone number at this restaurant.",
         }
 
     updated = result

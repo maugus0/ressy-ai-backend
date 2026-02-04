@@ -58,9 +58,6 @@ def get_notification_service() -> NotificationService:
     return NotificationService()
 
 
-# ---------- Background task helpers ----------
-
-
 async def _emit_reservation_sse_event(
     restaurant_id: int,
     reservation_id: int,
@@ -817,7 +814,6 @@ async def update_reservation(
     """Update reservation and slot booking details."""
     reservation = _check_reservation_access(current_user, reservation_id, reservation_service)
     restaurant_id = reservation.get("restaurant_id")
-
     # Store previous state for history logging
     previous_data = {
         "status": reservation.get("status"),
