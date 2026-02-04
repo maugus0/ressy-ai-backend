@@ -6,7 +6,7 @@ import asyncio
 import logging
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from pydantic import BaseModel, ConfigDict
 
@@ -21,11 +21,15 @@ from app.repositories.mysql_user_restaurant_metadata_repo import (
 )
 from app.services.activity_history_service import ActivityHistoryService
 from app.services.notification_service import NotificationService
+from app.services.reservation_service import ReservationService
 from app.services.sse_service import ReservationEventSubtype, SSEService
 from app.utils.restaurant_hours import (
+    format_nearest_slot_label,
     format_operating_window,
+    is_datetime_on_slot_boundary,
     is_datetime_within_operating_hours,
     resolve_restaurant_timezone,
+    snap_datetime_to_slot,
 )
 from app.utils.timezone import coerce_datetime, isoformat_z, parse_datetime
 
@@ -187,7 +191,6 @@ class CheckAvailabilityArgs(BaseModel):
     restaurant_id: int
     party_size: int
     date_start_iso: str
-    date_end_iso: str
 
 
 async def _run_service_call(func, *args, **kwargs):
@@ -753,7 +756,7 @@ async def update_reservation(**kwargs) -> Dict[str, Any]:
 
 async def check_reservation_availability(**kwargs) -> Dict[str, Any]:
     """
-    Check reservation availability for a party size over a date range.
+    Check reservation availability for a party size over a specific date/time.
 
     This checks capacity based on confirmed reservations to determine
     if the restaurant can accommodate the party.
@@ -773,102 +776,119 @@ async def check_reservation_availability(**kwargs) -> Dict[str, Any]:
             "status": "FAILED",
             "message": "Unable to load restaurant information right now. Please try again shortly.",
         }
+    restaurant_tz, _ = resolve_restaurant_timezone(restaurant)
     try:
         start_dt = _parse_datetime_str(args.date_start_iso)
-        end_dt = _parse_datetime_str(args.date_end_iso)
     except ValueError:
         return {
             "status": "FAILED",
-            "message": "Invalid date range format. Please provide valid start and end times.",
+            "message": "Invalid date/time format. Please provide a valid start time.",
         }
 
     # Get restaurant capacity settings
     seating_capacity = restaurant.get("reservation_seating_capacity", 50)
     advance_days = restaurant.get("reservation_advance_days", 30)
+    forward_minutes = restaurant.get("forward_minutes") or 0
+    backward_minutes = restaurant.get("backward_minutes") or 0
+    if forward_minutes <= 0:
+        forward_minutes = 1440
+    if backward_minutes < 0:
+        backward_minutes = 0
+    slot_step_minutes = 30
 
     def _check():
         try:
-            reservation_repo = _get_reservation_repo()
+            reservation_service = ReservationService()
 
-            search_start = start_dt.replace(tzinfo=None) if start_dt.tzinfo else start_dt
-            search_end = end_dt.replace(tzinfo=None) if end_dt.tzinfo else end_dt
+            if start_dt.tzinfo:
+                start_dt_utc = start_dt.astimezone(timezone.utc)
+                requested_start = start_dt_utc.astimezone(restaurant_tz).replace(tzinfo=None)
+            else:
+                requested_start = start_dt.replace(tzinfo=None)
+            window_start = requested_start - timedelta(minutes=backward_minutes)
+            window_end = requested_start + timedelta(minutes=forward_minutes)
 
-            capacity_map = reservation_repo.get_confirmed_capacity_by_slot(
+            capacity_start = window_start.replace(tzinfo=restaurant_tz).astimezone(timezone.utc).replace(tzinfo=None)
+            capacity_end = window_end.replace(tzinfo=restaurant_tz).astimezone(timezone.utc).replace(tzinfo=None)
+            capacity_map_utc = reservation_service.get_capacity_map(
                 restaurant_id=int(args.restaurant_id),
-                start_date_time=search_start,
-                end_date_time=search_end,
-                reservation_type="in-house",
+                window_start=capacity_start,
+                window_end=capacity_end,
             )
+            capacity_map: Dict[datetime, int] = {}
+            for slot_utc, used in capacity_map_utc.items():
+                slot_local = slot_utc.replace(tzinfo=timezone.utc).astimezone(restaurant_tz).replace(tzinfo=None)
+                capacity_map[slot_local] = used
 
-            max_booking_date = datetime.now() + timedelta(days=advance_days)
+            now_local = datetime.now(timezone.utc).astimezone(restaurant_tz).replace(tzinfo=None)
+            max_booking_date = now_local + timedelta(days=advance_days)
 
-            available_slots: List[Dict[str, Any]] = []
-            slots_outside_hours = 0
-            slots_at_capacity = 0
-            total_slots_checked = 0
+            requested_slot = snap_datetime_to_slot(requested_start, slot_step_minutes, "floor")
+            is_on_boundary = is_datetime_on_slot_boundary(requested_start, slot_step_minutes)
+            requested_within_hours = is_datetime_within_operating_hours(restaurant, requested_start)
+            requested_in_range = requested_start <= max_booking_date
+            requested_in_future = requested_start >= now_local
+            used_capacity = capacity_map.get(requested_slot, 0) if is_on_boundary else 0
+            available_capacity = seating_capacity - used_capacity
+            available = (
+                is_on_boundary
+                and requested_within_hours
+                and requested_in_range
+                and requested_in_future
+                and available_capacity >= args.party_size
+            )
+            nearest_forward_slot = None
+            nearest_backward_slot = None
+            if not available:
+                nearest = reservation_service.find_nearest_slots(
+                    restaurant=restaurant,
+                    requested_start_local=requested_start,
+                    party_size=args.party_size,
+                    window_start=window_start,
+                    window_end=window_end,
+                    capacity_map=capacity_map,
+                    now_utc=datetime.now(timezone.utc),
+                    slot_step_minutes=slot_step_minutes,
+                )
+                forward_slot = nearest.get("nearest_forward_slot")
+                if forward_slot and forward_slot.get("datetime"):
+                    forward_local = datetime.fromisoformat(forward_slot["datetime"])
+                    nearest_forward_slot = format_nearest_slot_label(forward_local, now_local)
 
-            current = start_dt
-            if current.tzinfo:
-                current = current.replace(tzinfo=None)
-
-            while current <= search_end:
-                total_slots_checked += 1
-
-                if current > max_booking_date:
-                    current += timedelta(minutes=30)
-                    continue
-
-                if not is_datetime_within_operating_hours(restaurant, current):
-                    slots_outside_hours += 1
-                    current += timedelta(minutes=30)
-                    continue
-
-                slot_normalized = current.replace(second=0, microsecond=0)
-                used_capacity = capacity_map.get(slot_normalized, 0)
-                available_capacity = seating_capacity - used_capacity
-
-                if available_capacity >= args.party_size:
-                    available_slots.append(
-                        {
-                            "datetime": current.isoformat(),
-                            "available_capacity": available_capacity,
-                            "party_size_available": True,
-                        }
-                    )
-                else:
-                    slots_at_capacity += 1
-
-                current += timedelta(minutes=30)
-
-            available = len(available_slots) > 0
+                backward_slot = nearest.get("nearest_backward_slot")
+                if backward_slot and backward_slot.get("datetime"):
+                    backward_local = datetime.fromisoformat(backward_slot["datetime"])
+                    nearest_backward_slot = format_nearest_slot_label(backward_local, now_local)
 
             message = None
             if not available:
-                if slots_outside_hours == total_slots_checked:
+                if not requested_in_range:
+                    message = (
+                        f"Reservations can only be made up to {advance_days} days in advance. "
+                        "Please choose an earlier date."
+                    )
+                elif not requested_in_future:
+                    message = "The requested time has already passed. Please choose a future time."
+                elif not requested_within_hours:
                     tz_label = resolve_restaurant_timezone(restaurant)[1]
                     message = (
-                        f"The requested times are outside operating hours. "
+                        f"The requested time is outside operating hours. "
                         f"Please choose a time between {format_operating_window(restaurant)} ({tz_label})."
                     )
-                elif slots_at_capacity > 0:
-                    message = (
-                        f"No availability for a party of {args.party_size} in the requested time range. "
-                        "Please try a different time or smaller party size."
-                    )
                 else:
-                    message = "No available slots in the requested time range."
+                    message = (
+                        f"No availability for a party of {args.party_size} at the requested time. "
+                        "Suggest the nearest available slots to the caller."
+                    )
 
             return {
                 "restaurant_id": args.restaurant_id,
                 "party_size": args.party_size,
                 "seating_capacity": seating_capacity,
-                "date_range": {
-                    "start": args.date_start_iso,
-                    "end": args.date_end_iso,
-                },
-                "available": available,
-                "available_slots": available_slots[:10],
-                "total_available_slots": len(available_slots),
+                "date_time": args.date_start_iso,
+                "requested_slot_available": available,
+                "nearest_forward_slot": nearest_forward_slot,
+                "nearest_backward_slot": nearest_backward_slot,
                 "message": message,
             }
         except Exception as exc:
@@ -876,8 +896,9 @@ async def check_reservation_availability(**kwargs) -> Dict[str, Any]:
             return {
                 "restaurant_id": args.restaurant_id,
                 "party_size": args.party_size,
-                "available": True,  # Default to available if check fails
-                "available_slots": [],
+                "requested_slot_available": None,
+                "nearest_forward_slot": None,
+                "nearest_backward_slot": None,
                 "message": "Unable to verify availability, but timeslot is likely available.",
             }
 

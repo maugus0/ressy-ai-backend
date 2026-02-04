@@ -124,8 +124,8 @@ def get_function_definitions(feature_flags: Optional[Dict[str, Any]] = None) -> 
                 _definition(
                     name="check_reservation_availability",
                     description=(
-                        "Check if a table is available for a party size at a specific date/time range. "
-                        "Use this BEFORE creating a reservation to verify the timeslot is open."
+                        "Check if a table is available for a party size at a specific date/time. "
+                        "Use this BEFORE creating a reservation to verify the requested time is open."
                     ),
                     schema=res_check_avail_schema,
                 ),

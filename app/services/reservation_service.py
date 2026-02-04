@@ -17,8 +17,10 @@ from app.utils.restaurant_hours import (
     _parse_operating_time,
     format_operating_window,
     get_day_operating_hours,
+    is_datetime_on_slot_boundary,
     is_datetime_within_operating_hours,
     resolve_restaurant_timezone,
+    snap_datetime_to_slot,
 )
 from app.utils.timezone import isoformat_z, parse_datetime
 
@@ -59,6 +61,14 @@ class ReservationService:
             hours_display = format_operating_window(restaurant, day_name)
             raise ValueError(f"Reservations can only be made during opening hours ({hours_display})")
 
+    def _validate_future_time(self, slot_dt: datetime, restaurant: Dict[str, Any]) -> None:
+        """Validate that reservation is not in the past using restaurant local time."""
+        restaurant_tz, _ = resolve_restaurant_timezone(restaurant)
+        slot_local = slot_dt.replace(tzinfo=restaurant_tz)
+        now_local = datetime.now(timezone.utc).astimezone(restaurant_tz)
+        if slot_local < now_local:
+            raise ValueError("Reservations cannot be made for times in the past.")
+
     def _check_capacity(self, restaurant_id: int, slot_dt: datetime, party_size: int, seating_capacity: int) -> None:
         """Check if there's enough capacity for the party size."""
         used_capacity = self.reservation_repo.get_slot_confirmed_capacity(
@@ -69,6 +79,89 @@ class ReservationService:
         available_capacity = seating_capacity - used_capacity
         if party_size > available_capacity:
             raise ValueError(f"Not enough capacity for party of {party_size}. Available: {available_capacity}")
+
+    def get_capacity_map(self, restaurant_id: int, window_start: datetime, window_end: datetime) -> Dict[datetime, int]:
+        """Return confirmed capacity per slot within the window."""
+        return self.reservation_repo.get_confirmed_capacity_by_slot(
+            restaurant_id=restaurant_id,
+            start_date_time=window_start,
+            end_date_time=window_end,
+            reservation_type=self.RESERVATION_TYPE,
+        )
+
+    def find_nearest_slots(
+        self,
+        restaurant: Dict[str, Any],
+        requested_start_local: datetime,
+        party_size: int,
+        window_start: datetime,
+        window_end: datetime,
+        capacity_map: Dict[datetime, int],
+        now_utc: Optional[datetime] = None,
+        slot_step_minutes: int = 30,
+    ) -> Dict[str, Optional[Dict[str, Any]]]:
+        """Return nearest forward/backward available slots within the window."""
+        restaurant_tz, _ = resolve_restaurant_timezone(restaurant)
+        now_utc = now_utc or datetime.now(timezone.utc)
+        now_local = now_utc.astimezone(restaurant_tz)
+        if now_local.tzinfo:
+            now_local = now_local.replace(tzinfo=None)
+
+        advance_days = restaurant.get("reservation_advance_days", 30)
+        seating_capacity = restaurant.get("reservation_seating_capacity", 50)
+        max_booking_date_local = now_local + timedelta(days=advance_days)
+
+        nearest_forward_slot = None
+        nearest_backward_slot = None
+
+        forward_start = snap_datetime_to_slot(max(requested_start_local, now_local), slot_step_minutes, "ceil")
+        if (
+            is_datetime_on_slot_boundary(requested_start_local, slot_step_minutes)
+            and forward_start == requested_start_local
+        ):
+            forward_start += timedelta(minutes=slot_step_minutes)
+        forward_end = snap_datetime_to_slot(min(window_end, max_booking_date_local), slot_step_minutes, "floor")
+        candidate = forward_start
+        while candidate <= forward_end:
+            if is_datetime_within_operating_hours(restaurant, candidate):
+                slot_normalized = candidate.replace(second=0, microsecond=0)
+                used_capacity = capacity_map.get(slot_normalized, 0)
+                available_capacity = seating_capacity - used_capacity
+                if available_capacity >= party_size:
+                    nearest_forward_slot = {
+                        "datetime": candidate.isoformat(),
+                        "available_capacity": available_capacity,
+                        "party_size_available": True,
+                    }
+                    break
+            candidate += timedelta(minutes=slot_step_minutes)
+
+        if window_start < requested_start_local:
+            backward_start = snap_datetime_to_slot(max(window_start, now_local), slot_step_minutes, "ceil")
+            candidate = snap_datetime_to_slot(requested_start_local, slot_step_minutes, "floor")
+            if (
+                is_datetime_on_slot_boundary(requested_start_local, slot_step_minutes)
+                and candidate == requested_start_local
+            ):
+                candidate -= timedelta(minutes=slot_step_minutes)
+            while candidate >= backward_start:
+                if is_datetime_within_operating_hours(restaurant, candidate):
+                    slot_normalized = candidate.replace(second=0, microsecond=0)
+                    used_capacity = capacity_map.get(slot_normalized, 0)
+                    available_capacity = seating_capacity - used_capacity
+                    if available_capacity >= party_size:
+                        nearest_backward_slot = {
+                            "datetime": candidate.isoformat(),
+                            "available_capacity": available_capacity,
+                            "party_size_available": True,
+                        }
+                        break
+                candidate -= timedelta(minutes=slot_step_minutes)
+
+        return {
+            "nearest_forward_slot": nearest_forward_slot,
+            "nearest_backward_slot": nearest_backward_slot,
+        }
 
     def get_availability(
         self,
@@ -265,6 +358,7 @@ class ReservationService:
         except ValueError:
             raise ValueError(f"Invalid date_time format: {date_time}")
 
+        self._validate_future_time(slot_dt_local, restaurant)
         self._validate_opening_hours(slot_dt_local, restaurant)
 
         slot_dt_utc = slot_dt_local.replace(tzinfo=restaurant_tz).astimezone(timezone.utc)
@@ -403,6 +497,26 @@ class ReservationService:
 
         if reservation["status"] != "pending":
             raise ValueError(f"Reservation is not in pending status. Current status: {reservation['status']}")
+
+        restaurant = self.restaurant_repo.get_by_id(reservation["restaurant_id"])
+        if not restaurant:
+            raise ValueError(f"Restaurant with ID {reservation['restaurant_id']} not found")
+
+        slot_dt = reservation.get("date_time")
+        if isinstance(slot_dt, datetime):
+            slot_dt = slot_dt.replace(second=0, microsecond=0)
+        else:
+            slot_dt = parse_datetime(str(slot_dt)).replace(tzinfo=None, second=0, microsecond=0)
+
+        seating_capacity = restaurant.get("reservation_seating_capacity", 50)
+        used_capacity = self.reservation_repo.get_slot_confirmed_capacity(
+            restaurant_id=int(reservation["restaurant_id"]),
+            date_time=slot_dt,
+            reservation_type=self.RESERVATION_TYPE,
+        )
+        party_size = reservation.get("party_size") or 0
+        if party_size > seating_capacity - used_capacity:
+            raise ValueError("Not enough capacity to confirm this reservation at the requested time.")
 
         # Finalize reservation
         if not self.reservation_repo.finalize_reservation(
@@ -568,6 +682,7 @@ class ReservationService:
         except ValueError:
             raise ValueError(f"Invalid date_time format: {date_time}")
 
+        self._validate_future_time(slot_dt_local, restaurant)
         self._validate_opening_hours(slot_dt_local, restaurant)
 
         slot_dt_utc = slot_dt_local.replace(tzinfo=restaurant_tz).astimezone(timezone.utc)
@@ -690,7 +805,7 @@ class ReservationService:
         if status is not None and status not in valid_statuses:
             raise ValueError(f"Invalid status '{status}'. Must be one of: {', '.join(valid_statuses)}")
 
-        # Parse and update date_time (slot timing) if provided
+        # Parse date_time (slot timing) if provided
         if date_time is not None:
             try:
                 new_date_time = parse_datetime(date_time)
@@ -698,13 +813,43 @@ class ReservationService:
                 new_date_time = new_date_time.replace(second=0, microsecond=0).replace(tzinfo=None)
             except ValueError:
                 raise ValueError(f"Invalid date_time format: {date_time}. Use ISO format.")
+        else:
+            new_date_time = None
 
-            # Get the slot_booking_id from the reservation
+        party_size_value = party_size if party_size is not None else reservation.get("party_size")
+        candidate_status = status or reservation.get("status")
+        if candidate_status == "confirmed":
+            restaurant = self.restaurant_repo.get_by_id(reservation.get("restaurant_id"))
+            if not restaurant:
+                raise ValueError(f"Restaurant with ID {reservation.get('restaurant_id')} not found")
+            slot_dt = new_date_time if new_date_time is not None else reservation.get("date_time")
+            original_slot_dt = reservation.get("date_time")
+            if isinstance(slot_dt, datetime):
+                slot_dt = slot_dt.replace(second=0, microsecond=0)
+            else:
+                slot_dt = parse_datetime(str(slot_dt)).replace(tzinfo=None, second=0, microsecond=0)
+            if isinstance(original_slot_dt, datetime):
+                original_slot_dt = original_slot_dt.replace(second=0, microsecond=0)
+            else:
+                original_slot_dt = parse_datetime(str(original_slot_dt)).replace(tzinfo=None, second=0, microsecond=0)
+            if new_date_time is not None:
+                self._validate_future_time(slot_dt, restaurant)
+            seating_capacity = restaurant.get("reservation_seating_capacity", 50)
+            used_capacity = self.reservation_repo.get_slot_confirmed_capacity(
+                restaurant_id=int(reservation.get("restaurant_id")),
+                date_time=slot_dt,
+                reservation_type=self.RESERVATION_TYPE,
+            )
+            if reservation.get("status") == "confirmed" and slot_dt == original_slot_dt:
+                used_capacity -= reservation.get("party_size") or 0
+            if (party_size_value or 0) > seating_capacity - used_capacity:
+                raise ValueError("Not enough capacity to confirm this reservation at the requested time.")
+
+        # Update slot booking date_time after validation
+        if new_date_time is not None:
             slot_booking_id = reservation.get("slot_booking_id")
             if not slot_booking_id:
                 raise ValueError("Reservation has no associated slot booking")
-
-            # Update the slot booking date_time
             if not self.reservation_repo.update_slot_booking_datetime(slot_booking_id, new_date_time):
                 raise ValueError("Failed to update slot timing")
 

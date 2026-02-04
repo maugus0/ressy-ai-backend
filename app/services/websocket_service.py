@@ -3,7 +3,7 @@ import base64
 import json
 import time
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
 
 import websockets
@@ -25,11 +25,13 @@ from app.services.callmanager.call_state import StreamState
 from app.services.deepgram_service import DeepgramService
 from app.services.faq_service import FAQService
 from app.services.menu_service import MenuService
+from app.services.reservation_service import ReservationService
 from app.services.restaurant_service import RestaurantService
 from app.utils import prompt_loader
 from app.utils.logging_config import get_logger
 from app.utils.restaurant_hours import (
     DAYS_OF_WEEK,
+    format_nearest_slot_label,
     format_operating_window,
     get_day_operating_hours,
     is_restaurant_open_now,
@@ -43,7 +45,6 @@ class CallResources:
     context_payload: Dict[str, Any]
     restaurant_id: Optional[str]
     restaurant_phone: Optional[str]
-    restaurant_phone_fwd: Optional[str]
     restaurant_name: Optional[str]
     deepgram_key_terms: Optional[Any]
     think_prompt: str
@@ -58,6 +59,7 @@ class WebSocketService:
         self.restaurant_service = RestaurantService()
         self.menu_service = MenuService()
         self.faq_service = FAQService()
+        self.reservation_service = ReservationService()
         self._active_twilio: set[WebSocket] = set()
         self._active_deepgram: set[Any] = set()
         self._connections_lock = asyncio.Lock()
@@ -101,10 +103,100 @@ class WebSocketService:
             for faq in faqs
         ]
 
+    @staticmethod
+    def _format_phone_spoken(phone: Optional[str]) -> Optional[str]:
+        if not phone:
+            return None
+        has_plus = phone.strip().startswith("+")
+        digits = [ch for ch in phone if ch.isdigit()]
+        if not digits:
+            return None
+        digit_words = {
+            "0": "zero",
+            "1": "one",
+            "2": "two",
+            "3": "three",
+            "4": "four",
+            "5": "five",
+            "6": "six",
+            "7": "seven",
+            "8": "eight",
+            "9": "nine",
+        }
+        spoken_digits = " ".join(digit_words[d] for d in digits)
+        return f"plus {spoken_digits}" if has_plus else spoken_digits
+
+    def _get_nearest_reservation_slot(
+        self,
+        restaurant_id: Optional[int],
+        restaurant: Dict[str, Any],
+        now_utc: datetime,
+        restaurant_tz,
+        reservations_enabled: bool,
+        forward_minutes: Optional[int],
+    ) -> Optional[Dict[str, Any]]:
+        if not restaurant_id or not reservations_enabled:
+            return None
+
+        try:
+            window_minutes = int(forward_minutes) if forward_minutes else 0
+            if window_minutes <= 0:
+                window_minutes = 1440
+
+            now_local = now_utc.astimezone(restaurant_tz)
+            if now_local.tzinfo:
+                now_local = now_local.replace(tzinfo=None)
+            window_start = now_local
+            window_end = now_local + timedelta(minutes=window_minutes)
+
+            capacity_start = window_start.replace(tzinfo=restaurant_tz).astimezone(timezone.utc).replace(tzinfo=None)
+            capacity_end = window_end.replace(tzinfo=restaurant_tz).astimezone(timezone.utc).replace(tzinfo=None)
+            capacity_map_utc = self.reservation_service.get_capacity_map(
+                restaurant_id=restaurant_id,
+                window_start=capacity_start,
+                window_end=capacity_end,
+            )
+            capacity_map: Dict[datetime, int] = {}
+            for slot_utc, used in capacity_map_utc.items():
+                slot_local = slot_utc.replace(tzinfo=timezone.utc).astimezone(restaurant_tz).replace(tzinfo=None)
+                capacity_map[slot_local] = used
+            nearest = self.reservation_service.find_nearest_slots(
+                restaurant=restaurant,
+                requested_start_local=now_local,
+                party_size=5,
+                window_start=window_start,
+                window_end=window_end,
+                capacity_map=capacity_map,
+                now_utc=now_utc,
+            ).get("nearest_forward_slot")
+            if not nearest:
+                return None
+            slot_local = datetime.fromisoformat(nearest.get("datetime"))
+            return {
+                "nearest_slot_local": format_nearest_slot_label(
+                    slot_local=slot_local,
+                    now_local=now_local,
+                ),
+            }
+        except Exception as exc:
+            self.logger.warning("Failed to compute nearest reservation slot: %s", exc)
+            return None
+
     def _build_restaurant_context(
         self, caller_phone: Optional[str] = None, restaurant_record: Optional[Dict[str, Any]] = None
-    ) -> tuple[Dict[str, Any], Optional[str], Optional[str], Optional[str]]:
-        restaurant_phone_fwd = restaurant_record.get("escalation_phone_number") if restaurant_record else None
+    ) -> tuple[Dict[str, Any], Optional[str], Optional[str]]:
+        restaurant_phone_fwd = (
+            (
+                restaurant_record.get("escalation_phone_number")
+                if (
+                    self._normalize_boolean(restaurant_record.get("forward_escalations"))
+                    and restaurant_record.get("escalation_phone_number")
+                )
+                else restaurant_record.get("phone_number")
+            )
+            if restaurant_record
+            else None
+        )
         restaurant_id = restaurant_record.get("id") if restaurant_record else None
         if isinstance(restaurant_id, str) and restaurant_id.isdigit():
             restaurant_id = int(restaurant_id)
@@ -206,6 +298,16 @@ class WebSocketService:
         now_utc = datetime.now(timezone.utc)
         now_local = now_utc.astimezone(restaurant_tz)
         is_open_now = is_restaurant_open_now(restaurant, now_utc=now_utc)
+        nearest_reservation_slot: Optional[Dict[str, Any]] = None
+        if reservations_enabled:
+            nearest_reservation_slot = self._get_nearest_reservation_slot(
+                restaurant_id=restaurant_id,
+                restaurant=restaurant,
+                now_utc=now_utc,
+                restaurant_tz=restaurant_tz,
+                reservations_enabled=reservations_enabled,
+                forward_minutes=restaurant.get("forward_minutes"),
+            )
 
         # Get today's operating hours for agent context
         today_day_name = now_local.strftime("%A").lower()
@@ -282,7 +384,8 @@ class WebSocketService:
                 "name": restaurant_name,
                 "cuisine": restaurant.get("cuisine_type"),
                 "address": restaurant.get("full_address") or restaurant.get("address"),
-                "phone": restaurant.get("escalation_phone_number"),
+                "phone": restaurant_phone_fwd,
+                "phone_spoken": self._format_phone_spoken(restaurant_phone_fwd),
                 "operating_hours": operating_hours,
                 "today_hours": today_hours,
                 "is_open_now": is_open_now,
@@ -301,10 +404,6 @@ class WebSocketService:
             },
             "menu_by_category": all_items_by_category,
             "faqs": faqs,
-            "function_defaults": {
-                "restaurant_id": restaurant_id,
-                "restaurant_phone": restaurant_phone_fwd,
-            },
             "current_time": {
                 "utc_iso": isoformat_z(now_utc),
                 "local_iso": now_local.isoformat(),
@@ -315,12 +414,16 @@ class WebSocketService:
                 "day_of_week": now_local.strftime("%A").lower(),
             },
         }
+        if reservations_enabled and nearest_reservation_slot:
+            context["reservation_availability"] = {
+                "nearest_slot": nearest_reservation_slot,
+            }
         if caller_phone:
             context["caller_profile"] = {
                 "caller_phone": caller_phone,
+                "caller_phone_spoken": self._format_phone_spoken(caller_phone),
                 "source": "inbound_call",
             }
-            context["function_defaults"]["caller_phone"] = caller_phone
 
         # Log menu context loading
         if restaurant_id:
@@ -333,7 +436,7 @@ class WebSocketService:
                 len(faqs),
                 is_open_now,
             )
-        return context, restaurant_id, restaurant_phone_fwd, restaurant_name
+        return context, restaurant_id, restaurant_name
 
     async def shutdown(self) -> None:
         """Close any remaining Twilio or Deepgram connections during app shutdown."""
@@ -549,7 +652,7 @@ class WebSocketService:
         restaurant_record: Optional[Dict[str, Any]] = None,
         deepgram_key_terms: Optional[Any] = None,
     ) -> CallResources:
-        context_payload, restaurant_id, restaurant_phone_fwd, restaurant_name = await asyncio.to_thread(
+        context_payload, restaurant_id, restaurant_name = await asyncio.to_thread(
             self._build_restaurant_context,
             caller_phone,
             restaurant_record,
@@ -559,7 +662,6 @@ class WebSocketService:
             context_payload=context_payload,
             restaurant_id=restaurant_id,
             restaurant_phone=restaurant_phone,
-            restaurant_phone_fwd=restaurant_phone_fwd,
             restaurant_name=restaurant_name,
             deepgram_key_terms=deepgram_key_terms,
             think_prompt=think_prompt,
