@@ -12,6 +12,7 @@ from starlette.responses import Response
 
 from app.api import (
     activity_history,
+    admin_notifications,
     admin_users,
     auth,
     calls,
@@ -23,6 +24,7 @@ from app.api import (
     client_menus,
     client_restaurant,
     client_users,
+    dashboard_notifications,
     dashboard_orders,
     dashboard_reservations,
     dashboard_users,
@@ -104,6 +106,14 @@ app = FastAPI(
             "description": "Escalation management endpoints for Admin and Client dashboards. Admins can access all restaurants; client endpoints are scoped to the authenticated restaurant.",
         },
         {
+            "name": "Dashboard - Notifications",
+            "description": "Persistent notifications for the dashboard. List, read, and mark as read notifications for the authenticated restaurant.",
+        },
+        {
+            "name": "Admin - Notifications",
+            "description": "Admin notification management. List and view notifications across all restaurants.",
+        },
+        {
             "name": "Menus",
             "description": "Menu management endpoints for Admin and Client CRM. Full CRUD, categories, availability, specials, and bulk updates; client endpoints are auto-scoped to the token restaurant.",
         },
@@ -180,6 +190,8 @@ app.include_router(calls.router)
 app.include_router(client_calls.router)
 app.include_router(escalations.router)
 app.include_router(client_escalations.router)
+app.include_router(dashboard_notifications.router)
+app.include_router(admin_notifications.router)
 app.include_router(menus.router)
 app.include_router(
     restaurants.router

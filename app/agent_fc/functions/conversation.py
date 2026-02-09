@@ -131,8 +131,9 @@ async def _emit_escalation_sse_event(
     reason: str,
     urgency: Literal["standard", "urgent"],
     call_sid: Optional[str] = None,
+    call_id: Optional[int] = None,
 ) -> None:
-    """Broadcast escalation to SSE subscribers; keep failures from affecting the call flow."""
+    """Broadcast escalation to SSE subscribers and persist notification; keep failures from affecting the call flow."""
     try:
         sse_service = _get_sse_service()
         await sse_service.emit_escalation_user_requested(
@@ -143,6 +144,24 @@ async def _emit_escalation_sse_event(
         )
     except Exception as exc:  # noqa: BLE001 - defensive
         logger.warning("Failed to emit escalation SSE event call_sid=%s: %s", call_sid, exc)
+
+    try:
+        from app.services.notification_persistence_service import NotificationPersistenceService
+
+        notification_service = NotificationPersistenceService()
+        notification_service.create_notification(
+            restaurant_id=restaurant_id,
+            type="escalation",
+            subtype="user_requested",
+            data={
+                "caller_phone": caller_phone,
+                "reason": reason,
+                "urgency": urgency,
+            },
+            entity_id=call_id,
+        )
+    except Exception as exc:  # noqa: BLE001 - defensive
+        logger.warning("Escalation notification persistence failed call_sid=%s: %s", call_sid, exc)
 
 
 async def agent_filler(**kwargs) -> AgentFunctionResult:
@@ -233,6 +252,7 @@ async def escalate_to_human(**kwargs) -> AgentFunctionResult:
             reason=args.reason,
             urgency=args.urgency,
             call_sid=call_sid,
+            call_id=call_id,
         )
     )
     side_effects = [AgentSideEffect({"type": "InjectAgentMessage", "message": message})]

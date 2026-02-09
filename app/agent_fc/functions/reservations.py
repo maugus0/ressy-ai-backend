@@ -78,8 +78,7 @@ async def _emit_reservation_sse_event(
     data: Dict[str, Any],
 ) -> None:
     """
-    Background task to emit SSE reservation events.
-    Logs errors but does not raise exceptions to avoid affecting other operations.
+    Emit SSE reservation event AND persist notification. Non-blocking, failure-tolerant.
     """
     try:
         sse_service = _get_sse_service()
@@ -90,7 +89,30 @@ async def _emit_reservation_sse_event(
             data=data,
         )
     except Exception as sse_error:
-        logger.error(f"Failed to emit SSE event for reservation {reservation_id} ({subtype.value}): {sse_error}")
+        logger.error(
+            "[SSE] Reservation event emission failed for reservation %s (%s): %s",
+            reservation_id,
+            subtype.value,
+            sse_error,
+        )
+
+    try:
+        from app.services.notification_persistence_service import NotificationPersistenceService
+
+        notification_service = NotificationPersistenceService()
+        notification_service.create_notification(
+            restaurant_id=restaurant_id,
+            type="reservation",
+            subtype=subtype.value if hasattr(subtype, "value") else subtype,
+            data={"reservation_id": reservation_id, **(data or {})},
+            entity_id=reservation_id,
+        )
+    except Exception as e:
+        logger.error(
+            "[Notification] Reservation notification persistence failed for reservation %s: %s",
+            reservation_id,
+            e,
+        )
 
 
 async def _send_voice_reservation_sms(

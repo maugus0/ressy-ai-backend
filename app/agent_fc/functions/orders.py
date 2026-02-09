@@ -129,8 +129,7 @@ async def _emit_order_sse_event(
     data: Dict[str, Any],
 ) -> None:
     """
-    Background task to emit SSE order events.
-    Logs errors but does not raise exceptions to avoid affecting other operations.
+    Emit SSE order event AND persist notification. Non-blocking, failure-tolerant.
     """
     try:
         sse_service = _get_sse_service()
@@ -141,7 +140,21 @@ async def _emit_order_sse_event(
             data=data,
         )
     except Exception as sse_error:
-        logger.error(f"Failed to emit SSE event for order {order_id} ({subtype.value}): {sse_error}")
+        logger.error("[SSE] Order event emission failed for order %s (%s): %s", order_id, subtype.value, sse_error)
+
+    try:
+        from app.services.notification_persistence_service import NotificationPersistenceService
+
+        notification_service = NotificationPersistenceService()
+        notification_service.create_notification(
+            restaurant_id=restaurant_id,
+            type="order",
+            subtype=subtype.value if hasattr(subtype, "value") else subtype,
+            data={"order_id": order_id, **(data or {})},
+            entity_id=order_id,
+        )
+    except Exception as e:
+        logger.error("[Notification] Order notification persistence failed for order %s: %s", order_id, e)
 
 
 async def _send_voice_order_sms(
