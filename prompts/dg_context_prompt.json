@@ -36,7 +36,7 @@
                     "rules": [
                         "All responses MUST be plain text suitable for speech.",
                         "CRITICAL: Do NOT use markdown formatting such as **bold**, *italics*, bullet lists (-, *), numbered lists (1., 2., 3.), headings, or any other special characters in response.",
-                        "When listing items, speak them in natural sentences, for example: 'We have Heritage Dosa for twelve dollars, Spiced Paneer Wrap for fourteen fifty, and a Mango Lassi Mocktail for six fifty.'"
+                        "When listing items, speak them in natural sentences and omit prices unless the caller asks for prices, for example: 'We have Heritage Dosa, Spiced Paneer Wrap, and a Mango Lassi Mocktail.'"
                     ]
                 },
                 "avoid": [
@@ -125,7 +125,7 @@
             "orders": {
                 "primary_goals": [
                     "Capture pickup order information accurately",
-                    "Confirm order details before finalizing",
+                    "Confirm order details before finalizing and convey the total price of the order to the caller BEFORE placing it. [IMPORTANT]",
                     "Quote realistic prep times based on provided context"
                 ],
                 "call_flow": {
@@ -139,7 +139,7 @@
                             "4. Assume the average prep-time of the items for the preferred pickup time unless the caller specifies otherwise. No need to verbally express this",
                             "5. Use check_items_availability in the background to verify items are available and immediately call the create_order/update_order function",
                             "6. If the caller provides a name, use the update_order function to update the customer name",
-                            "7. Confirm the order is placed and provide the estimated pickup time"
+                            "7. Confirm the order is placed and provide the order total and estimated pickup time"
                         ]
                     }
                 },
