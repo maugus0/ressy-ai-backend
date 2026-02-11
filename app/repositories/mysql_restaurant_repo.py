@@ -41,6 +41,7 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
                     r.reservation_seating_capacity,
                     r.reservation_advance_days,
                     r.timezone,
+                    r.pos_integration_flags,
                     COALESCE(rf.orders_enabled, TRUE) AS orders_enabled,
                     COALESCE(rf.reservations_enabled, TRUE) AS reservations_enabled,
                     COALESCE(rf.faqs_enabled, TRUE) AS faqs_enabled,
@@ -64,6 +65,13 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
                     result["reservation_advance_days"] = 30
                 if "timezone" not in result:
                     result["timezone"] = None
+                if "pos_integration_flags" not in result:
+                    result["pos_integration_flags"] = None
+                if result.get("pos_integration_flags") and isinstance(result["pos_integration_flags"], str):
+                    try:
+                        result["pos_integration_flags"] = json.loads(result["pos_integration_flags"])
+                    except (json.JSONDecodeError, TypeError):
+                        result["pos_integration_flags"] = {}
                 if "orders_enabled" not in result:
                     result["orders_enabled"] = True
                 if "reservations_enabled" not in result:
@@ -146,6 +154,7 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
                     r.reservation_seating_capacity,
                     r.reservation_advance_days,
                     r.timezone,
+                    r.pos_integration_flags,
                     COALESCE(rf.orders_enabled, TRUE) AS orders_enabled,
                     COALESCE(rf.reservations_enabled, TRUE) AS reservations_enabled,
                     COALESCE(rf.faqs_enabled, TRUE) AS faqs_enabled,
@@ -169,6 +178,13 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
                     result["reservation_advance_days"] = 30
                 if "timezone" not in result:
                     result["timezone"] = None
+                if "pos_integration_flags" not in result:
+                    result["pos_integration_flags"] = None
+                if result.get("pos_integration_flags") and isinstance(result["pos_integration_flags"], str):
+                    try:
+                        result["pos_integration_flags"] = json.loads(result["pos_integration_flags"])
+                    except (json.JSONDecodeError, TypeError):
+                        result["pos_integration_flags"] = {}
                 if "orders_enabled" not in result:
                     result["orders_enabled"] = True
                 if "reservations_enabled" not in result:
@@ -205,10 +221,10 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
                 result["reservation_seating_capacity"] = 50
                 result["reservation_advance_days"] = 30
                 result["timezone"] = None
+                result["pos_integration_flags"] = None
                 result["orders_enabled"] = True
                 result["reservations_enabled"] = True
                 result["faqs_enabled"] = True
-                # Set default operating hours for all days
                 for day in ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]:
                     result[f"{day}_open"] = "09:00:00"
                     result[f"{day}_close"] = "22:00:00"
@@ -249,6 +265,7 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
                     r.reservation_seating_capacity,
                     r.reservation_advance_days,
                     r.timezone,
+                    r.pos_integration_flags,
                     COALESCE(rf.orders_enabled, TRUE) AS orders_enabled,
                     COALESCE(rf.reservations_enabled, TRUE) AS reservations_enabled,
                     COALESCE(rf.faqs_enabled, TRUE) AS faqs_enabled,
@@ -272,6 +289,13 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
                     result["reservation_advance_days"] = 30
                 if "timezone" not in result:
                     result["timezone"] = None
+                if "pos_integration_flags" not in result:
+                    result["pos_integration_flags"] = None
+                if result.get("pos_integration_flags") and isinstance(result["pos_integration_flags"], str):
+                    try:
+                        result["pos_integration_flags"] = json.loads(result["pos_integration_flags"])
+                    except (json.JSONDecodeError, TypeError):
+                        result["pos_integration_flags"] = {}
                 if "orders_enabled" not in result:
                     result["orders_enabled"] = True
                 if "reservations_enabled" not in result:
@@ -578,6 +602,9 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
         if "timezone" in data:
             update_fields.append("timezone = %s")
             params.append(data["timezone"])
+        if "pos_integration_flags" in data:
+            update_fields.append("pos_integration_flags = %s")
+            params.append(json.dumps(data["pos_integration_flags"]) if data["pos_integration_flags"] else None)
 
         if not update_fields:
             return False

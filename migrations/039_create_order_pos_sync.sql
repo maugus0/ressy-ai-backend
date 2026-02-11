@@ -1,0 +1,23 @@
+CREATE TABLE IF NOT EXISTS Order_POS_Sync (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    order_id INT NOT NULL,
+    restaurant_id INT NOT NULL,
+    pos_integration_id INT NOT NULL,
+    external_order_id VARCHAR(255),
+    idempotency_key VARCHAR(255) UNIQUE,
+    status ENUM('PENDING', 'SENT', 'CONFIRMED', 'FAILED') NOT NULL DEFAULT 'PENDING',
+    last_error TEXT,
+    attempts INT NOT NULL DEFAULT 0,
+    next_retry_at TIMESTAMP NULL,
+    request_payload JSON,
+    response_payload JSON,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    FOREIGN KEY (order_id) REFERENCES Orders(id) ON DELETE CASCADE ON UPDATE CASCADE,
+    FOREIGN KEY (restaurant_id) REFERENCES Restaurants(id) ON DELETE CASCADE ON UPDATE CASCADE,
+    FOREIGN KEY (pos_integration_id) REFERENCES POS_Integrations(id) ON DELETE CASCADE ON UPDATE CASCADE,
+    INDEX idx_order_pos (order_id, pos_integration_id),
+    INDEX idx_restaurant_status (restaurant_id, status),
+    INDEX idx_next_retry (next_retry_at),
+    INDEX idx_idempotency (idempotency_key)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

@@ -30,6 +30,7 @@ from app.api import (
     faqs,
     menus,
     opentable,
+    pos_integrations,
     reservations,
     restaurants,
     sse,
@@ -192,6 +193,7 @@ app.include_router(dashboard_reservations.router, prefix="/api/v1/dashboard", ta
 app.include_router(dashboard_orders.router, prefix="/api/v1/dashboard", tags=["Dashboard Orders"])
 app.include_router(dashboard_users.router, prefix="/api/v1/dashboard", tags=["Dashboard Users"])
 app.include_router(activity_history.router, prefix="/api/v1/dashboard", tags=["Activity History"])
+app.include_router(pos_integrations.router, prefix="/api/v1/dashboard", tags=["POS Integrations"])
 app.include_router(sse.router, prefix="/api/v1/sse", tags=["Server-Sent Events"])
 app.include_router(admin_users.router, tags=["Admin Users"])
 app.include_router(client_users.router, tags=["Client Users"])
