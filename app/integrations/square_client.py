@@ -1,5 +1,5 @@
 import json
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 import requests
 from app.config import settings
@@ -33,17 +33,19 @@ class SquareClient:
             order_payload["fulfillments"] = order_data.get("fulfillments")
         if order_data.get("reference_id"):
             order_payload["reference_id"] = order_data.get("reference_id")
-        
+
         payload = {
             "idempotency_key": idempotency_key,
             "order": order_payload,
         }
         headers = self._get_headers()
-        line_items_count = len(order_payload.get('line_items', []))
-        logger.info(f"[Square API] Creating order: location_id={location_id}, idempotency_key={idempotency_key}, line_items={line_items_count}")
+        line_items_count = len(order_payload.get("line_items", []))
+        logger.info(
+            f"[Square API] Creating order: location_id={location_id}, idempotency_key={idempotency_key}, line_items={line_items_count}"
+        )
         logger.debug(f"[Square API] Request URL: {url}")
         logger.debug(f"[Square API] Request payload: {json.dumps(payload, indent=2)}")
-        
+
         # Log exact curl command for debugging (matching reference format)
         auth_token = headers.get("Authorization", "").replace("Bearer ", "")
         payload_json = json.dumps(payload)
@@ -53,16 +55,18 @@ class SquareClient:
   -H 'Authorization: Bearer {auth_token}' \\
   -H 'Content-Type: {headers.get("Content-Type", "")}' \\
   -d '{payload_json}'"""
-        logger.info(f"[Square API] Equivalent curl command:")
+        logger.info("[Square API] Equivalent curl command:")
         logger.info(curl_command)
         try:
-            logger.info(f"[Square API] Sending POST request to Square API...")
+            logger.info("[Square API] Sending POST request to Square API...")
             logger.info(f"[Square API] Complete request body: {json.dumps(payload, indent=2)}")
             response = requests.post(url, json=payload, headers=headers, timeout=30)
             logger.info(f"[Square API] Response status: {response.status_code}")
             response.raise_for_status()
             result = response.json()
-            logger.info(f"[Square API] Order creation successful! Response keys: {list(result.keys()) if result else 'None'}")
+            logger.info(
+                f"[Square API] Order creation successful! Response keys: {list(result.keys()) if result else 'None'}"
+            )
             if result.get("order"):
                 order_id = result["order"].get("id")
                 logger.info(f"[Square API] Square order ID: {order_id}")
@@ -81,7 +85,7 @@ class SquareClient:
                 try:
                     error_body = e.response.json()
                     logger.error(f"[Square API] Error response body: {json.dumps(error_body, indent=2)}")
-                except:
+                except (ValueError, AttributeError):
                     logger.error(f"[Square API] Error response text: {e.response.text}")
             raise
         except requests.exceptions.RequestException as e:

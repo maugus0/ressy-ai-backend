@@ -2,7 +2,7 @@ import json
 import re
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from app.config import settings
 from app.integrations.square_client import SquareClient
@@ -38,14 +38,22 @@ class POSService:
             menu_item = menu_repo.get_by_id(item["item_id"])
             if menu_item:
                 price = float(menu_item.get("price", 0))
-                logger.debug(f"Using price from menu lookup for '{item.get('name')}' (item_id={item.get('item_id')}): ${price:.2f}")
+                logger.debug(
+                    f"Using price from menu lookup for '{item.get('name')}' (item_id={item.get('item_id')}): ${price:.2f}"
+                )
                 return price
         # Priority 3: Fallback to 0.00 (should not happen in normal flow)
         logger.warning(f"No price found for item: {item.get('name')} (item_id={item.get('item_id')}), using $0.00")
         return 0.00
 
     def _sync_to_square(
-        self, order_id: int, pos_integration: Dict, order_data: Dict, idempotency_key: str, order: Optional[Dict] = None, customization: Optional[Dict] = None
+        self,
+        order_id: int,
+        pos_integration: Dict,
+        order_data: Dict,
+        idempotency_key: str,
+        order: Optional[Dict] = None,
+        customization: Optional[Dict] = None,
     ) -> Dict[str, Any]:
         access_token = pos_integration.get("credentials", {}).get("access_token")
         if not access_token:
@@ -57,25 +65,31 @@ class POSService:
 
         location_id = pos_integration.get("location_id")
         if not location_id or location_id.strip() == "":
-            logger.error(f"Square location_id not configured for order {order_id}, integration_id: {pos_integration.get('id')}")
-            raise ValueError("Square location_id not configured. Please configure location_id in POS integration settings.")
+            logger.error(
+                f"Square location_id not configured for order {order_id}, integration_id: {pos_integration.get('id')}"
+            )
+            raise ValueError(
+                "Square location_id not configured. Please configure location_id in POS integration settings."
+            )
 
         logger.info(f"[POS Sync] Syncing order {order_id} to Square POS, location_id: {location_id}")
         square_client = SquareClient(access_token)
-        
+
         # Get currency from integration or default to USD
         currency = pos_integration.get("currency") or "USD"
         if not currency or currency.strip() == "":
             currency = "USD"
         logger.info(f"[POS Sync] Using currency: {currency}")
-        
+
         line_items = []
         order_details = order_data.get("order_details", [])
         logger.info(f"[POS Sync] Converting {len(order_details)} order items to Square line_items")
         for idx, item in enumerate(order_details):
             # Get price from order_details (price at time of order) or fallback to menu
             price = self._get_item_price(item, self.menu_repo)
-            price_source = "order_details" if item.get("price") is not None else ("menu" if item.get("item_id") else "fallback")
+            price_source = (
+                "order_details" if item.get("price") is not None else ("menu" if item.get("item_id") else "fallback")
+            )
             amount_cents = int(price * 100)  # Convert to cents for Square API
             line_item = {
                 "quantity": str(item.get("quantity", 1)),
@@ -89,19 +103,20 @@ class POSService:
             if item.get("instructions"):
                 line_item["note"] = item.get("instructions")[:500]
             line_items.append(line_item)
-            logger.info(f"[POS Sync] Line item {idx+1}: {line_item['name']} x{line_item['quantity']} @ ${price:.2f} ({currency}) - Price source: {price_source}, Amount (cents): {amount_cents}")
+            logger.info(
+                f"[POS Sync] Line item {idx+1}: {line_item['name']} x{line_item['quantity']} @ ${price:.2f} ({currency}) - Price source: {price_source}, Amount (cents): {amount_cents}"
+            )
 
         # Build pickup_details with recipient information
         pickup_details = {}
         customer_phone = order_data.get("customer_phone", "").strip() if order_data.get("customer_phone") else ""
         customer_name = order_data.get("customer_name", "").strip() if order_data.get("customer_name") else ""
-        user_id = order_data.get("user_id")
-        
+
         # Calculate pickup_at time
         pickup_time_iso = None
         if customization and isinstance(customization, dict):
             pickup_time_iso = customization.get("pickup_time_iso") or customization.get("pickup_time")
-        
+
         # If not in customization, calculate based on created_at + average prep time
         if not pickup_time_iso and order:
             order_created_at = order.get("created_at")
@@ -109,17 +124,17 @@ class POSService:
                 # Parse created_at if it's a string
                 if isinstance(order_created_at, str):
                     try:
-                        order_created_at = datetime.fromisoformat(order_created_at.replace('Z', '+00:00'))
+                        order_created_at = datetime.fromisoformat(order_created_at.replace("Z", "+00:00"))
                     except (ValueError, AttributeError):
                         order_created_at = datetime.now(timezone.utc)
                 elif not isinstance(order_created_at, datetime):
                     order_created_at = datetime.now(timezone.utc)
-                
+
                 # Calculate average prep time from order items
                 total_prep_minutes = 0
                 item_count = 0
                 order_details_list = order_data.get("order_details", [])
-                
+
                 for item in order_details_list:
                     item_id = item.get("item_id")
                     quantity = item.get("quantity", 1)
@@ -129,31 +144,35 @@ class POSService:
                             prep_time = float(menu_item.get("avg_prep_time", 0))
                             total_prep_minutes += prep_time * quantity
                             item_count += quantity
-                
+
                 # If no prep times found in menu items, use default 20 minutes
                 if total_prep_minutes == 0:
                     avg_prep_minutes = 20
                 else:
                     avg_prep_minutes = total_prep_minutes / max(item_count, 1)
-                
+
                 # Calculate pickup time: created_at + prep time
                 pickup_datetime = order_created_at + timedelta(minutes=avg_prep_minutes)
-                
+
                 # Ensure timezone-aware (UTC)
                 if pickup_datetime.tzinfo is None:
                     pickup_datetime = pickup_datetime.replace(tzinfo=timezone.utc)
                 else:
                     pickup_datetime = pickup_datetime.astimezone(timezone.utc)
-                
+
                 # Format as ISO 8601 with Z timezone
                 pickup_time_iso = pickup_datetime.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
-                logger.info(f"[POS Sync] Calculated pickup_at: {pickup_time_iso} (prep_time: {avg_prep_minutes:.1f} minutes)")
+                logger.info(
+                    f"[POS Sync] Calculated pickup_at: {pickup_time_iso} (prep_time: {avg_prep_minutes:.1f} minutes)"
+                )
             else:
                 # Fallback: use current time + 20 minutes
                 pickup_datetime = datetime.now(timezone.utc) + timedelta(minutes=20)
                 pickup_time_iso = pickup_datetime.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
-                logger.warning(f"[POS Sync] Order created_at not available, using current time + 20 min: {pickup_time_iso}")
-        
+                logger.warning(
+                    f"[POS Sync] Order created_at not available, using current time + 20 min: {pickup_time_iso}"
+                )
+
         # Phone numbers should already be in E.164 format from the database
         # But ensure it starts with + for Square API (E.164 format requirement)
         if customer_phone and not customer_phone.startswith("+"):
@@ -169,30 +188,27 @@ class POSService:
             elif digits_only:
                 # Other format - try to add + prefix
                 customer_phone = f"+{digits_only}"
-        
+
         # Build recipient object if we have phone number
         if customer_phone:
-            recipient = {
-                "phone_number": customer_phone
-            }
+            recipient = {"phone_number": customer_phone}
             # Add display_name if customer name is available
             if customer_name:
                 recipient["display_name"] = customer_name
-            
+
             pickup_details["recipient"] = recipient
-            logger.info(f"[POS Sync] Added pickup_details recipient: phone={customer_phone}, display_name={customer_name if customer_name else 'N/A'}")
+            logger.info(
+                f"[POS Sync] Added pickup_details recipient: phone={customer_phone}, display_name={customer_name if customer_name else 'N/A'}"
+            )
         else:
-            logger.warning(f"[POS Sync] No customer phone number available for pickup_details recipient")
-        
+            logger.warning("[POS Sync] No customer phone number available for pickup_details recipient")
+
         # Add pickup_at time if calculated
         if pickup_time_iso:
             pickup_details["pickup_at"] = pickup_time_iso
-        
+
         # Square API fulfillment with pickup_details
-        fulfillment = {
-            "type": "PICKUP",
-            "pickup_details": pickup_details
-        }
+        fulfillment = {"type": "PICKUP", "pickup_details": pickup_details}
 
         square_order_data = {
             "line_items": line_items,
@@ -200,7 +216,9 @@ class POSService:
             "reference_id": f"RESSY-{order_id}",
         }
 
-        logger.info(f"[POS Sync] Square order payload for order {order_id}: {len(line_items)} line_items, fulfillment: PICKUP, currency: {currency}")
+        logger.info(
+            f"[POS Sync] Square order payload for order {order_id}: {len(line_items)} line_items, fulfillment: PICKUP, currency: {currency}"
+        )
         logger.debug(f"[POS Sync] Square order payload JSON: {json.dumps(square_order_data, indent=2)}")
         try:
             logger.info(f"[POS Sync] Calling Square API create_order for order {order_id}")
@@ -232,9 +250,7 @@ class POSService:
                     item["item_id"], pos_integration["id"]
                 )
             if not pos_menu_item_id:
-                logger.warning(
-                    f"No Toast mapping found for menu item {item.get('item_id')} ({item.get('name')})"
-                )
+                logger.warning(f"No Toast mapping found for menu item {item.get('item_id')} ({item.get('name')})")
                 continue
             order_item = {
                 "guid": pos_menu_item_id,
@@ -287,17 +303,19 @@ class POSService:
 
         square_enabled = pos_flags.get("square") if pos_flags else False
         if not square_enabled:
-            logger.info(f"[POS Sync] Square POS not enabled in pos_integration_flags for restaurant {restaurant_id} (flags: {pos_flags})")
+            logger.info(
+                f"[POS Sync] Square POS not enabled in pos_integration_flags for restaurant {restaurant_id} (flags: {pos_flags})"
+            )
             return None
 
         existing_integrations = self.pos_integration_repo.get_enabled_integrations(restaurant_id)
         logger.info(f"[POS Sync] Checking {len(existing_integrations)} existing integration(s) for Square")
-        square_integration = next(
-            (pi for pi in existing_integrations if pi.get("pos_type") == "SQUARE"), None
-        )
+        square_integration = next((pi for pi in existing_integrations if pi.get("pos_type") == "SQUARE"), None)
 
         if square_integration:
-            logger.info(f"[POS Sync] Square integration found in database: id={square_integration.get('id')}, enabled={square_integration.get('enabled')}, location_id={square_integration.get('location_id')}")
+            logger.info(
+                f"[POS Sync] Square integration found in database: id={square_integration.get('id')}, enabled={square_integration.get('enabled')}, location_id={square_integration.get('location_id')}"
+            )
             return square_integration
 
         if not settings.SQUARE_ACCESS_TOKEN:
@@ -305,9 +323,13 @@ class POSService:
             return None
 
         if not settings.SQUARE_APPLICATION_ID:
-            logger.warning(f"Square POS enabled for restaurant {restaurant_id} but SQUARE_APPLICATION_ID not configured in environment")
+            logger.warning(
+                f"Square POS enabled for restaurant {restaurant_id} but SQUARE_APPLICATION_ID not configured in environment"
+            )
 
-        logger.info(f"Auto-creating Square integration for restaurant {restaurant_id} (location_id must be configured via API)")
+        logger.info(
+            f"Auto-creating Square integration for restaurant {restaurant_id} (location_id must be configured via API)"
+        )
         integration_data = {
             "restaurant_id": restaurant_id,
             "pos_type": "SQUARE",
@@ -323,7 +345,9 @@ class POSService:
         try:
             integration_id = self.pos_integration_repo.create(integration_data)
             integration = self.pos_integration_repo.get_by_id(integration_id)
-            logger.info(f"Created Square integration {integration_id} for restaurant {restaurant_id}. Note: location_id must be configured before orders can sync.")
+            logger.info(
+                f"Created Square integration {integration_id} for restaurant {restaurant_id}. Note: location_id must be configured before orders can sync."
+            )
             return integration
         except Exception as e:
             logger.error(f"Failed to create Square integration for restaurant {restaurant_id}: {str(e)}")
@@ -345,22 +369,30 @@ class POSService:
             logger.info(f"[POS Sync] Checking Square integration for restaurant {restaurant_id}")
             square_integration = self._ensure_square_integration(restaurant_id)
             if square_integration:
-                logger.info(f"[POS Sync] Square integration available: id={square_integration.get('id')}, enabled={square_integration.get('enabled')}, location_id={square_integration.get('location_id')}")
+                logger.info(
+                    f"[POS Sync] Square integration available: id={square_integration.get('id')}, enabled={square_integration.get('enabled')}, location_id={square_integration.get('location_id')}"
+                )
                 square_exists = any(pi.get("id") == square_integration.get("id") for pi in pos_integrations)
                 if not square_exists:
                     pos_integrations.append(square_integration)
                     logger.info(f"[POS Sync] Added Square integration to sync list for order {order_id}")
                 else:
-                    logger.info(f"[POS Sync] Square integration already in enabled integrations list")
+                    logger.info("[POS Sync] Square integration already in enabled integrations list")
             else:
                 logger.info(f"[POS Sync] No Square integration available for restaurant {restaurant_id}")
 
             if not pos_integrations:
-                logger.warning(f"[POS Sync] No enabled POS integrations found for restaurant {restaurant_id}, order {order_id}. POS sync skipped.")
-                logger.warning(f"[POS Sync] To enable POS sync: 1) Set pos_integration_flags in Restaurants table, 2) Create POS_Integrations record with enabled=true")
+                logger.warning(
+                    f"[POS Sync] No enabled POS integrations found for restaurant {restaurant_id}, order {order_id}. POS sync skipped."
+                )
+                logger.warning(
+                    "[POS Sync] To enable POS sync: 1) Set pos_integration_flags in Restaurants table, 2) Create POS_Integrations record with enabled=true"
+                )
                 return
 
-            logger.info(f"[POS Sync] Processing {len(pos_integrations)} POS integration(s) for restaurant {restaurant_id}")
+            logger.info(
+                f"[POS Sync] Processing {len(pos_integrations)} POS integration(s) for restaurant {restaurant_id}"
+            )
 
             order_details = order.get("order_details", [])
             if isinstance(order_details, str):
@@ -397,8 +429,12 @@ class POSService:
                 location_id = pos_integration.get("location_id")
                 idempotency_key = f"{order_id}-{integration_id}-{uuid.uuid4().hex[:8]}"
 
-                logger.info(f"[POS Sync] Processing {pos_type} integration: id={integration_id}, enabled={enabled}, location_id={location_id}")
-                logger.info(f"[POS Sync] Syncing order {order_id} to {pos_type} POS (integration_id: {integration_id}, idempotency_key: {idempotency_key})")
+                logger.info(
+                    f"[POS Sync] Processing {pos_type} integration: id={integration_id}, enabled={enabled}, location_id={location_id}"
+                )
+                logger.info(
+                    f"[POS Sync] Syncing order {order_id} to {pos_type} POS (integration_id: {integration_id}, idempotency_key: {idempotency_key})"
+                )
 
                 sync_id = self.order_sync_repo.create_sync_record(
                     order_id, restaurant_id, integration_id, idempotency_key
@@ -410,7 +446,9 @@ class POSService:
                         if not location_id or location_id.strip() == "":
                             error_msg = "Square location_id not configured. Please configure location_id in POS integration settings."
                             logger.warning(f"[POS Sync] Skipping Square sync for order {order_id}: {error_msg}")
-                            logger.warning(f"[POS Sync] Integration details: id={integration_id}, enabled={enabled}, location_id='{location_id}'")
+                            logger.warning(
+                                f"[POS Sync] Integration details: id={integration_id}, enabled={enabled}, location_id='{location_id}'"
+                            )
                             self.order_sync_repo.update_sync_status(
                                 sync_id,
                                 status="FAILED",
@@ -419,17 +457,25 @@ class POSService:
                             )
                             continue
 
-                        logger.info(f"[POS Sync] Processing Square sync for order {order_id}, location_id: {location_id}")
-                        logger.info(f"[POS Sync] Order data: {len(order_data.get('order_details', []))} items, customer: {order_data.get('customer_name', 'N/A')}")
+                        logger.info(
+                            f"[POS Sync] Processing Square sync for order {order_id}, location_id: {location_id}"
+                        )
+                        logger.info(
+                            f"[POS Sync] Order data: {len(order_data.get('order_details', []))} items, customer: {order_data.get('customer_name', 'N/A')}"
+                        )
                         response = self._sync_to_square(
                             order_id, pos_integration, order_data, idempotency_key, order, customization
                         )
                         logger.info(f"[POS Sync] Square API response received for order {order_id}")
                         external_order_id = response.get("order", {}).get("id") if response.get("order") else None
                         if external_order_id:
-                            logger.info(f"[POS Sync] Order {order_id} successfully synced to Square, external_order_id: {external_order_id}")
+                            logger.info(
+                                f"[POS Sync] Order {order_id} successfully synced to Square, external_order_id: {external_order_id}"
+                            )
                         else:
-                            logger.warning(f"[POS Sync] Order {order_id} synced to Square but no external_order_id in response. Response keys: {list(response.keys()) if response else 'None'}")
+                            logger.warning(
+                                f"[POS Sync] Order {order_id} synced to Square but no external_order_id in response. Response keys: {list(response.keys()) if response else 'None'}"
+                            )
                         self.order_sync_repo.update_sync_status(
                             sync_id,
                             status="CONFIRMED",
@@ -439,12 +485,12 @@ class POSService:
                         logger.info(f"[POS Sync] Updated sync record {sync_id} to CONFIRMED for order {order_id}")
                     elif pos_type == "TOAST":
                         logger.info(f"Processing Toast sync for order {order_id}")
-                        response = self._sync_to_toast(
-                            order_id, pos_integration, order_data, idempotency_key
-                        )
+                        response = self._sync_to_toast(order_id, pos_integration, order_data, idempotency_key)
                         external_order_id = response.get("guid") if response.get("guid") else None
                         if external_order_id:
-                            logger.info(f"Order {order_id} successfully synced to Toast, external_order_id: {external_order_id}")
+                            logger.info(
+                                f"Order {order_id} successfully synced to Toast, external_order_id: {external_order_id}"
+                            )
                         else:
                             logger.warning(f"Order {order_id} synced to Toast but no external_order_id in response")
                         self.order_sync_repo.update_sync_status(
@@ -460,7 +506,9 @@ class POSService:
                         )
                 except Exception as e:
                     error_msg = str(e)
-                    logger.error(f"POS sync failed for order {order_id}, POS {pos_type} (integration_id: {integration_id}): {error_msg}")
+                    logger.error(
+                        f"POS sync failed for order {order_id}, POS {pos_type} (integration_id: {integration_id}): {error_msg}"
+                    )
                     logger.exception(f"Exception details for order {order_id} POS sync failure:")
                     next_retry = datetime.now() + timedelta(minutes=settings.POS_RETRY_BASE_MINUTES)
                     self.order_sync_repo.update_sync_status(
@@ -476,4 +524,6 @@ class POSService:
             logger.info(f"[POS Sync] Completed POS sync processing for order {order_id}")
         except Exception as e:
             logger.exception(f"[POS Sync] Error in sync_order_to_pos for order {order_id}: {e}")
-            logger.error(f"[POS Sync] POS sync failed completely for order {order_id}, restaurant {restaurant_id}: {str(e)}")
+            logger.error(
+                f"[POS Sync] POS sync failed completely for order {order_id}, restaurant {restaurant_id}: {str(e)}"
+            )

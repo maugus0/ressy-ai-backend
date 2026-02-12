@@ -1,6 +1,6 @@
 import json
-from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional
+from datetime import datetime
+from typing import Dict, List, Optional
 
 from app.repositories.mysql_base import MySQLBaseRepository
 from app.utils.logging_config import get_logger

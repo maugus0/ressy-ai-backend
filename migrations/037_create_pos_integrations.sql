@@ -1,4 +1,4 @@
-CREATE TABLE IF NOT EXISTS pos_Integrations (
+CREATE TABLE IF NOT EXISTS POS_Integrations (
     id INT AUTO_INCREMENT PRIMARY KEY,
     restaurant_id INT NOT NULL,
     pos_type ENUM('SQUARE', 'TOAST') NOT NULL,

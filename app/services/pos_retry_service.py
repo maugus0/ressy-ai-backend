@@ -1,6 +1,6 @@
 import json
 from datetime import datetime, timedelta
-from typing import Any, Dict, List
+from typing import Any, Dict
 
 from app.config import settings
 from app.repositories.mysql_order_pos_sync_repo import MySQLOrderPOSSyncRepository
@@ -42,9 +42,7 @@ class POSRetryService:
 
                 order = self.order_repo.get_order_by_id(record["order_id"])
                 if not order:
-                    self.order_sync_repo.update_sync_status(
-                        record["id"], status="FAILED", error="Order not found"
-                    )
+                    self.order_sync_repo.update_sync_status(record["id"], status="FAILED", error="Order not found")
                     failed += 1
                     continue
 
@@ -122,7 +120,7 @@ class POSRetryService:
                     )
                     failed += 1
                 else:
-                    retry_minutes = settings.POS_RETRY_BASE_MINUTES * (2 ** new_attempts)
+                    retry_minutes = settings.POS_RETRY_BASE_MINUTES * (2**new_attempts)
                     next_retry = datetime.now() + timedelta(minutes=retry_minutes)
                     self.order_sync_repo.update_sync_status(
                         record["id"],

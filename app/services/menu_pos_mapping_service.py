@@ -85,7 +85,9 @@ class MenuPOSMappingService:
 
         return None
 
-    def sync_menu_to_toast(self, restaurant_id: int, pos_integration_id: int, access_token: str, location_id: str) -> Dict[str, Any]:
+    def sync_menu_to_toast(
+        self, restaurant_id: int, pos_integration_id: int, access_token: str, location_id: str
+    ) -> Dict[str, Any]:
         toast_client = ToastClient(access_token)
         menu_response = toast_client.get_menus(location_id)
         toast_items = self._flatten_toast_menu_items(menu_response)
@@ -103,9 +105,7 @@ class MenuPOSMappingService:
                 if guid:
                     existing = self.mapping_repo.get_mapping(our_item["id"], pos_integration_id)
                     if existing:
-                        self.mapping_repo.update_mapping(
-                            existing["id"], guid, matched_toast_item.get("name")
-                        )
+                        self.mapping_repo.update_mapping(existing["id"], guid, matched_toast_item.get("name"))
                         mappings_updated += 1
                     else:
                         self.mapping_repo.create_mapping(

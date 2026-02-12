@@ -1,5 +1,4 @@
 import json
-from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from app.repositories.mysql_base import MySQLBaseRepository
@@ -84,12 +83,18 @@ class MySQLPOSIntegrationRepository(MySQLBaseRepository):
                 pos_integration_data["restaurant_id"],
                 pos_integration_data["pos_type"],
                 pos_integration_data.get("enabled", False),
-                json.dumps(pos_integration_data.get("credentials")) if pos_integration_data.get("credentials") else None,
+                (
+                    json.dumps(pos_integration_data.get("credentials"))
+                    if pos_integration_data.get("credentials")
+                    else None
+                ),
                 pos_integration_data.get("location_id"),
                 pos_integration_data.get("currency", "USD"),
-                json.dumps(pos_integration_data.get("default_order_options"))
-                if pos_integration_data.get("default_order_options")
-                else None,
+                (
+                    json.dumps(pos_integration_data.get("default_order_options"))
+                    if pos_integration_data.get("default_order_options")
+                    else None
+                ),
             ),
         )
 
@@ -110,9 +115,7 @@ class MySQLPOSIntegrationRepository(MySQLBaseRepository):
             params.append(updates["currency"])
         if "default_order_options" in updates:
             update_fields.append("default_order_options = %s")
-            params.append(
-                json.dumps(updates["default_order_options"]) if updates["default_order_options"] else None
-            )
+            params.append(json.dumps(updates["default_order_options"]) if updates["default_order_options"] else None)
         if not update_fields:
             return False
         update_fields.append("updated_at = NOW()")
