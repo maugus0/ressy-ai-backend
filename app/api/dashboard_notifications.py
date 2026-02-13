@@ -1,7 +1,5 @@
 """
 Dashboard API routes for persistent notifications (restaurant-scoped).
-
-TODO: Add API tests for notification endpoints (list, get, mark-read, mark-all-read, unread-count).
 """
 
 from __future__ import annotations

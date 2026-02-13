@@ -1,7 +1,5 @@
 """
 Admin API routes for persistent notifications (system-wide).
-
-TODO: Add API tests for admin notification endpoints (list, get-by-id).
 """
 
 from __future__ import annotations
