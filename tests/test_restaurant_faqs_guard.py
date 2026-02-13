@@ -156,3 +156,17 @@ def test_update_allowed_when_faqs_omitted_in_features(admin_client):
     )
     assert resp.status_code == 200
     assert resp.json().get("features", {}).get("faqs_enabled") is True
+
+
+def test_client_update_allowed_when_faqs_omitted_in_features(client_restaurant_client):
+    """Client PUT with features but faqs_enabled omitted (other flags only) is allowed."""
+    client = client_restaurant_client
+    resp = client.put(
+        "/api/v1/client/restaurant",
+        json={"features": {"orders_enabled": False, "reservations_enabled": True}},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data.get("features", {}).get("orders_enabled") is False
+    assert data.get("features", {}).get("reservations_enabled") is True
+    assert data.get("features", {}).get("faqs_enabled") is True
