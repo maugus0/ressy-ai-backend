@@ -26,7 +26,7 @@ SET @has_new_schema = (
 SET @should_drop = IF(@has_legacy_schema > 0 AND @has_new_schema = 0, 1, 0);
 
 -- Conditional drop via prepared statement (no-op SELECT 1 when not dropping)
-SET @drop_sql = IF(@should_drop = 1, 'DROP TABLE Notifications', 'DO 0');
+SET @drop_sql = IF(@should_drop = 1, 'DROP TABLE IF EXISTS Notifications', 'DO 0');
 PREPARE stmt FROM @drop_sql;
 EXECUTE stmt;
 DEALLOCATE PREPARE stmt;

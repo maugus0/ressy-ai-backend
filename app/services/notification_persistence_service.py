@@ -54,7 +54,7 @@ class NotificationPersistenceService:
             order_id = data.get("order_id", "?")
             if subtype == "new_order":
                 name = data.get("customer_name") or ""
-                return f"New Order #{order_id} — {name}".rstrip(" — ") if name else f"New Order #{order_id}"
+                return f"New Order #{order_id} — {name}" if name else f"New Order #{order_id}"
             if subtype == "order_updated":
                 status = (data.get("status") or "").strip().lower()
                 if status == "confirmed":

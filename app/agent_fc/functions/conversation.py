@@ -158,7 +158,7 @@ async def _emit_escalation_sse_event(
                 "reason": reason,
                 "urgency": urgency,
             },
-            entity_id=call_id,
+            entity_id=int(call_id) if call_id is not None else None,
         )
     except Exception as exc:  # noqa: BLE001 - defensive
         logger.warning("Escalation notification persistence failed call_sid=%s: %s", call_sid, exc)

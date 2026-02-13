@@ -18,7 +18,7 @@ def normalize_notification_row(row: Dict[str, Any]) -> Dict[str, Any]:
     if isinstance(data, str):
         try:
             data = json.loads(data) if data else None
-        except Exception:
+        except (json.JSONDecodeError, TypeError):
             data = None
     return {
         "id": row.get("id"),

@@ -1,18 +1,17 @@
 """
 Admin API routes for persistent notifications (system-wide).
+
+TODO: Add API tests for admin notification endpoints (list, get-by-id).
 """
 
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from fastapi.security import HTTPBearer
 
 from app.middleware.auth_middleware import get_current_admin_user
 from app.models.notification_models import NotificationListResponse, NotificationResponse
 from app.services.notification_persistence_service import NotificationPersistenceService
 from app.utils.notification_utils import normalize_notification_row
-
-security = HTTPBearer(scheme_name="HTTPBearer", description="Admin JWT access token")
 
 
 def get_notification_service() -> NotificationPersistenceService:

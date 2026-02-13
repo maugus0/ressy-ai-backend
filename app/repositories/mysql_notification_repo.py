@@ -93,15 +93,13 @@ class MySQLNotificationRepository(MySQLBaseRepository):
         return rows[0] if rows else None
 
     def mark_as_read(self, notification_id: int) -> Optional[Dict[str, Any]]:
-        """Set is_read = TRUE and read_at = NOW() for the given notification. Returns updated row."""
+        """Set is_read = TRUE and read_at = NOW() for the given notification. Idempotent: only updates if currently unread. Returns updated row."""
         query = """
             UPDATE Notifications
             SET is_read = TRUE, read_at = NOW(), updated_at = NOW()
-            WHERE id = %s
+            WHERE id = %s AND is_read = FALSE
         """
-        affected = self._execute_update(query, (notification_id,))
-        if affected == 0:
-            return None
+        self._execute_update(query, (notification_id,))
         return self.get_notification_by_id(notification_id)
 
     def mark_all_as_read(self, restaurant_id: int, type: Optional[str] = None) -> int:
