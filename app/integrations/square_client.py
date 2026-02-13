@@ -46,16 +46,21 @@ class SquareClient:
         logger.debug(f"[Square API] Request URL: {url}")
         logger.debug(f"[Square API] Request payload: {json.dumps(payload, indent=2)}")
 
-        # Log exact curl command for debugging (matching reference format)
+        # Log curl command for debugging (with masked authorization token)
         auth_token = headers.get("Authorization", "").replace("Bearer ", "")
+        # Avoid logging the full bearer token; show only a small, non-sensitive portion
+        if auth_token:
+            masked_token = f"{auth_token[:6]}...{auth_token[-4:]}" if len(auth_token) > 10 else "***masked***"
+        else:
+            masked_token = "***no-token***"
         payload_json = json.dumps(payload)
         curl_command = f"""curl {url} \\
   -X POST \\
   -H 'Square-Version: {headers.get("Square-Version", "")}' \\
-  -H 'Authorization: Bearer {auth_token}' \\
+  -H 'Authorization: Bearer {masked_token}' \\
   -H 'Content-Type: {headers.get("Content-Type", "")}' \\
   -d '{payload_json}'"""
-        logger.info("[Square API] Equivalent curl command:")
+        logger.info("[Square API] Equivalent curl command (authorization token masked):")
         logger.info(curl_command)
         try:
             logger.info("[Square API] Sending POST request to Square API...")
