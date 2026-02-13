@@ -13,6 +13,7 @@ from app.repositories.mysql_user_repo import MySQLUserRepository
 from app.repositories.mysql_user_restaurant_metadata_repo import (
     MySQLUserRestaurantMetadataRepository,
 )
+from app.services.pos_service import POSService
 from app.utils.logging_config import get_logger
 from app.utils.timezone import isoformat_z, parse_datetime
 
@@ -71,6 +72,7 @@ class DashboardOrderService:
         self.user_repo = MySQLUserRepository()
         self.metadata_repo = MySQLUserRestaurantMetadataRepository()
         self.menu_repo = MySQLMenuRepository()
+        self.pos_service = POSService()
 
     def create_order(
         self,

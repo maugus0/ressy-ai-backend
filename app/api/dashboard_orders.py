@@ -15,6 +15,7 @@ from app.middleware.auth_middleware import require_role
 from app.services.activity_history_service import ActivityHistoryService
 from app.services.dashboard_order_service import DashboardOrderService
 from app.services.notification_service import NotificationService
+from app.services.pos_service import POSService
 from app.services.restaurant_service import RestaurantService
 from app.services.sse_service import OrderEventSubtype, SSEService
 
@@ -56,6 +57,11 @@ def get_restaurant_service() -> RestaurantService:
 def get_notification_service() -> NotificationService:
     """Dependency to get notification service instance."""
     return NotificationService()
+
+
+def get_pos_service() -> POSService:
+    """Dependency to get POS service instance."""
+    return POSService()
 
 
 async def _emit_order_sse_event(
@@ -663,6 +669,7 @@ async def create_order(
     history_service: ActivityHistoryService = Depends(get_history_service),
     restaurant_service: RestaurantService = Depends(get_restaurant_service),
     notification_service: NotificationService = Depends(get_notification_service),
+    pos_service: POSService = Depends(get_pos_service),
 ):
     """Create a new order from the dashboard."""
     _check_restaurant_access(current_user, restaurant_id)
@@ -713,7 +720,6 @@ async def create_order(
             },
         )
 
-        # SMS on order created (initial status)
         _queue_order_sms(
             background_tasks,
             notification_service,
@@ -723,6 +729,8 @@ async def create_order(
             result.get("status", "pending"),
             request.customer_phone or result.get("customer_phone"),
         )
+
+        background_tasks.add_task(pos_service.sync_order_to_pos, result["order_id"], restaurant_id)
 
         return result
     except ValueError as e:

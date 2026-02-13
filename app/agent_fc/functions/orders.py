@@ -21,6 +21,7 @@ from app.repositories.mysql_user_restaurant_metadata_repo import (
 )
 from app.services.activity_history_service import ActivityHistoryService
 from app.services.notification_service import NotificationService
+from app.services.pos_service import POSService
 from app.services.sse_service import OrderEventSubtype, SSEService
 from app.utils.restaurant_hours import format_operating_window, is_restaurant_open_now
 from app.utils.timezone import coerce_datetime
@@ -449,7 +450,6 @@ async def create_order(**kwargs) -> Dict[str, Any]:
             )
         )
 
-        # Send SMS notification for voice-created order (background task)
         if args.customer_contact:
             asyncio.create_task(
                 _send_voice_order_sms(
@@ -458,6 +458,20 @@ async def create_order(**kwargs) -> Dict[str, Any]:
                     customer_phone=args.customer_contact,
                 )
             )
+
+        def _sync_pos():
+            try:
+                logger.info(f"Initializing POS sync for order {order_id}, restaurant {args.restaurant_id}")
+                pos_service = POSService()
+                logger.info(f"POSService initialized, calling sync_order_to_pos for order {order_id}")
+                pos_service.sync_order_to_pos(order_id, int(args.restaurant_id))
+                logger.info(f"POS sync completed for order {order_id}")
+            except Exception as e:
+                logger.exception(f"Error in POS sync background task for order {order_id}: {e}")
+                logger.error(f"POS sync failed for order {order_id}, restaurant {args.restaurant_id}: {str(e)}")
+
+        logger.info(f"Scheduling POS sync background task for order {order_id}")
+        asyncio.create_task(_run_service_call(_sync_pos))
 
     return {
         "status": "CREATED",

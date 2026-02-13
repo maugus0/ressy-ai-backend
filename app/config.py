@@ -134,5 +134,13 @@ class Settings:
     USERS_TABLE: str = "Users"
     OPENTABLE_API_LOGS_TABLE: str = "OpenTable_API_Logs"
 
+    SQUARE_API_BASE_URL = os.getenv("SQUARE_API_BASE_URL", "https://connect.squareupsandbox.com")
+    SQUARE_APPLICATION_ID = os.getenv("SQUARE_APPLICATION_ID", "")
+    SQUARE_ACCESS_TOKEN = os.getenv("SQUARE_ACCESS_TOKEN", "")
+    TOAST_API_BASE_URL = os.getenv("TOAST_API_BASE_URL", "https://ws.toasttab.com")
+    POS_MAX_RETRY_ATTEMPTS = int(os.getenv("POS_MAX_RETRY_ATTEMPTS", "5"))
+    POS_RETRY_BASE_MINUTES = int(os.getenv("POS_RETRY_BASE_MINUTES", "2"))
+    DEFAULT_PREP_TIME_MINUTES = int(os.getenv("DEFAULT_PREP_TIME_MINUTES", "20"))
+
 
 settings = Settings()
