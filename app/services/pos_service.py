@@ -145,11 +145,13 @@ class POSService:
                             total_prep_minutes += prep_time * quantity
                             item_count += quantity
 
-                # If no prep times found in menu items, use default 20 minutes
-                if total_prep_minutes == 0:
-                    avg_prep_minutes = 20
+                # Determine default prep time from settings, fallback to 20 minutes
+                default_prep_minutes = settings.DEFAULT_PREP_TIME_MINUTES
+                # If no prep times found in menu items or no items counted, use default
+                if total_prep_minutes == 0 or item_count == 0:
+                    avg_prep_minutes = default_prep_minutes
                 else:
-                    avg_prep_minutes = total_prep_minutes / max(item_count, 1)
+                    avg_prep_minutes = total_prep_minutes / item_count
 
                 # Calculate pickup time: created_at + prep time
                 pickup_datetime = order_created_at + timedelta(minutes=avg_prep_minutes)
@@ -166,11 +168,12 @@ class POSService:
                     f"[POS Sync] Calculated pickup_at: {pickup_time_iso} (prep_time: {avg_prep_minutes:.1f} minutes)"
                 )
             else:
-                # Fallback: use current time + 20 minutes
-                pickup_datetime = datetime.now(timezone.utc) + timedelta(minutes=20)
+                # Fallback: use current time + default prep time
+                default_prep_minutes = settings.DEFAULT_PREP_TIME_MINUTES
+                pickup_datetime = datetime.now(timezone.utc) + timedelta(minutes=default_prep_minutes)
                 pickup_time_iso = pickup_datetime.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
                 logger.warning(
-                    f"[POS Sync] Order created_at not available, using current time + 20 min: {pickup_time_iso}"
+                    f"[POS Sync] Order created_at not available, using current time + {default_prep_minutes} min: {pickup_time_iso}"
                 )
 
         # Phone numbers should already be in E.164 format from the database

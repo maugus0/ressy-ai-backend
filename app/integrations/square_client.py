@@ -2,6 +2,7 @@ import json
 from typing import Any, Dict
 
 import requests
+
 from app.config import settings
 from app.utils.logging_config import get_logger
 

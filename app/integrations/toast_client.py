@@ -1,6 +1,7 @@
 from typing import Any, Dict, Optional
 
 import requests
+
 from app.config import settings
 from app.utils.logging_config import get_logger
 
@@ -30,7 +31,7 @@ class ToastClient:
             return response.json()
         except requests.exceptions.RequestException as e:
             logger.error(f"Toast Menus API error: {e}")
-            if hasattr(e.response, "text"):
+            if hasattr(e, "response") and e.response is not None and hasattr(e.response, "text"):
                 logger.error(f"Toast Menus API response: {e.response.text}")
             raise
 
@@ -43,7 +44,7 @@ class ToastClient:
             return response.json()
         except requests.exceptions.RequestException as e:
             logger.error(f"Toast Ordering Schedule API error: {e}")
-            if hasattr(e.response, "text"):
+            if hasattr(e, "response") and e.response is not None and hasattr(e.response, "text"):
                 logger.error(f"Toast Ordering Schedule API response: {e.response.text}")
             raise
 
@@ -56,7 +57,7 @@ class ToastClient:
             return response.json()
         except requests.exceptions.RequestException as e:
             logger.error(f"Toast Prices API error: {e}")
-            if hasattr(e.response, "text"):
+            if hasattr(e, "response") and e.response is not None and hasattr(e.response, "text"):
                 logger.error(f"Toast Prices API response: {e.response.text}")
             raise
 
@@ -75,6 +76,6 @@ class ToastClient:
             return response.json()
         except requests.exceptions.RequestException as e:
             logger.error(f"Toast Orders API error: {e}")
-            if hasattr(e.response, "text"):
+            if hasattr(e, "response") and e.response is not None and hasattr(e.response, "text"):
                 logger.error(f"Toast Orders API response: {e.response.text}")
             raise

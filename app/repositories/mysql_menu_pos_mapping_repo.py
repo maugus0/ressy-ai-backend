@@ -127,14 +127,19 @@ class MySQLMenuPOSMappingRepository(MySQLBaseRepository):
             if connection:
                 try:
                     connection.rollback()
-                except Exception:
-                    pass
+                except Exception as rollback_error:
+                    # Log but don't fail if rollback fails - original error is more important
+                    logger.warning(
+                        "Failed to rollback transaction while handling bulk_create_mappings error: %s",
+                        rollback_error,
+                    )
             logger.exception("Error bulk creating menu POS mappings: %s", e)
             raise
         finally:
             if cursor:
                 try:
                     cursor.close()
-                except Exception:
-                    pass
+                except Exception as cursor_close_error:
+                    # Log but don't fail if cursor close fails
+                    logger.warning("Failed to close cursor in bulk_create_mappings: %s", cursor_close_error)
             self._return_connection(connection)

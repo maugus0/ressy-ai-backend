@@ -4,4 +4,6 @@
 ALTER TABLE POS_Integrations
 ADD COLUMN currency VARCHAR(3) DEFAULT 'USD' COMMENT 'Currency code (ISO 4217, e.g., USD, CAD, EUR)';
 
-CREATE INDEX idx_currency ON POS_Integrations(currency);
+-- Note: No index is created on `currency` because current POS integration queries
+-- do not filter by currency alone. If future features require such queries,
+-- add an appropriate index in a separate migration.

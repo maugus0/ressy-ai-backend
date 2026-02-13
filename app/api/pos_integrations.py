@@ -1,4 +1,3 @@
-import logging
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -9,8 +8,9 @@ from app.middleware.auth_middleware import require_role
 from app.repositories.mysql_pos_integration_repo import MySQLPOSIntegrationRepository
 from app.services.menu_pos_mapping_service import MenuPOSMappingService
 from app.services.pos_retry_service import POSRetryService
+from app.utils.logging_config import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 security = HTTPBearer(
     scheme_name="HTTPBearer",

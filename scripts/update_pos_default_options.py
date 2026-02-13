@@ -7,11 +7,11 @@ load_dotenv()
 
 try:
     connection = mysql.connector.connect(
-        host=os.getenv('DB_HOST', 'localhost'),
-        port=int(os.getenv('DB_PORT', 3306)),
-        user=os.getenv('DB_USERNAME', 'root'),
-        password=os.getenv('DB_PASSWORD', 'root'),
-        database=os.getenv('DB_NAME', 'ressy')
+        host=os.getenv("DB_HOST", "localhost"),
+        port=int(os.getenv("DB_PORT", 3306)),
+        user=os.getenv("DB_USERNAME", "root"),
+        password=os.getenv("DB_PASSWORD", "root"),
+        database=os.getenv("DB_NAME", "ressy"),
     )
     cursor = connection.cursor()
 
@@ -19,7 +19,7 @@ try:
     new_options = json.dumps({"dining_option": "PICKUP"})
     cursor.execute(
         "UPDATE POS_Integrations SET default_order_options = %s WHERE default_order_options LIKE %s",
-        (new_options, '%TAKEOUT%')
+        (new_options, "%TAKEOUT%"),
     )
     connection.commit()
     print(f"Updated {cursor.rowcount} integration(s)")
@@ -34,6 +34,7 @@ try:
 except mysql.connector.Error as err:
     print(f"Error: {err}")
 finally:
-    if 'connection' in locals() and connection.is_connected():
+    if "cursor" in locals() and cursor:
         cursor.close()
+    if "connection" in locals() and connection.is_connected():
         connection.close()

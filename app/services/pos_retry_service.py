@@ -40,7 +40,8 @@ class POSRetryService:
                     failed += 1
                     continue
 
-                order = self.order_repo.get_order_by_id(record["order_id"])
+                # Use get_order_with_user to get user details (phone, email) directly, consistent with POSService
+                order = self.order_repo.get_order_with_user(record["order_id"])
                 if not order:
                     self.order_sync_repo.update_sync_status(record["id"], status="FAILED", error="Order not found")
                     failed += 1
@@ -60,9 +61,10 @@ class POSRetryService:
                     except (json.JSONDecodeError, TypeError):
                         customization = {}
 
-                customer_name = customization.get("customer_name") or ""
-                customer_phone = customization.get("customer_phone") or ""
-                customer_email = customization.get("customer_email") or ""
+                # Get customer info from order (which includes user details from Users table)
+                customer_name = order.get("customer_name") or customization.get("customer_name") or ""
+                customer_phone = order.get("customer_phone") or customization.get("customer_phone") or ""
+                customer_email = order.get("customer_email") or customization.get("customer_email") or ""
 
                 order_data = {
                     "order_details": order_details,
@@ -76,7 +78,12 @@ class POSRetryService:
 
                 if pos_type == "SQUARE":
                     response = self.pos_service._sync_to_square(
-                        record["order_id"], pos_integration, order_data, idempotency_key
+                        record["order_id"],
+                        pos_integration,
+                        order_data,
+                        idempotency_key,
+                        order=order,
+                        customization=customization,
                     )
                     external_order_id = response.get("order", {}).get("id") if response.get("order") else None
                     self.order_sync_repo.update_sync_status(
