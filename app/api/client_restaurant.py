@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Any
 
-from fastapi import APIRouter, Body, Depends, status
+from fastapi import APIRouter, Body, Depends, HTTPException, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.api.restaurants import (
@@ -219,5 +219,14 @@ async def update_restaurant(
 ):
     restaurant_id = int(claims["restaurant_id"])
     data = validate_payload(ClientUpdateRestaurantRequest, payload)
+    # BUSINESS RULE: FAQs must always be enabled.
+    # Menu questions require FAQ functionality to work properly with orders.
+    # See: [FE/BE] Agent Answers FAQ Questions When FAQ Flag is Disabled
+    # See: [FE/BE] Agent Cannot Provide Menu Information When Orders Enabled but FAQ Disabled
+    if data.features is not None and data.features.faqs_enabled is False:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="FAQ Agent Capability cannot be disabled.",
+        )
     result = service.update_restaurant(restaurant_id, data.model_dump(exclude_unset=True))
     return ClientRestaurantResponse(**result)
