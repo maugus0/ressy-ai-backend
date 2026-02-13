@@ -34,7 +34,8 @@ logger = logging.getLogger(__name__)
 class OrderItem(BaseModel):
     model_config = ConfigDict(extra="allow")
 
-    item_id: int
+    # Positive values map to known menu items. `0` is allowed for custom/freeform items.
+    item_id: int = Field(ge=0)
     name: str
     quantity: int = 1
     price: Optional[float] = None
@@ -309,6 +310,13 @@ def _calculate_total(items: List[OrderItem]) -> float:
     return round(total, 2)
 
 
+def _has_menu_item_id(item_id: Optional[int]) -> bool:
+    try:
+        return int(item_id) > 0
+    except (TypeError, ValueError):
+        return False
+
+
 async def _validate_and_price_items(
     items: List[OrderItem],
 ) -> Tuple[List[Dict[str, Any]], Optional[List[Dict[str, Any]]]]:
@@ -321,7 +329,7 @@ async def _validate_and_price_items(
 
     for item in items:
         base_price = float(item.price or 0)
-        if not item.item_id:
+        if not _has_menu_item_id(item.item_id):
             if item.options:
                 issues.append(
                     {
@@ -514,7 +522,7 @@ async def create_order(**kwargs) -> Dict[str, Any]:
         # Store detail rows for relational table
         for item in args.items:
             item_id = item.item_id
-            if item_id:
+            if _has_menu_item_id(item_id):
                 for _ in range(max(item.quantity, 1)):
                     order_repo.create_order_details(order_id, item_id)
         # Store order item snapshots and options
@@ -694,7 +702,7 @@ def _match_menu_item(menu_items: List[Dict[str, Any]], request_item: OrderItem) 
     """Match a requested item against menu items by ID or name."""
     for item in menu_items:
         # Match by item_id if provided
-        if request_item.item_id and item.get("id") == request_item.item_id:
+        if _has_menu_item_id(request_item.item_id) and item.get("id") == request_item.item_id:
             return item
         # Match by name (check both "item_name" and "name" fields)
         item_name = item.get("item_name") or item.get("name")

@@ -203,6 +203,25 @@ def test_create_group_single_select_unsets_existing_default():
     assert option_repo.unset_default_calls == 1
 
 
+def test_create_group_single_select_without_default_does_not_unset():
+    option_repo = _FakeOptionRepo()
+    service = MenuOptionService(
+        option_repo=option_repo,
+        item_option_repo=_FakeItemOptionRepo(),
+        menu_repo=_FakeRepo(),
+    )
+    payload = {
+        "name": "Spice",
+        "selection_type": "single",
+        "values": [
+            {"name": "Mild", "price_delta": 0, "is_default": False, "is_available": True},
+            {"name": "Hot", "price_delta": 0, "is_default": False, "is_available": True},
+        ],
+    }
+    service.create_option_group(restaurant_id=1, data=payload)
+    assert option_repo.unset_default_calls == 0
+
+
 def test_attach_overrides_reject_invalid_ranges():
     service = MenuOptionService(option_repo=_FakeRepo(), item_option_repo=_FakeRepo(), menu_repo=_FakeRepo())
     group = {

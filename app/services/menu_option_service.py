@@ -133,9 +133,9 @@ class MenuOptionService:
         if not group_id:
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to create group")
         selection_type = data.get("selection_type")
+        if selection_type == "single" and any(value.get("is_default") for value in values):
+            self.option_repo.unset_default_in_group(group_id)
         for value in values:
-            if selection_type == "single" and value.get("is_default"):
-                self.option_repo.unset_default_in_group(group_id)
             self.option_repo.create_value(group_id, value)
         group = self.option_repo.get_group_by_id(group_id)
         if not group:
