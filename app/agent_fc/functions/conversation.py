@@ -491,7 +491,7 @@ async def send_sms_redirect(**kwargs) -> AgentFunctionResult:
 
     from app.repositories.mysql_notification_log_repo import MySQLNotificationLogRepository
     from app.repositories.mysql_restaurant_features_repo import MySQLRestaurantFeaturesRepository
-    from app.services.notification_service import NotificationService
+    from app.services.notification_service import NotificationService, SMSSendError
 
     context, model_kwargs = split_call_context(kwargs, SendSMSRedirectArgs)
     args = SendSMSRedirectArgs.model_validate(model_kwargs)
@@ -643,13 +643,37 @@ async def send_sms_redirect(**kwargs) -> AgentFunctionResult:
             escalation_phone_number=escalation_phone_number,
         )
 
+    # Require a valid call_id so Notification_Logs entries remain uniquely attributable
+    # Using entity_id=0 would collapse all logs under the same entity, making audit/retry ambiguous
+    if not call_id:
+        logger.error(
+            "Missing call_id for SMS redirect notification; aborting send. "
+            "restaurant_id=%s customer_phone=%s redirect_type=%s",
+            restaurant_id,
+            f"****{customer_phone[-4:]}" if customer_phone and len(customer_phone) >= 4 else "****",
+            args.redirect_type,
+        )
+        return _handle_sms_redirect_error(
+            context=context,
+            redirect_type=args.redirect_type,
+            error="Missing call identifier",
+            reason="call_id not available for SMS redirect logging",
+            customer_message=(
+                "I'm having trouble sending that text link right now. " "Let me connect you with a team member instead."
+            ),
+            restaurant_id=restaurant_id,
+            customer_phone=customer_phone,
+            escalation_phone_number=escalation_phone_number,
+        )
+
     # Use NotificationService to send SMS and log to Notification_Logs table
     # This follows the same pattern as order/reservation status notifications
     notification_repo = MySQLNotificationLogRepository()
     notification_service = NotificationService(notification_repo=notification_repo)
 
-    # Send SMS using the public interface (handles logging internally)
-    entity_id = int(call_id) if call_id else 0
+    # Send SMS using the public interface with raise_on_failure=True
+    # This ensures we detect Twilio failures and escalate appropriately
+    entity_id = int(call_id)
     log_id: Optional[int] = None
 
     try:
@@ -662,6 +686,7 @@ async def send_sms_redirect(**kwargs) -> AgentFunctionResult:
             from_number=from_number,
             account_sid=account_sid,
             auth_token=auth_token,
+            raise_on_failure=True,  # Raise SMSSendError if Twilio fails
         )
 
         logger.info(
@@ -698,14 +723,36 @@ async def send_sms_redirect(**kwargs) -> AgentFunctionResult:
             side_effects=[],  # No InjectAgentMessage - let agent speak naturally from the content
         )
 
-    except Exception as exc:
+    except SMSSendError as sms_err:
+        # SMSSendError is raised when Twilio returns failure - log is already marked failed
         logger.error(
-            "Failed to send SMS redirect: error=%s type=%s call_sid=%s",
+            "SMS redirect failed (Twilio error): error=%s log_id=%s type=%s call_sid=%s",
+            sms_err.error_message,
+            sms_err.log_id,
+            args.redirect_type,
+            call_sid,
+        )
+        return _handle_sms_redirect_error(
+            context=context,
+            redirect_type=args.redirect_type,
+            error=f"SMS delivery failed: {sms_err.error_message}",
+            reason=f"Twilio SMS failed: {str(sms_err.error_message)[:100]}",
+            customer_message="I apologize, but I wasn't able to send the text message. "
+            "Let me connect you with the team to help you directly.",
+            restaurant_id=restaurant_id,
+            customer_phone=customer_phone,
+            escalation_phone_number=escalation_phone_number,
+        )
+
+    except Exception as exc:
+        # Unexpected error (network, DB, etc.) - may need to update log status
+        logger.error(
+            "Failed to send SMS redirect (unexpected): error=%s type=%s call_sid=%s",
             str(exc),
             args.redirect_type,
             call_sid,
         )
-        # Update log status to failed if we created one
+        # Update log status to failed if we created one (SMSSendError already handled this)
         if log_id is not None:
             try:
                 await asyncio.to_thread(
