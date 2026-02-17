@@ -14,7 +14,7 @@ class MySQLOrderItemRepository(MySQLBaseRepository):
 
     def create_order_item(self, order_id: int, data: Dict[str, Any]) -> int:
         query = """
-            INSERT INTO Order_Items (
+            INSERT INTO Order_Item_Snapshots (
                 order_id,
                 menu_item_id,
                 item_name_snapshot,
@@ -48,7 +48,7 @@ class MySQLOrderItemRepository(MySQLBaseRepository):
         if not options:
             return 0
         query = """
-            INSERT INTO Order_Item_Options (
+            INSERT INTO Order_Item_Options_Snapshots (
                 order_item_id,
                 option_value_id,
                 option_group_name_snapshot,
@@ -75,7 +75,7 @@ class MySQLOrderItemRepository(MySQLBaseRepository):
 
     def list_order_items(self, order_id: int) -> List[Dict[str, Any]]:
         query = """
-            SELECT * FROM Order_Items
+            SELECT * FROM Order_Item_Snapshots
             WHERE order_id = %s
             ORDER BY id
         """
@@ -84,13 +84,13 @@ class MySQLOrderItemRepository(MySQLBaseRepository):
     def list_order_item_options(self, order_id: int) -> List[Dict[str, Any]]:
         query = """
             SELECT oio.*, oi.order_id
-            FROM Order_Item_Options oio
-            JOIN Order_Items oi ON oio.order_item_id = oi.id
+            FROM Order_Item_Options_Snapshots oio
+            JOIN Order_Item_Snapshots oi ON oio.order_item_id = oi.id
             WHERE oi.order_id = %s
             ORDER BY oio.id
         """
         return self._execute_query(query, (order_id,))
 
     def delete_order_items_by_order(self, order_id: int) -> int:
-        query = "DELETE FROM Order_Items WHERE order_id = %s"
+        query = "DELETE FROM Order_Item_Snapshots WHERE order_id = %s"
         return self._execute_update(query, (order_id,))

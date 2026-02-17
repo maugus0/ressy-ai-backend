@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.agent_fc.functions.function_context import NoArgs, split_call_context
+from app.agent_fc.functions.function_context import NoArgs, context_restaurant_id, split_call_context
 from app.repositories.mysql_menu_repo import MySQLMenuRepository
 from app.utils.logging_config import get_logger
 
@@ -34,9 +34,10 @@ class GetMenuItemDetailsArgs(BaseModel):
 class GetMenuItemCustomizationsArgs(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    item_ids: List[int] = Field(..., min_length=1)
-    exclude_group_ids: List[int] = Field(default_factory=list)
+    item_id: int
+    completed_group_ids: List[int] = Field(default_factory=list)
     include_ask_if_mentioned: bool = False
+    reset_progress: bool = False
 
 
 def _normalize_boolean(value: Any) -> bool:
@@ -116,16 +117,6 @@ async def _run_repo_call(func, *args, **kwargs):
     return await asyncio.to_thread(func, *args, **kwargs)
 
 
-def _context_restaurant_id(context: Dict[str, Any]) -> int | None:
-    raw = context.get("restaurant_id")
-    if raw is None:
-        return None
-    try:
-        return int(raw)
-    except (TypeError, ValueError):
-        return None
-
-
 def _summarize_menu_items(items: List[Dict[str, Any]]) -> Tuple[List[str], List[Dict[str, Any]]]:
     categories: List[str] = []
     summaries: List[Dict[str, Any]] = []
@@ -159,7 +150,7 @@ async def list_menu_items(**kwargs) -> Dict[str, Any]:
     context, model_kwargs = split_call_context(kwargs, NoArgs)
     NoArgs.model_validate(model_kwargs)
     call_sid = context.get("call_sid")
-    restaurant_id = _context_restaurant_id(context)
+    restaurant_id = context_restaurant_id(context)
     if restaurant_id is None:
         return {"status": "ERROR", "message": "Missing restaurant context for menu lookup."}
     logger.info("list_menu_items invoked restaurant_id=%s call_sid=%s", restaurant_id, call_sid)
@@ -219,7 +210,7 @@ async def get_menu_item_details(**kwargs) -> Dict[str, Any]:
     context, model_kwargs = split_call_context(kwargs, GetMenuItemDetailsArgs)
     args = GetMenuItemDetailsArgs.model_validate(model_kwargs)
     call_sid = context.get("call_sid")
-    restaurant_id = _context_restaurant_id(context)
+    restaurant_id = context_restaurant_id(context)
     if restaurant_id is None:
         return {
             "status": "ERROR",
@@ -238,8 +229,6 @@ async def get_menu_item_details(**kwargs) -> Dict[str, Any]:
         found = menu_repo.get_menu_by_id(restaurant_id, args.item_id)
         if found:
             found["option_groups"] = menu_repo.get_option_groups_for_item(found.get("id"))
-        if not found:
-            found = menu_repo.get_menu_item_with_options(args.item_id)
         return found
 
     try:
@@ -286,18 +275,23 @@ async def get_menu_item_details(**kwargs) -> Dict[str, Any]:
 
 async def get_menu_item_customizations(**kwargs) -> Dict[str, Any]:
     """
-    Return customization option groups for one or more menu items.
+    Return customization option group progression for a single menu item.
     """
     context, model_kwargs = split_call_context(kwargs, GetMenuItemCustomizationsArgs)
     args = GetMenuItemCustomizationsArgs.model_validate(model_kwargs)
-    restaurant_id = context.get("restaurant_id")
+    restaurant_id = context_restaurant_id(context)
     call_sid = context.get("call_sid")
+    progress_store = context.get("customization_progress_by_item")
+    if not isinstance(progress_store, dict):
+        progress_store = {}
     logger.info(
-        "get_menu_item_customizations invoked restaurant_id=%s item_ids=%s exclude_group_ids=%s include_ask_if_mentioned=%s call_sid=%s",
+        "get_menu_item_customizations invoked restaurant_id=%s item_id=%s completed_group_ids=%s include_ask_if_mentioned=%s reset_progress=%s progress_store=%s call_sid=%s",
         restaurant_id,
-        args.item_ids,
-        args.exclude_group_ids,
+        args.item_id,
+        args.completed_group_ids,
         args.include_ask_if_mentioned,
+        args.reset_progress,
+        progress_store,
         call_sid,
     )
     if restaurant_id is None:
@@ -305,22 +299,24 @@ async def get_menu_item_customizations(**kwargs) -> Dict[str, Any]:
             "status": "ERROR",
             "message": "Missing restaurant context for customizations lookup.",
         }
+    if args.reset_progress:
+        progress_store.pop(args.item_id, None)
 
-    def _fetch_for_item(item_id: int) -> Tuple[int, List[Dict[str, Any]], bool]:
+    def _fetch_for_item(item_id: int) -> Tuple[List[Dict[str, Any]], bool]:
         menu_repo = _get_menu_repo()
         found = menu_repo.get_menu_by_id(int(restaurant_id), item_id)
         if not found:
-            return item_id, [], False
+            return [], False
         groups = menu_repo.get_option_groups_for_item(item_id)
-        return item_id, groups or [], True
+        return groups or [], True
 
     try:
-        results = await asyncio.gather(*[_run_repo_call(_fetch_for_item, item_id) for item_id in args.item_ids])
+        groups, found = await _run_repo_call(_fetch_for_item, args.item_id)
     except Exception as exc:  # noqa: BLE001 - defensive for agent calls
         logger.exception(
-            "[ERROR] get_menu_item_customizations failed restaurant_id=%s item_ids=%s call_sid=%s: %s",
+            "[ERROR] get_menu_item_customizations failed restaurant_id=%s item_id=%s call_sid=%s: %s",
             restaurant_id,
-            args.item_ids,
+            args.item_id,
             call_sid,
             exc,
         )
@@ -330,53 +326,113 @@ async def get_menu_item_customizations(**kwargs) -> Dict[str, Any]:
             "message": "Unable to load customizations right now.",
         }
 
-    items: List[Dict[str, Any]] = []
-    missing_item_ids: List[int] = []
-    excluded_group_ids = {int(group_id) for group_id in args.exclude_group_ids}
-    for item_id, groups, found in results:
-        if not found:
-            missing_item_ids.append(item_id)
+    if not found:
+        progress_store.pop(args.item_id, None)
+        return {
+            "status": "NOT_FOUND",
+            "restaurant_id": restaurant_id,
+            "item_id": args.item_id,
+            "message": "Menu item was not found for this restaurant.",
+        }
+
+    progress = progress_store.get(args.item_id)
+    if not isinstance(progress, dict):
+        progress = {}
+        progress_store[args.item_id] = progress
+
+    existing_completed = progress.get("completed_group_ids")
+    completed_group_ids: set[int] = set()
+    if isinstance(existing_completed, set):
+        completed_group_ids = {int(group_id) for group_id in existing_completed}
+    elif isinstance(existing_completed, list):
+        for group_id in existing_completed:
+            try:
+                completed_group_ids.add(int(group_id))
+            except (TypeError, ValueError):
+                continue
+
+    for group_id in args.completed_group_ids:
+        try:
+            completed_group_ids.add(int(group_id))
+        except (TypeError, ValueError):
             continue
-        option_groups = [
-            _format_option_group(group)
-            for group in sorted(groups, key=lambda entry: entry.get("sort_order", 0))
-            if _is_available(group)
-        ]
-        option_groups = [group for group in option_groups if group.get("values")]
-        pending_groups: List[Dict[str, Any]] = []
-        deferred_group_ids: List[int] = []
-        for group in option_groups:
-            group_id = _group_id(group)
-            if group_id is None or group_id in excluded_group_ids:
-                continue
-            if group.get("prompt_style") == "ASK_IF_MENTIONED" and not args.include_ask_if_mentioned:
-                deferred_group_ids.append(group_id)
-                continue
-            pending_groups.append(group)
 
-        next_group = pending_groups[0] if pending_groups else None
-        remaining_group_ids = [
-            group_id for group_id in (_group_id(group) for group in pending_groups[1:]) if group_id is not None
-        ]
+    if args.include_ask_if_mentioned:
+        progress["include_ask_if_mentioned"] = True
+    include_ask_if_mentioned = bool(progress.get("include_ask_if_mentioned"))
 
-        items.append(
-            {
-                "item_id": item_id,
-                "next_group": next_group,
-                "remaining_group_ids": remaining_group_ids,
-                "remaining_count": len(remaining_group_ids),
-                "deferred_group_ids": deferred_group_ids,
-                "deferred_count": len(deferred_group_ids),
-                "progress_note": (
-                    "Only next_group contains options for caller dialogue. "
-                    "After each answer, call get_menu_item_customizations again with updated exclude_group_ids."
-                ),
-            }
-        )
+    pending_group_id: Optional[int]
+    raw_pending_group_id = progress.get("pending_group_id")
+    try:
+        pending_group_id = int(raw_pending_group_id) if raw_pending_group_id is not None else None
+    except (TypeError, ValueError):
+        pending_group_id = None
+
+    option_groups = [
+        _format_option_group(group)
+        for group in sorted(groups, key=lambda entry: entry.get("sort_order", 0))
+        if _is_available(group)
+    ]
+    option_groups = [group for group in option_groups if group.get("values")]
+
+    all_group_ids = {_group_id(group) for group in option_groups}
+    all_group_ids.discard(None)
+    completed_group_ids.intersection_update({int(group_id) for group_id in all_group_ids})
+
+    if pending_group_id is not None and (
+        pending_group_id in completed_group_ids or pending_group_id not in all_group_ids
+    ):
+        pending_group_id = None
+
+    active_groups: List[Dict[str, Any]] = []
+    deferred_group_ids: List[int] = []
+    for group in option_groups:
+        group_id = _group_id(group)
+        if group_id is None or group_id in completed_group_ids:
+            continue
+        if group.get("prompt_style") == "ASK_IF_MENTIONED" and not include_ask_if_mentioned:
+            deferred_group_ids.append(group_id)
+            continue
+        active_groups.append(group)
+
+    next_group = None
+    if pending_group_id is not None:
+        for group in active_groups:
+            if _group_id(group) == pending_group_id:
+                next_group = group
+                break
+    if next_group is None and active_groups:
+        next_group = active_groups[0]
+        pending_group_id = _group_id(next_group)
+    if next_group is None:
+        pending_group_id = None
+
+    next_group_id = _group_id(next_group) if next_group else None
+    remaining_group_ids = [
+        group_id
+        for group_id in (_group_id(group) for group in active_groups)
+        if group_id is not None and group_id != next_group_id
+    ]
+
+    progress["completed_group_ids"] = completed_group_ids
+    progress["pending_group_id"] = pending_group_id
+    progress["include_ask_if_mentioned"] = include_ask_if_mentioned
 
     return {
         "status": "FOUND",
         "restaurant_id": restaurant_id,
-        "items": items,
-        "missing_item_ids": missing_item_ids,
+        "item_id": args.item_id,
+        "next_group": next_group,
+        "remaining_group_ids": remaining_group_ids,
+        "remaining_count": len(remaining_group_ids),
+        "deferred_group_ids": deferred_group_ids,
+        "deferred_count": len(deferred_group_ids),
+        "completed_group_ids": sorted(completed_group_ids),
+        "pending_group_id": pending_group_id,
+        "include_ask_if_mentioned": include_ask_if_mentioned,
+        "progress_note": (
+            "Only next_group contains options for caller dialogue. "
+            "After the caller answers, call get_menu_item_customizations again with completed_group_ids "
+            "including the previous pending_group_id."
+        ),
     }

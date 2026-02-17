@@ -104,12 +104,12 @@ def get_function_definitions(feature_flags: Optional[Dict[str, Any]] = None) -> 
             _definition(
                 name="get_menu_item_customizations",
                 description=(
-                    "Retrieve customization progression for selected menu items by item_id. "
+                    "Retrieve customization progression for one selected menu item by item_id. "
                     "Call this immediately after item selection whenever has_customizations=true, before any "
                     "customization dialogue, and do it silently in the background. "
-                    "The response returns next_group (single actionable group), remaining_group_ids, and deferred_group_ids. "
+                    "The response returns next_group (single actionable group), pending_group_id, remaining_group_ids, and deferred_group_ids. "
                     "Present only next_group to the caller. After the caller answers, call this function again with "
-                    "exclude_group_ids including already handled group IDs to fetch the next group. "
+                    "completed_group_ids including the prior pending_group_id so the flow advances. "
                     "Do not ask about remaining/deferred groups until they are returned as next_group in a later call. "
                     "Set include_ask_if_mentioned=true only when the caller explicitly asks for additional customizations."
                 ),

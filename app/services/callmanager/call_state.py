@@ -31,3 +31,5 @@ class StreamState:
     filler_injected: bool = False
     last_filler_message: Optional[str] = None
     last_activity_time: Optional[float] = None
+    customization_progress_by_item: dict[int, dict[str, Any]] = field(default_factory=dict)
+    order_session_state: dict[str, Any] = field(default_factory=dict)

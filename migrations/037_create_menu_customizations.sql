@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS Menu_Option_Groups (
     min_select INT DEFAULT 0,
     max_select INT DEFAULT NULL,
     free_allowance INT NOT NULL DEFAULT 0 COMMENT 'Number of selections included at no extra charge',
+    free_allowance_strategy VARCHAR(32) NOT NULL DEFAULT 'HIGHEST_PRICE_FIRST' COMMENT 'HIGHEST_PRICE_FIRST|LOWEST_PRICE_FIRST',
     allows_quantity BOOLEAN NOT NULL DEFAULT FALSE,
     max_quantity_per_option INT DEFAULT NULL,
     prompt_style VARCHAR(30) NOT NULL DEFAULT 'ASK_IF_MENTIONED' COMMENT 'ASK_ALWAYS|ASK_IF_MENTIONED|SUGGEST_POPULAR',
@@ -62,7 +63,7 @@ CREATE TABLE IF NOT EXISTS Menu_Item_Option_Groups (
     INDEX idx_miog_sort (sort_order)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
-CREATE TABLE IF NOT EXISTS Order_Items (
+CREATE TABLE IF NOT EXISTS Order_Item_Snapshots (
     id INT AUTO_INCREMENT PRIMARY KEY,
     order_id INT NOT NULL,
     menu_item_id INT NULL,
@@ -82,7 +83,7 @@ CREATE TABLE IF NOT EXISTS Order_Items (
     INDEX idx_oi_created_at (created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
-CREATE TABLE IF NOT EXISTS Order_Item_Options (
+CREATE TABLE IF NOT EXISTS Order_Item_Options_Snapshots (
     id INT AUTO_INCREMENT PRIMARY KEY,
     order_item_id INT NOT NULL,
     option_value_id INT NULL,
@@ -92,7 +93,7 @@ CREATE TABLE IF NOT EXISTS Order_Item_Options (
     quantity INT NOT NULL DEFAULT 1,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    FOREIGN KEY (order_item_id) REFERENCES Order_Items(id) ON DELETE CASCADE ON UPDATE CASCADE,
+    FOREIGN KEY (order_item_id) REFERENCES Order_Item_Snapshots(id) ON DELETE CASCADE ON UPDATE CASCADE,
     FOREIGN KEY (option_value_id) REFERENCES Menu_Option_Values(id) ON DELETE SET NULL ON UPDATE CASCADE,
     INDEX idx_oio_order_item (order_item_id),
     INDEX idx_oio_option_value (option_value_id)

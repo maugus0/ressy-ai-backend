@@ -30,6 +30,8 @@ class PricedItem:
 class OrderCustomizationService:
     """Validate option selections and compute pricing snapshots."""
 
+    FREE_ALLOWANCE_STRATEGIES = {"HIGHEST_PRICE_FIRST", "LOWEST_PRICE_FIRST"}
+
     def __init__(self, menu_repo: Optional[MySQLMenuRepository] = None):
         self.menu_repo = menu_repo or MySQLMenuRepository()
 
@@ -271,7 +273,9 @@ class OrderCustomizationService:
             group_total = sum(delta for delta, _ in deltas)
             free_allowance = int(group.get("free_allowance") or 0)
             if free_allowance > 0 and deltas:
-                deltas_sorted = sorted(deltas, key=lambda item: item[0], reverse=True)
+                strategy = self._normalize_free_allowance_strategy(group.get("free_allowance_strategy"))
+                reverse = strategy == "HIGHEST_PRICE_FIRST"
+                deltas_sorted = sorted(deltas, key=lambda item: item[0], reverse=reverse)
                 allowance_reduction = sum(delta for delta, _ in deltas_sorted[:free_allowance])
                 group_total = max(group_total - allowance_reduction, 0)
             option_total += group_total
@@ -329,3 +333,9 @@ class OrderCustomizationService:
             return int(value) == 1
         except (TypeError, ValueError):
             return False
+
+    def _normalize_free_allowance_strategy(self, value: Any) -> str:
+        text = str(value or "").strip().upper()
+        if text in self.FREE_ALLOWANCE_STRATEGIES:
+            return text
+        return "HIGHEST_PRICE_FIRST"

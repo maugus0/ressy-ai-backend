@@ -16,10 +16,10 @@ class MySQLMenuOptionRepository(MySQLBaseRepository):
         query = """
             INSERT INTO Menu_Option_Groups (
                 restaurant_id, name, description, selection_type, min_select, max_select,
-                free_allowance, allows_quantity, max_quantity_per_option, prompt_style,
+                free_allowance, free_allowance_strategy, allows_quantity, max_quantity_per_option, prompt_style,
                 is_required, is_available, sort_order, created_at, updated_at
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
         """
         return self._execute_insert(
             query,
@@ -31,6 +31,7 @@ class MySQLMenuOptionRepository(MySQLBaseRepository):
                 data.get("min_select", 0),
                 data.get("max_select"),
                 data.get("free_allowance", 0),
+                data.get("free_allowance_strategy", "HIGHEST_PRICE_FIRST"),
                 data.get("allows_quantity", False),
                 data.get("max_quantity_per_option"),
                 data.get("prompt_style", "ASK_IF_MENTIONED"),
@@ -50,6 +51,7 @@ class MySQLMenuOptionRepository(MySQLBaseRepository):
             "min_select",
             "max_select",
             "free_allowance",
+            "free_allowance_strategy",
             "allows_quantity",
             "max_quantity_per_option",
             "prompt_style",
@@ -155,7 +157,7 @@ class MySQLMenuOptionRepository(MySQLBaseRepository):
     def has_order_usage_for_group(self, group_id: int) -> bool:
         query = """
             SELECT 1
-            FROM Order_Item_Options oio
+            FROM Order_Item_Options_Snapshots oio
             JOIN Menu_Option_Values mov ON mov.id = oio.option_value_id
             WHERE mov.group_id = %s
             LIMIT 1
@@ -165,7 +167,7 @@ class MySQLMenuOptionRepository(MySQLBaseRepository):
     def has_order_usage_for_value(self, value_id: int) -> bool:
         query = """
             SELECT 1
-            FROM Order_Item_Options
+            FROM Order_Item_Options_Snapshots
             WHERE option_value_id = %s
             LIMIT 1
         """

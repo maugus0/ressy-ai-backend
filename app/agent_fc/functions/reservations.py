@@ -11,7 +11,12 @@ from typing import Any, Dict, Optional
 from pydantic import BaseModel, ConfigDict
 
 from app.agent_fc.functions.common_restaurant import load_restaurant
-from app.agent_fc.functions.function_context import NoArgs, split_call_context
+from app.agent_fc.functions.function_context import (
+    NoArgs,
+    context_customer_contact,
+    context_restaurant_id,
+    split_call_context,
+)
 from app.config import settings
 from app.repositories.mysql_reservation_repo import MySQLReservationRepository
 from app.repositories.mysql_restaurant_repo import MySQLRestaurantRepository
@@ -207,24 +212,6 @@ async def _run_service_call(func, *args, **kwargs):
     return await asyncio.to_thread(func, *args, **kwargs)
 
 
-def _context_restaurant_id(context: Dict[str, Any]) -> Optional[int]:
-    raw = context.get("restaurant_id")
-    if raw is None:
-        return None
-    try:
-        return int(raw)
-    except (TypeError, ValueError):
-        return None
-
-
-def _context_customer_contact(context: Dict[str, Any]) -> Optional[str]:
-    value = context.get("customer_contact") or context.get("caller_phone")
-    if value is None:
-        return None
-    text = str(value).strip()
-    return text or None
-
-
 def _parse_datetime_str(value: str) -> datetime:
     """Parse ISO-ish datetime strings used by the agent."""
     try:
@@ -257,8 +244,8 @@ async def create_reservation(**kwargs) -> Dict[str, Any]:
     context, model_kwargs = split_call_context(kwargs, CreateReservationArgs)
     args = CreateReservationArgs.model_validate(model_kwargs)
     call_sid = context.get("call_sid")
-    restaurant_id = _context_restaurant_id(context)
-    customer_contact = _context_customer_contact(context)
+    restaurant_id = context_restaurant_id(context)
+    customer_contact = context_customer_contact(context)
     if restaurant_id is None:
         return {"status": "FAILED", "message": "Missing restaurant context."}
     if not customer_contact:
@@ -501,8 +488,8 @@ async def lookup_reservation(**kwargs) -> Dict[str, Any]:
     context, model_kwargs = split_call_context(kwargs, NoArgs)
     NoArgs.model_validate(model_kwargs)
     call_sid = context.get("call_sid")
-    restaurant_id = _context_restaurant_id(context)
-    customer_contact = _context_customer_contact(context)
+    restaurant_id = context_restaurant_id(context)
+    customer_contact = context_customer_contact(context)
     if restaurant_id is None:
         return {"status": "FAILED", "message": "Missing restaurant context."}
     if not customer_contact:
@@ -563,8 +550,8 @@ async def update_reservation(**kwargs) -> Dict[str, Any]:
     context, model_kwargs = split_call_context(kwargs, UpdateReservationArgs)
     args = UpdateReservationArgs.model_validate(model_kwargs)
     call_sid = context.get("call_sid")
-    restaurant_id = _context_restaurant_id(context)
-    customer_contact = _context_customer_contact(context)
+    restaurant_id = context_restaurant_id(context)
+    customer_contact = context_customer_contact(context)
     if restaurant_id is None:
         return {"status": "FAILED", "message": "Missing restaurant context."}
     if not customer_contact:
@@ -810,7 +797,7 @@ async def check_reservation_availability(**kwargs) -> Dict[str, Any]:
     context, model_kwargs = split_call_context(kwargs, CheckAvailabilityArgs)
     args = CheckAvailabilityArgs.model_validate(model_kwargs)
     call_sid = context.get("call_sid")
-    restaurant_id = _context_restaurant_id(context)
+    restaurant_id = context_restaurant_id(context)
     if restaurant_id is None:
         return {"status": "FAILED", "message": "Missing restaurant context."}
     logger.info(

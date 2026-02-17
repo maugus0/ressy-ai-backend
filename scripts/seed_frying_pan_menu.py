@@ -493,14 +493,14 @@ def main() -> None:
 
         for item_name in chicken_sandwich_items:
             menu_id = menu_ids[item_name]
-            _attach_group_to_item(cursor, menu_id, group_ids["Spicy Level"])
+            _attach_group_to_item(cursor, menu_id, group_ids["Spice Level"])
             _attach_group_to_item(cursor, menu_id, group_ids["Sandwich Add-ons"])
             _attach_group_to_item(cursor, menu_id, group_ids["Make It Combo"])
             _attach_group_to_item(cursor, menu_id, group_ids["House-made Dips (2oz)"])
 
         for item_name in fries_items:
             menu_id = menu_ids[item_name]
-            _attach_group_to_item(cursor, menu_id, group_ids["Spicy Level"])
+            _attach_group_to_item(cursor, menu_id, group_ids["Spice Level"])
             _attach_group_to_item(cursor, menu_id, group_ids["Fries Add-ons"])
             _attach_group_to_item(cursor, menu_id, group_ids["House-made Dips (2oz)"])
 

@@ -182,6 +182,7 @@ def test_create_group_preserves_multiple_defaults_for_multi_select():
     group = service.create_option_group(restaurant_id=1, data=payload)
     assert option_repo.unset_default_calls == 0
     assert sum(1 for value in group["values"] if value.get("is_default")) == 2
+    assert group["free_allowance_strategy"] == "HIGHEST_PRICE_FIRST"
 
 
 def test_create_group_single_select_unsets_existing_default():
@@ -203,6 +204,40 @@ def test_create_group_single_select_unsets_existing_default():
     assert option_repo.unset_default_calls == 1
 
 
+def test_create_group_normalizes_free_allowance_strategy():
+    option_repo = _FakeOptionRepo()
+    service = MenuOptionService(
+        option_repo=option_repo,
+        item_option_repo=_FakeItemOptionRepo(),
+        menu_repo=_FakeRepo(),
+    )
+    payload = {
+        "name": "Sauces",
+        "selection_type": "multiple",
+        "free_allowance_strategy": "lowest_price_first",
+        "values": [],
+    }
+    group = service.create_option_group(restaurant_id=1, data=payload)
+    assert group["free_allowance_strategy"] == "LOWEST_PRICE_FIRST"
+
+
+def test_create_group_rejects_invalid_free_allowance_strategy():
+    option_repo = _FakeOptionRepo()
+    service = MenuOptionService(
+        option_repo=option_repo,
+        item_option_repo=_FakeItemOptionRepo(),
+        menu_repo=_FakeRepo(),
+    )
+    payload = {
+        "name": "Sauces",
+        "selection_type": "multiple",
+        "free_allowance_strategy": "SELECTION_ORDER",
+        "values": [],
+    }
+    with pytest.raises(HTTPException):
+        service.create_option_group(restaurant_id=1, data=payload)
+
+
 def test_create_group_single_select_without_default_does_not_unset():
     option_repo = _FakeOptionRepo()
     service = MenuOptionService(
@@ -220,6 +255,18 @@ def test_create_group_single_select_without_default_does_not_unset():
     }
     service.create_option_group(restaurant_id=1, data=payload)
     assert option_repo.unset_default_calls == 0
+
+
+def test_update_group_rejects_invalid_free_allowance_strategy():
+    group = {"id": 5, "selection_type": "multiple", "is_available": True}
+    option_repo = _FakeOptionRepo(group=group)
+    service = MenuOptionService(
+        option_repo=option_repo,
+        item_option_repo=_FakeItemOptionRepo(),
+        menu_repo=_FakeRepo(),
+    )
+    with pytest.raises(HTTPException):
+        service.update_option_group(5, {"free_allowance_strategy": "SELECTION_ORDER"})
 
 
 def test_attach_overrides_reject_invalid_ranges():

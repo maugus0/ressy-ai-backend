@@ -16,6 +16,8 @@ from app.repositories.mysql_menu_repo import MySQLMenuRepository
 class MenuOptionService:
     """Service for CRUD and mapping operations for menu options."""
 
+    FREE_ALLOWANCE_STRATEGIES = {"HIGHEST_PRICE_FIRST", "LOWEST_PRICE_FIRST"}
+
     def __init__(
         self,
         option_repo: Optional[MySQLMenuOptionRepository] = None,
@@ -46,6 +48,14 @@ class MenuOptionService:
     def _bad_request(self, message: str) -> None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=message)
 
+    def _normalize_free_allowance_strategy(self, value: Any) -> str:
+        text = str(value or "").strip().upper()
+        if not text:
+            text = "HIGHEST_PRICE_FIRST"
+        if text not in self.FREE_ALLOWANCE_STRATEGIES:
+            self._bad_request("free_allowance_strategy must be HIGHEST_PRICE_FIRST or LOWEST_PRICE_FIRST")
+        return text
+
     def _validate_group_rules(
         self,
         *,
@@ -53,6 +63,7 @@ class MenuOptionService:
         min_select: Optional[int],
         max_select: Optional[int],
         free_allowance: Optional[int],
+        free_allowance_strategy: Optional[str],
         allows_quantity: Optional[bool],
         max_quantity_per_option: Optional[int],
     ) -> None:
@@ -65,6 +76,8 @@ class MenuOptionService:
                 self._bad_request("max_select must be 1 or less for single-select groups")
         if free_allowance is not None and max_select is not None and free_allowance > max_select:
             self._bad_request("free_allowance cannot exceed max_select")
+        if free_allowance_strategy and free_allowance_strategy not in self.FREE_ALLOWANCE_STRATEGIES:
+            self._bad_request("free_allowance_strategy must be HIGHEST_PRICE_FIRST or LOWEST_PRICE_FIRST")
         if allows_quantity is False and max_quantity_per_option is not None and max_quantity_per_option > 1:
             self._bad_request("max_quantity_per_option cannot exceed 1 when quantities are disabled")
 
@@ -85,6 +98,14 @@ class MenuOptionService:
         min_select = self._ensure_field(data, "min_select", existing.get("min_select") if existing else 0)
         max_select = self._ensure_field(data, "max_select", existing.get("max_select") if existing else None)
         free_allowance = self._ensure_field(data, "free_allowance", existing.get("free_allowance") if existing else 0)
+        free_allowance_strategy = self._ensure_field(
+            data,
+            "free_allowance_strategy",
+            existing.get("free_allowance_strategy") if existing else "HIGHEST_PRICE_FIRST",
+        )
+        validate_strategy = "free_allowance_strategy" in data or existing is None
+        if validate_strategy:
+            free_allowance_strategy = self._normalize_free_allowance_strategy(free_allowance_strategy)
         allows_quantity = self._ensure_field(
             data, "allows_quantity", existing.get("allows_quantity") if existing else False
         )
@@ -98,6 +119,7 @@ class MenuOptionService:
             min_select=min_select,
             max_select=max_select,
             free_allowance=free_allowance,
+            free_allowance_strategy=free_allowance_strategy if validate_strategy else None,
             allows_quantity=allows_quantity,
             max_quantity_per_option=max_quantity_per_option,
         )
@@ -110,6 +132,7 @@ class MenuOptionService:
             "min_select": group.get("min_select"),
             "max_select": group.get("max_select"),
             "free_allowance": group.get("free_allowance"),
+            "free_allowance_strategy": None,
             "allows_quantity": group.get("allows_quantity"),
             "max_quantity_per_option": group.get("max_quantity_per_option"),
         }
@@ -126,6 +149,8 @@ class MenuOptionService:
         self._validate_group_rules(**effective)
 
     def create_option_group(self, restaurant_id: int, data: Dict[str, Any]) -> Dict[str, Any]:
+        data = dict(data)
+        data["free_allowance_strategy"] = self._normalize_free_allowance_strategy(data.get("free_allowance_strategy"))
         self._validate_group_payload(data)
         values = data.get("values") or []
         self._validate_group_defaults(selection_type=data.get("selection_type"), values=values)
@@ -144,6 +169,11 @@ class MenuOptionService:
         return group
 
     def update_option_group(self, group_id: int, data: Dict[str, Any]) -> Dict[str, Any]:
+        data = dict(data)
+        if "free_allowance_strategy" in data:
+            data["free_allowance_strategy"] = self._normalize_free_allowance_strategy(
+                data.get("free_allowance_strategy")
+            )
         existing = self.option_repo.get_group_by_id(group_id)
         if not existing:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Option group not found")

@@ -361,11 +361,6 @@ class WebSocketService:
                     "name": special.get("name"),
                     "price": special.get("price"),
                     "has_customizations": special.get("has_customizations", False),
-                    **(
-                        {"customizations_summary": special.get("customizations_summary", [])}
-                        if special.get("has_customizations", False)
-                        else {}
-                    ),
                 }
             )
 
@@ -1741,6 +1736,8 @@ class WebSocketService:
                             "call_id": call_id,
                             "restaurant_id": call_resources.restaurant_id,
                             "call_sid": call_sid,
+                            "customization_progress_by_item": state.customization_progress_by_item,
+                            "order_session_state": state.order_session_state,
                         }
                         if caller_number:
                             default_args["customer_contact"] = caller_number

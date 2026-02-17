@@ -93,3 +93,65 @@ def test_pricing_applies_free_allowance_to_highest_delta():
     # Free allowance should zero out the highest delta (2), leaving only 1 charged.
     assert priced.option_total == 1.0
     assert priced.final_unit_price == 11.0
+
+
+def test_pricing_applies_free_allowance_to_lowest_delta_when_configured():
+    groups = [
+        {
+            "id": 4,
+            "name": "Premium Toppings",
+            "selection_type": "multiple",
+            "min_select": 0,
+            "max_select": None,
+            "free_allowance": 1,
+            "free_allowance_strategy": "LOWEST_PRICE_FIRST",
+            "allows_quantity": False,
+            "max_quantity_per_option": None,
+            "is_required": False,
+            "is_available": True,
+            "values": [
+                {"id": 40, "name": "Truffle", "price_delta": 3, "is_default": False, "is_available": True},
+                {"id": 41, "name": "Garlic", "price_delta": 1, "is_default": False, "is_available": True},
+            ],
+        }
+    ]
+    service = OrderCustomizationService(menu_repo=FakeMenuRepo(groups))
+    normalized = service.validate_item_options(
+        menu_item_id=102,
+        raw_options=[{"group_id": 4, "selections": [{"value_id": 40, "quantity": 1}, {"value_id": 41, "quantity": 1}]}],
+    ).normalized_options
+    priced = service.price_item(menu_item_id=102, base_price=10.0, quantity=1, normalized_options=normalized)
+    # Lowest allowance strategy should zero out the 1 delta, leaving 3 charged.
+    assert priced.option_total == 3.0
+    assert priced.final_unit_price == 13.0
+
+
+def test_pricing_defaults_to_highest_strategy_when_strategy_is_invalid():
+    groups = [
+        {
+            "id": 5,
+            "name": "Toppings",
+            "selection_type": "multiple",
+            "min_select": 0,
+            "max_select": None,
+            "free_allowance": 1,
+            "free_allowance_strategy": "unexpected",
+            "allows_quantity": False,
+            "max_quantity_per_option": None,
+            "is_required": False,
+            "is_available": True,
+            "values": [
+                {"id": 50, "name": "A", "price_delta": 5, "is_default": False, "is_available": True},
+                {"id": 51, "name": "B", "price_delta": 2, "is_default": False, "is_available": True},
+            ],
+        }
+    ]
+    service = OrderCustomizationService(menu_repo=FakeMenuRepo(groups))
+    normalized = service.validate_item_options(
+        menu_item_id=103,
+        raw_options=[{"group_id": 5, "selections": [{"value_id": 50, "quantity": 1}, {"value_id": 51, "quantity": 1}]}],
+    ).normalized_options
+    priced = service.price_item(menu_item_id=103, base_price=10.0, quantity=1, normalized_options=normalized)
+    # Invalid strategy falls back to highest-first, so 5 is free and 2 remains.
+    assert priced.option_total == 2.0
+    assert priced.final_unit_price == 12.0

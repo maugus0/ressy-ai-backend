@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 SelectionType = Literal["single", "multiple"]
 PromptStyle = Literal["ASK_ALWAYS", "ASK_IF_MENTIONED", "SUGGEST_POPULAR"]
+FreeAllowanceStrategy = Literal["HIGHEST_PRICE_FIRST", "LOWEST_PRICE_FIRST"]
 
 
 class MenuOptionValueCreate(BaseModel):
@@ -67,6 +68,7 @@ class MenuOptionGroupCreate(BaseModel):
     min_select: int = Field(0, ge=0)
     max_select: Optional[int] = Field(None, ge=0)
     free_allowance: int = Field(0, ge=0)
+    free_allowance_strategy: FreeAllowanceStrategy = Field("HIGHEST_PRICE_FIRST")
     allows_quantity: bool = Field(False)
     max_quantity_per_option: Optional[int] = Field(None, ge=1)
     prompt_style: PromptStyle = Field("ASK_IF_MENTIONED")
@@ -85,6 +87,7 @@ class MenuOptionGroupCreate(BaseModel):
                 "min_select": 0,
                 "max_select": 5,
                 "free_allowance": 2,
+                "free_allowance_strategy": "HIGHEST_PRICE_FIRST",
                 "allows_quantity": True,
                 "max_quantity_per_option": 2,
                 "prompt_style": "ASK_ALWAYS",
@@ -107,6 +110,7 @@ class MenuOptionGroupUpdate(BaseModel):
     min_select: Optional[int] = Field(None, ge=0)
     max_select: Optional[int] = Field(None, ge=0)
     free_allowance: Optional[int] = Field(None, ge=0)
+    free_allowance_strategy: Optional[FreeAllowanceStrategy] = None
     allows_quantity: Optional[bool] = None
     max_quantity_per_option: Optional[int] = Field(None, ge=1)
     prompt_style: Optional[PromptStyle] = None
@@ -126,6 +130,7 @@ class MenuOptionGroupResponse(BaseModel):
     min_select: int
     max_select: Optional[int] = None
     free_allowance: int
+    free_allowance_strategy: FreeAllowanceStrategy = Field("HIGHEST_PRICE_FIRST")
     allows_quantity: bool
     max_quantity_per_option: Optional[int] = None
     prompt_style: PromptStyle
@@ -146,6 +151,7 @@ class MenuOptionGroupResponse(BaseModel):
                 "min_select": 0,
                 "max_select": 5,
                 "free_allowance": 2,
+                "free_allowance_strategy": "HIGHEST_PRICE_FIRST",
                 "allows_quantity": True,
                 "max_quantity_per_option": 2,
                 "prompt_style": "ASK_ALWAYS",
