@@ -1380,6 +1380,16 @@ class WebSocketService:
                         self.logger.debug("[Call] %s: %s", role, content)
                     elif message_type == "Warning":
                         self.logger.warning("[Deepgram WARNING] : %s", decoded)
+                        # If InjectAgentMessage was ignored because agent is speaking,
+                        # mark farewell as started so we close after current speech ends
+                        warning_code = decoded.get("code", "")
+                        if (
+                            warning_code == "INJECT_AGENT_MESSAGE_DURING_AGENT_SPEECH"
+                            and state.closing_after_farewell
+                            and not state.farewell_started
+                        ):
+                            self.logger.info("[Farewell] InjectAgentMessage ignored - will close after current speech")
+                            state.farewell_started = True
                     elif message_type == "Error":
                         self.logger.error("[Deepgram ERROR] : %s", decoded)
 

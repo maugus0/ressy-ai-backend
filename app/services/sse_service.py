@@ -65,6 +65,7 @@ class EscalationEventSubtype(str, Enum):
     USER_REQUESTED = "user_requested"
     INTERNAL_SERVER_ERROR = "internal_server_error"
     SUSPECTED_SPAM = "suspected_spam"
+    SMS_REDIRECT_FAILED = "sms_redirect_failed"
 
 
 class OrderEventSubtype(str, Enum):
@@ -417,6 +418,46 @@ class SSEService:
         return await self.emit_event(
             event_type=SSEEventType.ESCALATION,
             subtype=EscalationEventSubtype.SUSPECTED_SPAM.value,
+            restaurant_id=restaurant_id,
+            data=event_data,
+        )
+
+    async def emit_escalation_sms_redirect_failed(
+        self,
+        restaurant_id: int,
+        call_id: Optional[str] = None,
+        caller_phone: Optional[str] = None,
+        redirect_type: Optional[str] = None,
+        reason: Optional[str] = None,
+        data: Optional[Dict[str, Any]] = None,
+    ) -> SSEEvent:
+        """
+        Emit an escalation event when SMS redirect fails.
+
+        This is used when the system cannot send an SMS redirect link to the customer
+        (e.g., missing phone number, Twilio error, configuration issue).
+
+        Args:
+            restaurant_id: The restaurant ID
+            call_id: Optional call ID
+            caller_phone: Optional caller phone number
+            redirect_type: Type of redirect that failed ('orders' or 'reservations')
+            reason: Reason for the failure
+            data: Additional event data
+
+        Returns:
+            The emitted SSE event
+        """
+        event_data = {
+            "call_id": call_id,
+            "caller_phone": caller_phone,
+            "redirect_type": redirect_type,
+            "reason": reason,
+            **(data or {}),
+        }
+        return await self.emit_event(
+            event_type=SSEEventType.ESCALATION,
+            subtype=EscalationEventSubtype.SMS_REDIRECT_FAILED.value,
             restaurant_id=restaurant_id,
             data=event_data,
         )

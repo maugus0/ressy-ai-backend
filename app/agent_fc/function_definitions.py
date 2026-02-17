@@ -177,7 +177,7 @@ def get_function_definitions(feature_flags: Optional[Dict[str, Any]] = None) -> 
                     "book a table (redirect_type='reservations'). "
                     "Do NOT announce beforehand - just call the function directly. "
                     "After calling, speak naturally using the returned message_to_customer content. "
-                    "Phone number is automatic from caller - never ask for it."
+                    "Restaurant and phone number are automatic from context - only specify redirect_type."
                 ),
                 schema=sms_redirect_schema,
             )

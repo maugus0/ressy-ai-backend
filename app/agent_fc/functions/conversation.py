@@ -90,16 +90,13 @@ class EscalateToHumanArgs(BaseModel):
 class SendSMSRedirectArgs(BaseModel):
     """Arguments for sending an SMS redirect link to a customer.
 
-    Note: customer_phone is optional - if not provided, the caller's phone
-    (from customer_contact in context) will be used automatically.
+    Restaurant ID and customer phone are automatically retrieved from call context.
+    Only redirect_type needs to be specified by the agent.
     """
 
     model_config = ConfigDict(extra="forbid")
 
-    restaurant_id: int
     redirect_type: Literal["orders", "reservations"]
-    # Optional: if not provided, uses caller's phone from context
-    customer_phone: Optional[str] = None
 
 
 def _pick_message(message_set: list[str]) -> str:
@@ -281,6 +278,160 @@ DEFAULT_ORDERS_REDIRECT_MESSAGE = "Please place your order using the link below.
 DEFAULT_RESERVATIONS_REDIRECT_MESSAGE = "Please make your reservation using the link below."
 
 
+def _create_sms_redirect_escalation(
+    restaurant_id: Optional[int],
+    customer_phone: Optional[str],
+    call_id: Optional[int],
+    call_sid: Optional[str],
+    user_id: Optional[int],
+    redirect_type: str,
+    reason: str,
+    escalation_phone_number: Optional[str] = None,
+) -> None:
+    """Create an escalation record for SMS redirect failures.
+
+    This is required for the /redirect webhook to forward the call properly.
+    Without an escalation record, the call will just hang up instead of forwarding.
+
+    Args:
+        escalation_phone_number: The phone number to forward to. If provided,
+            the /redirect webhook will use this directly. If None, the webhook
+            will look it up from the restaurant record.
+    """
+    try:
+        escalation_service = EscalationService()
+        escalation_service.create_escalation(
+            {
+                "call_id": call_id,
+                "user_id": user_id,
+                "restaurant_id": str(restaurant_id) if restaurant_id else None,
+                "twilio_call_sid": call_sid,
+                "caller_phone": customer_phone,
+                "escalation_phone_number": escalation_phone_number,
+                "urgency": "standard",
+                "reason": f"SMS redirect failed ({redirect_type}): {reason}",
+                "status": "raised",
+            }
+        )
+        logger.info(
+            "Created escalation for SMS redirect failure: restaurant_id=%s reason=%s call_sid=%s",
+            restaurant_id,
+            reason,
+            call_sid,
+        )
+    except Exception as exc:  # noqa: BLE001 - defensive
+        logger.warning(
+            "Failed to create escalation for SMS redirect failure: call_sid=%s error=%s",
+            call_sid,
+            exc,
+        )
+
+    # Also mark the call as escalated if we have a call_id
+    if call_id:
+        try:
+            CallService().mark_escalated(call_id)
+        except Exception as exc:  # noqa: BLE001 - defensive
+            logger.warning("Failed to mark call escalated call_id=%s call_sid=%s: %s", call_id, call_sid, exc)
+
+    # Emit SSE event and persist notification for SMS redirect failure
+    # Uses different subtype than user_requested to distinguish in dashboard
+    if restaurant_id:
+        try:
+            sse_service = _get_sse_service()
+            asyncio.create_task(
+                sse_service.emit_escalation_sms_redirect_failed(
+                    restaurant_id=int(restaurant_id),
+                    call_id=str(call_id) if call_id else None,
+                    caller_phone=customer_phone or "",
+                    redirect_type=redirect_type,
+                    reason=reason,
+                )
+            )
+        except Exception as exc:  # noqa: BLE001 - defensive
+            logger.warning("Failed to emit escalation SSE event for SMS redirect: %s", exc)
+
+        # Persist notification with sms_redirect_failed subtype
+        try:
+            from app.services.notification_persistence_service import NotificationPersistenceService
+
+            notification_service = NotificationPersistenceService()
+            # Build a descriptive title for the dashboard
+            redirect_label = "Orders" if redirect_type == "orders" else "Reservations"
+            notification_service.create_notification(
+                restaurant_id=int(restaurant_id),
+                type="escalation",
+                subtype="sms_redirect_failed",
+                data={
+                    "title": f"SMS Redirect Failed ({redirect_label})",
+                    "description": f"Could not send {redirect_type} redirect link to customer",
+                    "caller_phone": customer_phone,
+                    "redirect_type": redirect_type,
+                    "reason": reason,
+                    "urgency": "standard",
+                },
+                entity_id=int(call_id) if call_id is not None else None,
+            )
+        except Exception as exc:  # noqa: BLE001 - defensive
+            logger.warning("SMS redirect escalation notification persistence failed call_sid=%s: %s", call_sid, exc)
+
+
+def _handle_sms_redirect_error(
+    context: dict,
+    redirect_type: str,
+    error: str,
+    reason: str,
+    customer_message: str,
+    restaurant_id: Optional[int] = None,
+    customer_phone: Optional[str] = None,
+    escalation_phone_number: Optional[str] = None,
+) -> AgentFunctionResult:
+    """Handle SMS redirect errors with proper escalation.
+
+    This helper:
+    1. Creates an escalation record (if restaurant_id is available)
+    2. Marks the call as escalated
+    3. Emits SSE event for dashboard notification
+    4. Returns a standardized error response with escalation side effects
+    """
+    call_id = context.get("call_id")
+    call_sid = context.get("call_sid")
+    user_id = context.get("user_id")
+
+    # Create escalation if we have restaurant_id
+    if restaurant_id:
+        _create_sms_redirect_escalation(
+            restaurant_id=restaurant_id,
+            customer_phone=customer_phone,
+            call_id=call_id,
+            call_sid=call_sid,
+            user_id=user_id,
+            redirect_type=redirect_type,
+            reason=reason,
+            escalation_phone_number=escalation_phone_number,
+        )
+
+    return AgentFunctionResult(
+        content={
+            "status": "ERROR",
+            "error": error,
+            # Tell the agent that escalation is already handled - do NOT call escalate_to_human
+            "escalation_handled": True,
+            "agent_instruction": "The call is being transferred to staff. Do NOT call escalate_to_human. "
+            "Simply wait for the call to be transferred.",
+        },
+        side_effects=[
+            AgentSideEffect(
+                {
+                    "type": "InjectAgentMessage",
+                    "message": customer_message,
+                }
+            ),
+            # Use minimal delay to close quickly before agent can respond
+            AgentSideEffect({"type": "close"}, delay_seconds=0.1),
+        ],
+    )
+
+
 def _get_sms_redirect_message(
     redirect_type: str,
     redirect_url: str,
@@ -318,7 +469,7 @@ def _get_sms_redirect_message(
 {redirect_url}
 
 Yours sincerely,
-{restaurant_name} via Ressy AI"""
+{restaurant_name} via RessyAI"""
 
     return sms
 
@@ -347,23 +498,34 @@ async def send_sms_redirect(**kwargs) -> AgentFunctionResult:
     call_sid = context.get("call_sid")
     call_id = context.get("call_id")
 
-    # Use caller's phone from context if not explicitly provided
-    # The caller's phone is automatically passed as customer_contact in default_args
-    customer_phone = args.customer_phone or context.get("customer_contact")
+    # Get restaurant_id and customer_phone from context (not args)
+    restaurant_id = context.get("restaurant_id")
+    customer_phone = context.get("customer_contact")
+
+    if not restaurant_id:
+        logger.warning("No restaurant_id in context for SMS redirect: call_sid=%s", call_sid)
+        # Cannot create escalation without restaurant_id - call will hang up
+        return _handle_sms_redirect_error(
+            context=context,
+            redirect_type=args.redirect_type,
+            error="No restaurant context available",
+            reason="No restaurant_id in context",
+            customer_message="I'm sorry, I'm having trouble sending that link. Let me connect you with the team.",
+            restaurant_id=None,
+            customer_phone=customer_phone,
+        )
 
     if not customer_phone:
         logger.warning("No customer phone available for SMS redirect: call_sid=%s", call_sid)
-        return AgentFunctionResult(
-            content={"status": "ERROR", "error": "No customer phone available"},
-            side_effects=[
-                AgentSideEffect(
-                    {
-                        "type": "InjectAgentMessage",
-                        "message": "I apologize, but I don't have your phone number to send the link. "
-                        "Let me connect you with the team to help you directly.",
-                    }
-                )
-            ],
+        return _handle_sms_redirect_error(
+            context=context,
+            redirect_type=args.redirect_type,
+            error="No customer phone available",
+            reason="No customer phone available",
+            customer_message="I apologize, but I don't have your phone number to send the link. "
+            "Let me connect you with the team to help you directly.",
+            restaurant_id=restaurant_id,
+            customer_phone=None,
         )
 
     logger.info(
@@ -375,32 +537,32 @@ async def send_sms_redirect(**kwargs) -> AgentFunctionResult:
 
     # Load restaurant and features
     try:
-        restaurant = await load_restaurant(args.restaurant_id)
+        restaurant = await load_restaurant(restaurant_id)
     except Exception as exc:
         logger.error(
             "Failed to load restaurant for SMS redirect: restaurant_id=%s error=%s",
-            args.restaurant_id,
+            restaurant_id,
             exc,
         )
         restaurant = None
 
     if not restaurant:
-        logger.warning("Restaurant not found for SMS redirect: restaurant_id=%s", args.restaurant_id)
-        return AgentFunctionResult(
-            content={"status": "ERROR", "error": "Restaurant not found"},
-            side_effects=[
-                AgentSideEffect(
-                    {
-                        "type": "InjectAgentMessage",
-                        "message": "I'm sorry, I'm having trouble sending that link. Let me connect you with the team.",
-                    }
-                )
-            ],
+        logger.warning("Restaurant not found for SMS redirect: restaurant_id=%s", restaurant_id)
+        return _handle_sms_redirect_error(
+            context=context,
+            redirect_type=args.redirect_type,
+            error="Restaurant not found",
+            reason="Restaurant not found",
+            customer_message="I'm sorry, I'm having trouble sending that link. Let me connect you with the team.",
+            restaurant_id=restaurant_id,
+            customer_phone=customer_phone,
         )
 
-    restaurant_id = int(args.restaurant_id)
+    restaurant_id = int(restaurant_id)
     restaurant_name = restaurant.get("name", "the restaurant")
     twilio_phone_number = restaurant.get("twilio_phone_number")
+    # Get escalation phone number for use in error cases after restaurant is loaded
+    escalation_phone_number = restaurant.get("escalation_phone_number")
 
     # Fetch features from features repo (includes SMS redirect config)
     features_repo = MySQLRestaurantFeaturesRepository()
@@ -419,16 +581,15 @@ async def send_sms_redirect(**kwargs) -> AgentFunctionResult:
             args.redirect_type,
             restaurant_id,
         )
-        return AgentFunctionResult(
-            content={"status": "ERROR", "error": f"SMS redirect not enabled for {args.redirect_type}"},
-            side_effects=[
-                AgentSideEffect(
-                    {
-                        "type": "InjectAgentMessage",
-                        "message": "I apologize, but I'm unable to send that link right now. Let me connect you with staff.",
-                    }
-                )
-            ],
+        return _handle_sms_redirect_error(
+            context=context,
+            redirect_type=args.redirect_type,
+            error=f"SMS redirect not enabled for {args.redirect_type}",
+            reason=f"SMS redirect not enabled for {args.redirect_type}",
+            customer_message="I apologize, but I'm unable to send that link right now. Let me connect you with staff.",
+            restaurant_id=restaurant_id,
+            customer_phone=customer_phone,
+            escalation_phone_number=escalation_phone_number,
         )
 
     redirect_url = sms_config.get("redirect_url")
@@ -436,16 +597,15 @@ async def send_sms_redirect(**kwargs) -> AgentFunctionResult:
 
     if not redirect_url:
         logger.error("No redirect URL configured for %s: restaurant_id=%s", args.redirect_type, restaurant_id)
-        return AgentFunctionResult(
-            content={"status": "ERROR", "error": "Redirect URL not configured"},
-            side_effects=[
-                AgentSideEffect(
-                    {
-                        "type": "InjectAgentMessage",
-                        "message": "I apologize, but I'm unable to send that link right now. Let me connect you with staff.",
-                    }
-                )
-            ],
+        return _handle_sms_redirect_error(
+            context=context,
+            redirect_type=args.redirect_type,
+            error="Redirect URL not configured",
+            reason="Redirect URL not configured",
+            customer_message="I apologize, but I'm unable to send that link right now. Let me connect you with staff.",
+            restaurant_id=restaurant_id,
+            customer_phone=customer_phone,
+            escalation_phone_number=escalation_phone_number,
         )
 
     # Build the SMS message
@@ -472,16 +632,15 @@ async def send_sms_redirect(**kwargs) -> AgentFunctionResult:
     from_number = twilio_phone_number
     if not from_number:
         logger.error("No Twilio phone number configured for restaurant_id=%s", restaurant_id)
-        return AgentFunctionResult(
-            content={"status": "ERROR", "error": "No SMS sender configured"},
-            side_effects=[
-                AgentSideEffect(
-                    {
-                        "type": "InjectAgentMessage",
-                        "message": "I apologize, but I'm unable to send that link right now. Let me connect you with staff.",
-                    }
-                )
-            ],
+        return _handle_sms_redirect_error(
+            context=context,
+            redirect_type=args.redirect_type,
+            error="No SMS sender configured",
+            reason="No Twilio phone number configured",
+            customer_message="I apologize, but I'm unable to send that link right now. Let me connect you with staff.",
+            restaurant_id=restaurant_id,
+            customer_phone=customer_phone,
+            escalation_phone_number=escalation_phone_number,
         )
 
     # Use NotificationService to send SMS and log to Notification_Logs table
@@ -558,15 +717,14 @@ async def send_sms_redirect(**kwargs) -> AgentFunctionResult:
             except Exception as db_err:
                 logger.error("Failed to update notification log status: %s", db_err)
 
-        return AgentFunctionResult(
-            content={"status": "ERROR", "error": str(exc)},
-            side_effects=[
-                AgentSideEffect(
-                    {
-                        "type": "InjectAgentMessage",
-                        "message": "I apologize, but I wasn't able to send the text message. "
-                        "Let me connect you with the team to help you directly.",
-                    }
-                )
-            ],
+        return _handle_sms_redirect_error(
+            context=context,
+            redirect_type=args.redirect_type,
+            error=str(exc),
+            reason=f"SMS send failed: {str(exc)[:100]}",
+            customer_message="I apologize, but I wasn't able to send the text message. "
+            "Let me connect you with the team to help you directly.",
+            restaurant_id=restaurant_id,
+            customer_phone=customer_phone,
+            escalation_phone_number=escalation_phone_number,
         )

@@ -2,7 +2,7 @@
 Service for sending SMS notifications to customers (orders, reservations).
 
 All SMS messages use warm, personalized "Ressy" brand voice with genuine care
-for the customer. Messages end with "Yours sincerely, Ressy AI" signature.
+for the customer. Messages end with "Yours sincerely, RessyAI" signature.
 """
 
 import asyncio
@@ -17,7 +17,7 @@ from app.utils.pii_masking import mask_phone_number
 logger = get_logger(__name__)
 
 # Signature appended to all SMS messages
-SMS_SIGNATURE = "\n\nYours sincerely,\nRessy AI"
+SMS_SIGNATURE = "\n\nYours sincerely,\nRessyAI"
 
 # Valid statuses for orders and reservations (for validation warnings)
 VALID_ORDER_STATUSES = {"pending", "confirmed", "preparing", "ready", "completed", "cancelled"}

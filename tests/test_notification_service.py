@@ -149,13 +149,13 @@ class TestOrderMessageTemplates:
         ["pending", "confirmed", "preparing", "ready", "completed", "cancelled"],
     )
     def test_all_messages_have_ressy_signature(self, status):
-        """Verify all order messages include Ressy AI signature."""
+        """Verify all order messages include RessyAI signature."""
         message = self.service._build_order_status_message(
             order_id=123,
             new_status=status,
             restaurant_name="Test Restaurant",
         )
-        assert "Ressy AI" in message
+        assert "RessyAI" in message
         assert message.endswith(SMS_SIGNATURE)
 
     def test_cancelled_message_is_empathetic(self):
@@ -188,7 +188,7 @@ class TestOrderMessageTemplates:
         )
         assert "123" in message
         assert "unknown_status_xyz" in message
-        assert "Ressy AI" in message  # Still has signature
+        assert "RessyAI" in message  # Still has signature
 
 
 # ============================================================================
@@ -225,13 +225,13 @@ class TestReservationMessageTemplates:
         ["pending", "confirmed", "seated", "completed", "cancelled", "no_show"],
     )
     def test_all_messages_have_ressy_signature(self, status):
-        """Verify all reservation messages include Ressy AI signature."""
+        """Verify all reservation messages include RessyAI signature."""
         message = self.service._build_reservation_status_message(
             reservation_id=456,
             new_status=status,
             restaurant_name="Fine Dining",
         )
-        assert "Ressy AI" in message
+        assert "RessyAI" in message
         assert message.endswith(SMS_SIGNATURE)
 
     def test_uses_confirmation_number_when_provided(self):
@@ -403,7 +403,7 @@ class TestNotificationServiceFlows:
         # Verify the message contains the confirmation number
         call_args = self.mock_twilio.send_sms.call_args
         assert "RES-ABC123" in call_args.kwargs["body"]
-        assert "Ressy AI" in call_args.kwargs["body"]
+        assert "RessyAI" in call_args.kwargs["body"]
 
 
 # ============================================================================
@@ -514,7 +514,7 @@ class TestStatusValidation:
 
         assert message  # Should not be empty
         assert "unknown_weird_status" in message  # Fallback includes status
-        assert "Ressy AI" in message
+        assert "RessyAI" in message
 
     def test_unknown_reservation_status_uses_fallback(self):
         """Verify unknown status uses fallback message."""
@@ -526,7 +526,7 @@ class TestStatusValidation:
 
         assert message
         assert "weird_status" in message
-        assert "Ressy AI" in message
+        assert "RessyAI" in message
 
 
 # ============================================================================

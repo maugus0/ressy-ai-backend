@@ -231,7 +231,7 @@ Required for voice calls and Twilio webhooks. App can run without them for non-v
 
 *Required for voice and SMS functionality to work. App runs without them, but voice and SMS features will be disabled.
 
-**SMS Notifications:** When order or reservation status changes, customers automatically receive SMS notifications via Twilio. All messages use a warm, personalized "Ressy" brand voice and end with "Yours sincerely, Ressy AI" signature.
+**SMS Notifications:** When order or reservation status changes, customers automatically receive SMS notifications via Twilio. All messages use a warm, personalized "Ressy" brand voice and end with "Yours sincerely, RessyAI" signature.
 
 **Credential Priority (Restaurant First, Fallback to .env):**
 
@@ -928,7 +928,7 @@ Restaurant `features` control what the voice agent can do for callers. Configure
 ```
 - `enabled`: Enable SMS redirect for this capability.
 - `redirect_url`: **Required when enabled.** Must start with `http://` or `https://`.
-- `redirect_message`: Optional custom SMS body text. The redirect URL is automatically appended in a predefined format. Default messages include a "Ressy AI" signature.
+- `redirect_message`: Optional custom SMS body text. The redirect URL is automatically appended in a predefined format. Default messages include a "RessyAI" signature.
 
 **Business rules:**
 - SMS Redirect for orders requires `orders_enabled=false`.
