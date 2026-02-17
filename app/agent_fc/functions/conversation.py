@@ -335,6 +335,7 @@ async def send_sms_redirect(**kwargs) -> AgentFunctionResult:
 
     SMS notifications are logged to the Notification_Logs table for audit and retry.
     """
+    import asyncio
     import json
 
     from app.repositories.mysql_notification_log_repo import MySQLNotificationLogRepository
@@ -368,12 +369,21 @@ async def send_sms_redirect(**kwargs) -> AgentFunctionResult:
     logger.info(
         "send_sms_redirect invoked type=%s customer_phone=%s call_sid=%s",
         args.redirect_type,
-        customer_phone[:4] + "****" if customer_phone else "None",
+        f"****{customer_phone[-4:]}" if customer_phone and len(customer_phone) >= 4 else "****",
         call_sid,
     )
 
     # Load restaurant and features
-    restaurant = await load_restaurant(args.restaurant_id)
+    try:
+        restaurant = await load_restaurant(args.restaurant_id)
+    except Exception as exc:
+        logger.error(
+            "Failed to load restaurant for SMS redirect: restaurant_id=%s error=%s",
+            args.restaurant_id,
+            exc,
+        )
+        restaurant = None
+
     if not restaurant:
         logger.warning("Restaurant not found for SMS redirect: restaurant_id=%s", args.restaurant_id)
         return AgentFunctionResult(

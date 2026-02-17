@@ -255,8 +255,8 @@ class RestaurantService:
             "reservations_enabled": features.get("reservations_enabled"),
             "faqs_enabled": features.get("faqs_enabled"),
         }
-        orders_sms = features.get("orders_sms_redirect") or {}
-        reservations_sms = features.get("reservations_sms_redirect") or {}
+        orders_sms = features.get("orders_sms_redirect")
+        reservations_sms = features.get("reservations_sms_redirect")
 
         if orders_sms:
             flat["orders_sms_redirect_enabled"] = orders_sms.get("enabled", False)
