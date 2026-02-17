@@ -250,7 +250,7 @@ class MenuOptionService:
             self._bad_request("Default options cannot be added to unavailable groups")
         if data.get("is_default") and not self._is_available(data.get("is_available", True)):
             self._bad_request("Default options must be available")
-        if data.get("is_default"):
+        if data.get("is_default") and group.get("selection_type") == "single":
             self.option_repo.unset_default_in_group(group_id)
         value_id = self.option_repo.create_value(group_id, data)
         if not value_id:
@@ -284,7 +284,7 @@ class MenuOptionService:
         if data.get("is_available") is False and existing.get("is_default"):
             data = dict(data)
             data["is_default"] = False
-        if data.get("is_default"):
+        if data.get("is_default") and group.get("selection_type") == "single":
             self.option_repo.unset_default_in_group(existing["group_id"])
         self.option_repo.update_value(value_id, data)
         updated = self.option_repo.get_value_by_id(value_id)

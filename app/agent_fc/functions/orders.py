@@ -313,6 +313,12 @@ def _coerce_positive_int(value: Any) -> Optional[int]:
     return normalized if normalized > 0 else None
 
 
+def _snapshot_menu_item_id(item_id: Optional[int]) -> Optional[int]:
+    if not _has_menu_item_id(item_id):
+        return None
+    return int(item_id)
+
+
 async def _validate_and_price_items(
     items: List[OrderItem],
 ) -> Tuple[List[Dict[str, Any]], Optional[List[Dict[str, Any]]]]:
@@ -530,7 +536,7 @@ async def create_order(**kwargs) -> Dict[str, Any]:
                     order_item_id = order_item_repo.create_order_item(
                         active_order_id,
                         {
-                            "menu_item_id": item.item_id,
+                            "menu_item_id": _snapshot_menu_item_id(item.item_id),
                             "item_name_snapshot": item.name,
                             "base_price_snapshot": float(item.price or 0),
                             "quantity": item.quantity,
@@ -569,7 +575,7 @@ async def create_order(**kwargs) -> Dict[str, Any]:
             order_item_id = order_item_repo.create_order_item(
                 order_id,
                 {
-                    "menu_item_id": item.item_id,
+                    "menu_item_id": _snapshot_menu_item_id(item.item_id),
                     "item_name_snapshot": item.name,
                     "base_price_snapshot": float(item.price or 0),
                     "quantity": item.quantity,
@@ -1007,7 +1013,7 @@ async def update_order_details(**kwargs) -> Dict[str, Any]:
             order_item_id = order_item_repo.create_order_item(
                 order_id,
                 {
-                    "menu_item_id": item.item_id,
+                    "menu_item_id": _snapshot_menu_item_id(item.item_id),
                     "item_name_snapshot": item.name,
                     "base_price_snapshot": float(item.price or 0),
                     "quantity": item.quantity,

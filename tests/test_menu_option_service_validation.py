@@ -354,3 +354,32 @@ def test_delete_group_blocks_attachment_or_usage():
     )
     with pytest.raises(HTTPException):
         service.delete_option_group(4)
+
+
+def test_create_option_value_multi_select_default_does_not_unset_existing_defaults():
+    group = {"id": 2, "restaurant_id": 1, "selection_type": "multiple", "is_available": True}
+    values = [{"id": 1, "group_id": 2, "name": "A", "is_default": True, "is_available": True}]
+    option_repo = _FakeOptionRepo(group=group, values=values)
+    service = MenuOptionService(option_repo=option_repo, item_option_repo=_FakeRepo(), menu_repo=_FakeRepo())
+
+    created = service.create_option_value(
+        2,
+        {"name": "B", "price_delta": 0, "is_default": True, "is_available": True},
+    )
+
+    assert created["is_default"] is True
+    assert option_repo.unset_default_calls == 0
+    assert sum(1 for value in option_repo.values if value.get("is_default")) == 2
+
+
+def test_update_option_value_multi_select_default_does_not_unset_existing_defaults():
+    group = {"id": 2, "restaurant_id": 1, "selection_type": "multiple", "is_available": True}
+    values = [{"id": 1, "group_id": 2, "name": "A", "is_default": True, "is_available": True}]
+    value = {"id": 2, "group_id": 2, "name": "B", "is_default": False, "is_available": True}
+    option_repo = _FakeOptionRepo(group=group, values=values, value=value)
+    service = MenuOptionService(option_repo=option_repo, item_option_repo=_FakeRepo(), menu_repo=_FakeRepo())
+
+    updated = service.update_option_value(2, {"is_default": True})
+
+    assert updated["is_default"] is True
+    assert option_repo.unset_default_calls == 0

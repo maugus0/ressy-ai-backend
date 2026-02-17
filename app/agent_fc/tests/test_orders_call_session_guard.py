@@ -94,7 +94,11 @@ class _FakeOrderRepo:
 
 
 class _FakeOrderItemRepo:
+    def __init__(self) -> None:
+        self.created_items: List[Dict[str, Any]] = []
+
     def create_order_item(self, order_id: int, data: Dict[str, Any]) -> int:
+        self.created_items.append({"order_id": order_id, **data})
         return 1
 
     def create_order_item_options(self, order_item_id: int, options: List[Dict[str, Any]]) -> int:
@@ -123,7 +127,7 @@ async def _run_direct(func, *args, **kwargs):
     return result
 
 
-def _patch_common(monkeypatch, order_repo: _FakeOrderRepo) -> None:
+def _patch_common(monkeypatch, order_repo: _FakeOrderRepo) -> _FakeOrderItemRepo:
     async def _fake_load_restaurant(restaurant_id: int) -> Dict[str, Any]:
         return {"id": restaurant_id, "name": "Test Resto"}
 
@@ -142,10 +146,11 @@ def _patch_common(monkeypatch, order_repo: _FakeOrderRepo) -> None:
     async def _fake_send_voice_order_sms(**kwargs) -> None:
         return None
 
+    order_item_repo = _FakeOrderItemRepo()
     monkeypatch.setattr(orders, "_get_user_repo", lambda: _FakeUserRepo())
     monkeypatch.setattr(orders, "_get_metadata_repo", lambda: _FakeMetadataRepo())
     monkeypatch.setattr(orders, "_get_order_repo", lambda: order_repo)
-    monkeypatch.setattr(orders, "_get_order_item_repo", lambda: _FakeOrderItemRepo())
+    monkeypatch.setattr(orders, "_get_order_item_repo", lambda: order_item_repo)
     monkeypatch.setattr(orders, "_get_history_service", lambda: _FakeHistoryService())
     monkeypatch.setattr(orders, "load_restaurant", _fake_load_restaurant)
     monkeypatch.setattr(orders, "is_restaurant_open_now", lambda restaurant: True)
@@ -154,6 +159,7 @@ def _patch_common(monkeypatch, order_repo: _FakeOrderRepo) -> None:
     monkeypatch.setattr(orders, "_run_service_call", _run_direct)
     monkeypatch.setattr(orders, "_emit_order_sse_event", _fake_emit_order_sse_event)
     monkeypatch.setattr(orders, "_send_voice_order_sms", _fake_send_voice_order_sms)
+    return order_item_repo
 
 
 @pytest.mark.asyncio
@@ -225,3 +231,22 @@ async def test_update_order_details_prefers_active_order_id_over_latest(monkeypa
     assert response["status"] == "UPDATED"
     assert response["order"]["id"] == 200
     assert order_session_state["active_order_id"] == 200
+
+
+@pytest.mark.asyncio
+async def test_create_order_custom_item_snapshot_uses_null_menu_item_id(monkeypatch) -> None:
+    order_repo = _FakeOrderRepo()
+    order_item_repo = _patch_common(monkeypatch, order_repo)
+    order_session_state = {}
+
+    response = await orders.create_order(
+        items=[{"item_id": 0, "name": "Custom Request", "quantity": 1, "price": 9.5, "options": []}],
+        restaurant_id=9,
+        customer_contact="+15555550123",
+        call_sid="CA-3",
+        order_session_state=order_session_state,
+    )
+
+    assert response["status"] == "CREATED"
+    assert order_item_repo.created_items
+    assert order_item_repo.created_items[0]["menu_item_id"] is None
