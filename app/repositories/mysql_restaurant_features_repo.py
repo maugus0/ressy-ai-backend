@@ -17,6 +17,12 @@ class MySQLRestaurantFeaturesRepository(MySQLBaseRepository):
                 orders_enabled,
                 reservations_enabled,
                 faqs_enabled,
+                orders_sms_redirect_enabled,
+                orders_redirect_url,
+                orders_redirect_message,
+                reservations_sms_redirect_enabled,
+                reservations_redirect_url,
+                reservations_redirect_message,
                 created_at,
                 updated_at
             FROM Restaurant_Features
@@ -24,7 +30,28 @@ class MySQLRestaurantFeaturesRepository(MySQLBaseRepository):
             LIMIT 1
         """
         results = self._execute_query(query, (restaurant_id,))
-        return results[0] if results else None
+        if not results:
+            return None
+        row = results[0]
+        # Structure the response with nested SMS redirect configs
+        return {
+            "restaurant_id": row.get("restaurant_id"),
+            "orders_enabled": bool(row.get("orders_enabled", True)),
+            "reservations_enabled": bool(row.get("reservations_enabled", True)),
+            "faqs_enabled": bool(row.get("faqs_enabled", True)),
+            "orders_sms_redirect": {
+                "enabled": bool(row.get("orders_sms_redirect_enabled", False)),
+                "redirect_url": row.get("orders_redirect_url"),
+                "redirect_message": row.get("orders_redirect_message"),
+            },
+            "reservations_sms_redirect": {
+                "enabled": bool(row.get("reservations_sms_redirect_enabled", False)),
+                "redirect_url": row.get("reservations_redirect_url"),
+                "redirect_message": row.get("reservations_redirect_message"),
+            },
+            "created_at": row.get("created_at"),
+            "updated_at": row.get("updated_at"),
+        }
 
     def create_defaults(self, restaurant_id: int) -> None:
         query = """
@@ -37,6 +64,7 @@ class MySQLRestaurantFeaturesRepository(MySQLBaseRepository):
         update_fields = []
         params = []
 
+        # Standard capability flags
         if "orders_enabled" in data:
             update_fields.append("orders_enabled = %s")
             params.append(data["orders_enabled"])
@@ -46,6 +74,26 @@ class MySQLRestaurantFeaturesRepository(MySQLBaseRepository):
         if "faqs_enabled" in data:
             update_fields.append("faqs_enabled = %s")
             params.append(data["faqs_enabled"])
+
+        # SMS redirect fields (flattened)
+        if "orders_sms_redirect_enabled" in data:
+            update_fields.append("orders_sms_redirect_enabled = %s")
+            params.append(data["orders_sms_redirect_enabled"])
+        if "orders_redirect_url" in data:
+            update_fields.append("orders_redirect_url = %s")
+            params.append(data["orders_redirect_url"])
+        if "orders_redirect_message" in data:
+            update_fields.append("orders_redirect_message = %s")
+            params.append(data["orders_redirect_message"])
+        if "reservations_sms_redirect_enabled" in data:
+            update_fields.append("reservations_sms_redirect_enabled = %s")
+            params.append(data["reservations_sms_redirect_enabled"])
+        if "reservations_redirect_url" in data:
+            update_fields.append("reservations_redirect_url = %s")
+            params.append(data["reservations_redirect_url"])
+        if "reservations_redirect_message" in data:
+            update_fields.append("reservations_redirect_message = %s")
+            params.append(data["reservations_redirect_message"])
 
         if not update_fields:
             return False

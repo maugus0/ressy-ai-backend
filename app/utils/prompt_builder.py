@@ -27,14 +27,24 @@ def _join_with_or(values: Iterable[str]) -> str:
     return f"{', '.join(items[:-1])}, or {items[-1]}"
 
 
-def _build_capabilities_block(template: Dict[str, Any], feature_flags: Dict[str, bool]) -> Dict[str, str]:
+def _build_capabilities_block(template: Dict[str, Any], feature_flags: Dict[str, Any]) -> Dict[str, str]:
     fields = template.get("fields", [])
     capabilities: Dict[str, str] = {}
     for field in fields:
         field_id = field.get("id")
         label = field.get("label") or field_id
         enabled = feature_flags.get(field_id, True)
-        capabilities[label] = "YES" if enabled else "NO"
+
+        # Check for SMS redirect - show as "SMS_REDIRECT" instead of "NO"
+        sms_redirect_key = f"{field_id}_sms_redirect"
+        sms_redirect_enabled = feature_flags.get(sms_redirect_key, False)
+
+        if enabled:
+            capabilities[label] = "YES"
+        elif sms_redirect_enabled:
+            capabilities[label] = "SMS_REDIRECT"
+        else:
+            capabilities[label] = "NO"
     return capabilities
 
 
@@ -62,12 +72,24 @@ def _build_intent_short(template: Dict[str, Any], feature_flags: Dict[str, bool]
     return _join_with_or(options) or fallback
 
 
-def _build_feature_flags(context: Dict[str, Any]) -> Dict[str, bool]:
+def _build_feature_flags(context: Dict[str, Any]) -> Dict[str, Any]:
+    """Build feature flags including SMS redirect from agent_capabilities context."""
     capabilities = context.get("agent_capabilities", {}) if isinstance(context, dict) else {}
+    orders_cap = capabilities.get("orders", {})
+    reservations_cap = capabilities.get("reservations", {})
+    faqs_cap = capabilities.get("faqs", {})
+
+    orders_sms = orders_cap.get("sms_redirect", {}) if isinstance(orders_cap, dict) else {}
+    reservations_sms = reservations_cap.get("sms_redirect", {}) if isinstance(reservations_cap, dict) else {}
+
     return {
-        "orders": _normalize_bool(capabilities.get("orders", {}).get("enabled"), True),
-        "reservations": _normalize_bool(capabilities.get("reservations", {}).get("enabled"), True),
-        "faqs": _normalize_bool(capabilities.get("faqs", {}).get("enabled"), True),
+        "orders": _normalize_bool(orders_cap.get("enabled") if isinstance(orders_cap, dict) else orders_cap, True),
+        "reservations": _normalize_bool(
+            reservations_cap.get("enabled") if isinstance(reservations_cap, dict) else reservations_cap, True
+        ),
+        "faqs": _normalize_bool(faqs_cap.get("enabled") if isinstance(faqs_cap, dict) else faqs_cap, True),
+        "orders_sms_redirect": _normalize_bool(orders_sms.get("enabled"), False),
+        "reservations_sms_redirect": _normalize_bool(reservations_sms.get("enabled"), False),
     }
 
 
@@ -100,14 +122,39 @@ def build_prompt_from_template(template: Dict[str, Any], context: Dict[str, Any]
 
     handoff_rules = list(prompt_template.get("handoff_rules_template", []))
     disabled_rules_template = prompt_template.get("disabled_feature_rules_template", {})
+    orders_sms_redirect = feature_flags.get("orders_sms_redirect", False)
+    reservations_sms_redirect = feature_flags.get("reservations_sms_redirect", False)
+
+    # Handle orders: escalate if disabled AND no SMS redirect
     if not orders_enabled:
-        disabled_rule = disabled_rules_template.get("orders")
-        if disabled_rule:
-            handoff_rules.append(disabled_rule)
+        if orders_sms_redirect:
+            # SMS redirect for orders - call function IMMEDIATELY, no announcement, no follow-up speech
+            handoff_rules.append(
+                "ORDERING: When customer wants to order, IMMEDIATELY call send_sms_redirect(redirect_type='orders') "
+                "with NO prior announcement. Do NOT say anything before OR after calling the function - "
+                "the system will automatically speak to the customer. Just call the function and wait silently "
+                "for the customer's next question. You can then answer general questions about the restaurant."
+            )
+        else:
+            disabled_rule = disabled_rules_template.get("orders")
+            if disabled_rule:
+                handoff_rules.append(disabled_rule)
+
+    # Handle reservations: escalate if disabled AND no SMS redirect
     if not reservations_enabled:
-        disabled_rule = disabled_rules_template.get("reservations")
-        if disabled_rule:
-            handoff_rules.append(disabled_rule)
+        if reservations_sms_redirect:
+            # SMS redirect for reservations - call function IMMEDIATELY, no announcement, no follow-up speech
+            handoff_rules.append(
+                "RESERVATIONS: When customer wants to book a table, IMMEDIATELY call send_sms_redirect(redirect_type='reservations') "
+                "with NO prior announcement. Do NOT say anything before OR after calling the function - "
+                "the system will automatically speak to the customer. Just call the function and wait silently "
+                "for the customer's next question. You can then answer general questions about the restaurant."
+            )
+        else:
+            disabled_rule = disabled_rules_template.get("reservations")
+            if disabled_rule:
+                handoff_rules.append(disabled_rule)
+
     if not faqs_enabled:
         disabled_rule = disabled_rules_template.get("faqs")
         if disabled_rule:

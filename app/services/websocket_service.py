@@ -294,6 +294,12 @@ class WebSocketService:
             self._normalize_boolean(raw_features.get("faqs_enabled")) if "faqs_enabled" in raw_features else True
         )
 
+        # SMS redirect configuration
+        orders_sms_redirect = raw_features.get("orders_sms_redirect") or {}
+        reservations_sms_redirect = raw_features.get("reservations_sms_redirect") or {}
+        orders_sms_redirect_enabled = self._normalize_boolean(orders_sms_redirect.get("enabled"))
+        reservations_sms_redirect_enabled = self._normalize_boolean(reservations_sms_redirect.get("enabled"))
+
         restaurant_tz, timezone_label = resolve_restaurant_timezone(restaurant)
         now_utc = datetime.now(timezone.utc)
         now_local = now_utc.astimezone(restaurant_tz)
@@ -398,8 +404,20 @@ class WebSocketService:
                 "reservations": service_options.get("reservations", True),
             },
             "agent_capabilities": {
-                "orders": {"enabled": orders_enabled},
-                "reservations": {"enabled": reservations_enabled},
+                "orders": {
+                    "enabled": orders_enabled,
+                    "sms_redirect": {
+                        "enabled": orders_sms_redirect_enabled,
+                        "url": orders_sms_redirect.get("redirect_url"),
+                    },
+                },
+                "reservations": {
+                    "enabled": reservations_enabled,
+                    "sms_redirect": {
+                        "enabled": reservations_sms_redirect_enabled,
+                        "url": reservations_sms_redirect.get("redirect_url"),
+                    },
+                },
                 "faqs": {"enabled": faqs_enabled},
             },
             "menu_by_category": all_items_by_category,
@@ -778,6 +796,16 @@ class WebSocketService:
             handler=conversation.escalate_to_human,
             arg_model=conversation.EscalateToHumanArgs,
         )
+
+        # Register SMS redirect function if enabled for orders or reservations
+        orders_sms_redirect_enabled = bool(feature_flags.get("orders_sms_redirect_enabled", False))
+        reservations_sms_redirect_enabled = bool(feature_flags.get("reservations_sms_redirect_enabled", False))
+        if orders_sms_redirect_enabled or reservations_sms_redirect_enabled:
+            registry.register(
+                name="send_sms_redirect",
+                handler=conversation.send_sms_redirect,
+                arg_model=conversation.SendSMSRedirectArgs,
+            )
 
         transport = Transport(send_callable=sts_ws.send)
         router = FunctionCallRouter(
@@ -1609,7 +1637,17 @@ class WebSocketService:
 
                     try:
                         self.logger.info("🔗 Connected to Deepgram STS")
-                        feature_flags = restaurant_record.get("features") if restaurant_record else {}
+                        raw_features = restaurant_record.get("features") if restaurant_record else {}
+                        # Flatten feature_flags for function definitions and router
+                        orders_sms = raw_features.get("orders_sms_redirect") or {}
+                        reservations_sms = raw_features.get("reservations_sms_redirect") or {}
+                        feature_flags = {
+                            "orders_enabled": raw_features.get("orders_enabled", True),
+                            "reservations_enabled": raw_features.get("reservations_enabled", True),
+                            "faqs_enabled": raw_features.get("faqs_enabled", True),
+                            "orders_sms_redirect_enabled": orders_sms.get("enabled", False),
+                            "reservations_sms_redirect_enabled": reservations_sms.get("enabled", False),
+                        }
                         config_message = self.deepgram_service.load_config(
                             think_prompt=call_resources.think_prompt,
                             key_terms=call_resources.deepgram_key_terms or None,

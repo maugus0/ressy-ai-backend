@@ -28,6 +28,11 @@ def get_function_definitions(feature_flags: Optional[Dict[str, Any]] = None) -> 
     faqs_enabled = bool(feature_flags.get("faqs_enabled", True))
     menu_enabled = orders_enabled or faqs_enabled
 
+    # SMS redirect flags
+    orders_sms_redirect_enabled = bool(feature_flags.get("orders_sms_redirect_enabled", False))
+    reservations_sms_redirect_enabled = bool(feature_flags.get("reservations_sms_redirect_enabled", False))
+    sms_redirect_enabled = orders_sms_redirect_enabled or reservations_sms_redirect_enabled
+
     create_order_schema = orders.CreateOrderArgs.model_json_schema()
     lookup_order_schema = orders.LookupOrderArgs.model_json_schema()
     lookup_order_by_id_schema = orders.LookupOrderByIdArgs.model_json_schema()
@@ -159,5 +164,25 @@ def get_function_definitions(feature_flags: Optional[Dict[str, Any]] = None) -> 
             ),
         ]
     )
+
+    # Add SMS redirect function if enabled for orders or reservations
+    if sms_redirect_enabled:
+        sms_redirect_schema = conversation.SendSMSRedirectArgs.model_json_schema()
+        definitions.append(
+            _definition(
+                name="send_sms_redirect",
+                description=(
+                    "Send an SMS with ordering/reservation link. "
+                    "CRITICAL: Call INSTANTLY when customer mentions ordering or booking - NO announcement beforehand. "
+                    "WRONG: 'I'll send you a text' then call function. "
+                    "RIGHT: Call function immediately, system handles the response. "
+                    "IMPORTANT: After calling this function, DO NOT say anything - the system will automatically "
+                    "speak to the customer. Just wait silently for the customer's next question. "
+                    "Phone number is automatic from caller - never ask for it. "
+                    "redirect_type='orders' for food orders, 'reservations' for table bookings."
+                ),
+                schema=sms_redirect_schema,
+            )
+        )
 
     return definitions

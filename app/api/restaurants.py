@@ -51,12 +51,43 @@ class OperatingHours(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
 
+class SMSRedirectConfig(BaseModel):
+    """Configuration for SMS redirect capability."""
+
+    enabled: bool = Field(False, description="Enable SMS redirect")
+    redirect_url: str | None = Field(None, max_length=512, description="URL to include in SMS")
+    redirect_message: str | None = Field(None, description="Custom SMS message template")
+    model_config = ConfigDict(extra="ignore")
+
+    @field_validator("redirect_url")
+    @classmethod
+    def validate_url(cls, v: str | None) -> str | None:
+        if v is not None and v.strip():
+            v = v.strip()
+            if not v.startswith(("http://", "https://")):
+                raise ValueError("URL must start with http:// or https://")
+        return v if v and v.strip() else None
+
+
+class SMSRedirectConfigResponse(BaseModel):
+    """SMS redirect configuration in responses."""
+
+    enabled: bool
+    redirect_url: str | None
+    redirect_message: str | None
+    model_config = ConfigDict(extra="ignore")
+
+
 class RestaurantFeaturesCreate(BaseModel):
     """Feature flags for restaurant creation (defaults to enabled)."""
 
     orders_enabled: bool = Field(True, description="Enable pickup order handling")
     reservations_enabled: bool = Field(True, description="Enable reservation handling")
     faqs_enabled: bool = Field(True, description="Enable FAQ handling")
+    orders_sms_redirect: SMSRedirectConfig | None = Field(None, description="SMS redirect config for orders")
+    reservations_sms_redirect: SMSRedirectConfig | None = Field(
+        None, description="SMS redirect config for reservations"
+    )
     model_config = ConfigDict(extra="ignore")
 
 
@@ -66,6 +97,10 @@ class RestaurantFeaturesUpdate(BaseModel):
     orders_enabled: bool | None = Field(None, description="Enable pickup order handling")
     reservations_enabled: bool | None = Field(None, description="Enable reservation handling")
     faqs_enabled: bool | None = Field(None, description="Enable FAQ handling")
+    orders_sms_redirect: SMSRedirectConfig | None = Field(None, description="SMS redirect config for orders")
+    reservations_sms_redirect: SMSRedirectConfig | None = Field(
+        None, description="SMS redirect config for reservations"
+    )
     model_config = ConfigDict(extra="ignore")
 
 
@@ -75,6 +110,12 @@ class RestaurantFeaturesResponse(BaseModel):
     orders_enabled: bool
     reservations_enabled: bool
     faqs_enabled: bool
+    orders_sms_redirect: SMSRedirectConfigResponse = Field(
+        default_factory=lambda: SMSRedirectConfigResponse(enabled=False, redirect_url=None, redirect_message=None)
+    )
+    reservations_sms_redirect: SMSRedirectConfigResponse = Field(
+        default_factory=lambda: SMSRedirectConfigResponse(enabled=False, redirect_url=None, redirect_message=None)
+    )
     model_config = ConfigDict(extra="ignore")
 
 
@@ -294,7 +335,17 @@ router = APIRouter(
                         "timezone": "America/Vancouver",
                         "reservation_seating_capacity": 50,
                         "reservation_advance_days": 30,
-                        "features": {"orders_enabled": True, "reservations_enabled": True, "faqs_enabled": True},
+                        "features": {
+                            "orders_enabled": True,
+                            "reservations_enabled": True,
+                            "faqs_enabled": True,
+                            "orders_sms_redirect": {"enabled": False, "redirect_url": None, "redirect_message": None},
+                            "reservations_sms_redirect": {
+                                "enabled": False,
+                                "redirect_url": None,
+                                "redirect_message": None,
+                            },
+                        },
                     },
                 }
             },
@@ -365,6 +416,16 @@ async def create_restaurant(
                                         "orders_enabled": True,
                                         "reservations_enabled": True,
                                         "faqs_enabled": True,
+                                        "orders_sms_redirect": {
+                                            "enabled": False,
+                                            "redirect_url": None,
+                                            "redirect_message": None,
+                                        },
+                                        "reservations_sms_redirect": {
+                                            "enabled": False,
+                                            "redirect_url": None,
+                                            "redirect_message": None,
+                                        },
                                     },
                                     "created_at": "2024-02-01T10:00:00Z",
                                     "updated_at": "2024-02-02T10:00:00Z",
@@ -453,7 +514,21 @@ async def list_restaurants(
                             "timezone": "America/Vancouver",
                             "reservation_seating_capacity": 50,
                             "reservation_advance_days": 30,
-                            "features": {"orders_enabled": True, "reservations_enabled": True, "faqs_enabled": True},
+                            "features": {
+                                "orders_enabled": True,
+                                "reservations_enabled": True,
+                                "faqs_enabled": True,
+                                "orders_sms_redirect": {
+                                    "enabled": False,
+                                    "redirect_url": None,
+                                    "redirect_message": None,
+                                },
+                                "reservations_sms_redirect": {
+                                    "enabled": False,
+                                    "redirect_url": None,
+                                    "redirect_message": None,
+                                },
+                            },
                             "created_at": "2024-02-01T10:00:00Z",
                             "updated_at": "2024-02-02T10:00:00Z",
                         }
@@ -507,7 +582,17 @@ async def get_restaurant(
                         "timezone": "America/Vancouver",
                         "reservation_seating_capacity": 75,
                         "reservation_advance_days": 60,
-                        "features": {"orders_enabled": True, "reservations_enabled": False, "faqs_enabled": True},
+                        "features": {
+                            "orders_enabled": True,
+                            "reservations_enabled": False,
+                            "faqs_enabled": True,
+                            "orders_sms_redirect": {"enabled": False, "redirect_url": None, "redirect_message": None},
+                            "reservations_sms_redirect": {
+                                "enabled": False,
+                                "redirect_url": None,
+                                "redirect_message": None,
+                            },
+                        },
                     },
                 }
             },
@@ -528,6 +613,11 @@ async def update_restaurant(
     - Only provided fields are updated
     - Validation mirrors creation (phone formats, JSON objects, non-negative minutes)
     - `forward_escalations` requires `escalation_phone_number`
+    - **Agent Capabilities**: `features` controls voice agent capabilities. FAQs cannot be disabled.
+    - **SMS Redirect**: When `orders_sms_redirect.enabled` or `reservations_sms_redirect.enabled` is true,
+      the corresponding direct capability (orders_enabled/reservations_enabled) must be false. A valid URL
+      is required when SMS redirect is enabled. The agent sends an SMS with the link instead of processing
+      the request directly.
     """
     data = validate_payload(UpdateRestaurantRequest, payload)
     # BUSINESS RULE: FAQs must always be enabled.
