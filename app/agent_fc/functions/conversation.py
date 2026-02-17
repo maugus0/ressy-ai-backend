@@ -489,24 +489,15 @@ async def send_sms_redirect(**kwargs) -> AgentFunctionResult:
     notification_repo = MySQLNotificationLogRepository()
     notification_service = NotificationService(notification_repo=notification_repo)
 
-    # Create log entry first (entity_type = 'sms_redirect', entity_id = call_id or 0)
+    # Send SMS using the public interface (handles logging internally)
     entity_id = int(call_id) if call_id else 0
     log_id: Optional[int] = None
 
     try:
-        # Create notification log entry
-        log_id = await asyncio.to_thread(
-            notification_repo.create_log,
+        log_id = await notification_service.send_sms(
             restaurant_id=restaurant_id,
             entity_type="sms_redirect",
             entity_id=entity_id,
-            recipient_phone=customer_phone,
-            message_content=sms_body,
-        )
-
-        # Send SMS using the notification service's internal method
-        await notification_service._send_notification(
-            log_id=log_id,
             recipient_phone=customer_phone,
             message_content=sms_body,
             from_number=from_number,

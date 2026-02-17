@@ -322,6 +322,59 @@ class NotificationService:
                     )
             return log_id
 
+    async def send_sms(
+        self,
+        restaurant_id: int,
+        entity_type: str,
+        entity_id: int,
+        recipient_phone: str,
+        message_content: str,
+        from_number: str,
+        account_sid: Optional[str] = None,
+        auth_token: Optional[str] = None,
+    ) -> int:
+        """Send an SMS notification and log it.
+
+        This is the public interface for sending generic SMS notifications.
+
+        Args:
+            restaurant_id: Restaurant ID for logging
+            entity_type: Type of entity ('order', 'reservation', 'sms_redirect')
+            entity_id: ID of the entity (order_id, reservation_id, call_id)
+            recipient_phone: Phone number to send SMS to
+            message_content: SMS body content
+            from_number: Twilio phone number to send from
+            account_sid: Optional Twilio account SID (uses default if not provided)
+            auth_token: Optional Twilio auth token (uses default if not provided)
+
+        Returns:
+            log_id: The notification log ID
+
+        Raises:
+            Exception: If SMS sending fails
+        """
+        # Create log entry first
+        log_id = await asyncio.to_thread(
+            self.notification_repo.create_log,
+            restaurant_id=restaurant_id,
+            entity_type=entity_type,
+            entity_id=entity_id,
+            recipient_phone=recipient_phone,
+            message_content=message_content,
+        )
+
+        # Send the SMS
+        await self._send_notification(
+            log_id=log_id,
+            recipient_phone=recipient_phone,
+            message_content=message_content,
+            from_number=from_number,
+            account_sid=account_sid,
+            auth_token=auth_token,
+        )
+
+        return log_id
+
     async def _send_notification(
         self,
         log_id: int,

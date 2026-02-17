@@ -62,11 +62,14 @@ class SMSRedirectConfig(BaseModel):
     @field_validator("redirect_url")
     @classmethod
     def validate_url(cls, v: str | None) -> str | None:
-        if v is not None and v.strip():
-            v = v.strip()
-            if not v.startswith(("http://", "https://")):
-                raise ValueError("URL must start with http:// or https://")
-        return v if v and v.strip() else None
+        # Normalize input: trim whitespace and treat blank strings as None
+        cleaned = _strip_or_none(v)
+        if cleaned is None:
+            return None
+        # Validate scheme on the normalized, non-empty URL
+        if not cleaned.startswith(("http://", "https://")):
+            raise ValueError("URL must start with http:// or https://")
+        return cleaned
 
 
 class SMSRedirectConfigResponse(BaseModel):
