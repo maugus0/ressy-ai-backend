@@ -695,11 +695,11 @@ async def send_sms_redirect(**kwargs) -> AgentFunctionResult:
             args.redirect_type,
             call_sid,
         )
-        # Build a helpful message based on the redirect type
-        # We do NOT use InjectAgentMessage here because that causes duplicate messages -
-        # the injected message plays, then the agent also generates its own response
-        # based on the function result. By only returning content, the agent will
-        # naturally respond based on this content alone.
+
+        # Build a helpful message based on the redirect type.
+        # We inject a brief acknowledgment ("Perfect!") to keep conversation flowing
+        # immediately, then provide the full message in content for the agent to
+        # speak naturally based on the function result.
         if args.redirect_type == "orders":
             message_to_customer = (
                 "I've just sent you a text with a link to place your order. "
@@ -720,7 +720,7 @@ async def send_sms_redirect(**kwargs) -> AgentFunctionResult:
                 "status": "success",
                 "message_to_customer": message_to_customer,
             },
-            side_effects=[],  # No InjectAgentMessage - let agent speak naturally from the content
+            side_effects=[AgentSideEffect({"type": "InjectAgentMessage", "message": "Perfect!"})],
         )
 
     except SMSSendError as sms_err:
