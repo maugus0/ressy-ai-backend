@@ -74,28 +74,11 @@ PREPARE stmt FROM @add_reservations_redirect_message;
 EXECUTE stmt;
 DEALLOCATE PREPARE stmt;
 
--- Add indexes only if they do not exist (MySQL has no CREATE INDEX IF NOT EXISTS)
-SET @add_idx_orders = (SELECT IF(
-    (SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS
-     WHERE TABLE_SCHEMA = @db AND TABLE_NAME = 'Restaurant_Features'
-     AND INDEX_NAME = 'idx_orders_sms_redirect') > 0,
-    'DO 1',
-    'CREATE INDEX idx_orders_sms_redirect ON Restaurant_Features(orders_sms_redirect_enabled)'
-));
-PREPARE stmt FROM @add_idx_orders;
-EXECUTE stmt;
-DEALLOCATE PREPARE stmt;
-
-SET @add_idx_reservations = (SELECT IF(
-    (SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS
-     WHERE TABLE_SCHEMA = @db AND TABLE_NAME = 'Restaurant_Features'
-     AND INDEX_NAME = 'idx_reservations_sms_redirect') > 0,
-    'DO 1',
-    'CREATE INDEX idx_reservations_sms_redirect ON Restaurant_Features(reservations_sms_redirect_enabled)'
-));
-PREPARE stmt FROM @add_idx_reservations;
-EXECUTE stmt;
-DEALLOCATE PREPARE stmt;
+-- Note: We intentionally do not create standalone indexes on the
+-- orders_sms_redirect_enabled and reservations_sms_redirect_enabled
+-- boolean columns. These columns have very low cardinality (only true/false),
+-- so dedicated indexes are unlikely to provide meaningful performance
+-- benefits and would add unnecessary write overhead.
 
 -- Business Rules (enforced at application level):
 -- 1. orders_sms_redirect_enabled = TRUE requires orders_enabled = FALSE

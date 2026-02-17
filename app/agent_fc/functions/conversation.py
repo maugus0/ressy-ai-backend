@@ -318,7 +318,7 @@ def _get_sms_redirect_message(
 {redirect_url}
 
 Yours sincerely,
-{restaurant_name} via RessyAI"""
+{restaurant_name} via Ressy AI"""
 
     return sms
 

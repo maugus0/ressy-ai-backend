@@ -128,12 +128,12 @@ def build_prompt_from_template(template: Dict[str, Any], context: Dict[str, Any]
     # Handle orders: escalate if disabled AND no SMS redirect
     if not orders_enabled:
         if orders_sms_redirect:
-            # SMS redirect for orders - call function IMMEDIATELY, no announcement, no follow-up speech
+            # SMS redirect for orders - call function immediately, then speak naturally from the response
             handoff_rules.append(
-                "ORDERING: When customer wants to order, IMMEDIATELY call send_sms_redirect(redirect_type='orders') "
-                "with NO prior announcement. Do NOT say anything before OR after calling the function - "
-                "the system will automatically speak to the customer. Just call the function and wait silently "
-                "for the customer's next question. You can then answer general questions about the restaurant."
+                "ORDERING: When customer wants to order, IMMEDIATELY call send_sms_redirect(redirect_type='orders'). "
+                "Do NOT announce beforehand - just call the function directly. "
+                "After the function returns, speak naturally using the message_to_customer content. "
+                "You can then answer general questions about the restaurant."
             )
         else:
             disabled_rule = disabled_rules_template.get("orders")
@@ -143,12 +143,12 @@ def build_prompt_from_template(template: Dict[str, Any], context: Dict[str, Any]
     # Handle reservations: escalate if disabled AND no SMS redirect
     if not reservations_enabled:
         if reservations_sms_redirect:
-            # SMS redirect for reservations - call function IMMEDIATELY, no announcement, no follow-up speech
+            # SMS redirect for reservations - call function immediately, then speak naturally from the response
             handoff_rules.append(
-                "RESERVATIONS: When customer wants to book a table, IMMEDIATELY call send_sms_redirect(redirect_type='reservations') "
-                "with NO prior announcement. Do NOT say anything before OR after calling the function - "
-                "the system will automatically speak to the customer. Just call the function and wait silently "
-                "for the customer's next question. You can then answer general questions about the restaurant."
+                "RESERVATIONS: When customer wants to book a table, IMMEDIATELY call send_sms_redirect(redirect_type='reservations'). "
+                "Do NOT announce beforehand - just call the function directly. "
+                "After the function returns, speak naturally using the message_to_customer content. "
+                "You can then answer general questions about the restaurant."
             )
         else:
             disabled_rule = disabled_rules_template.get("reservations")

@@ -928,7 +928,7 @@ Restaurant `features` control what the voice agent can do for callers. Configure
 ```
 - `enabled`: Enable SMS redirect for this capability.
 - `redirect_url`: **Required when enabled.** Must start with `http://` or `https://`.
-- `redirect_message`: Optional custom message template. Use `{redirect_url}` and `{restaurant_name}` as placeholders. Default messages include "RessyAI" signature.
+- `redirect_message`: Optional custom SMS body text. The redirect URL is automatically appended in a predefined format. Default messages include a "Ressy AI" signature.
 
 **Business rules:**
 - SMS Redirect for orders requires `orders_enabled=false`.

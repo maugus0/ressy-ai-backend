@@ -227,7 +227,8 @@ class RestaurantService:
             if orders_enabled:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Orders capability must be disabled when Orders SMS Redirect is enabled.",
+                    detail="Cannot enable Orders SMS Redirect while Orders capability is enabled. "
+                    "Please set orders_enabled=false first.",
                 )
             if not orders_sms.get("redirect_url"):
                 raise HTTPException(
@@ -240,7 +241,8 @@ class RestaurantService:
             if reservations_enabled:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Reservations capability must be disabled when Reservations SMS Redirect is enabled.",
+                    detail="Cannot enable Reservations SMS Redirect while Reservations capability is enabled. "
+                    "Please set reservations_enabled=false first.",
                 )
             if not reservations_sms.get("redirect_url"):
                 raise HTTPException(
@@ -249,30 +251,43 @@ class RestaurantService:
                 )
 
     def _flatten_features_for_db(self, features: Dict[str, Any]) -> Dict[str, Any]:
-        """Flatten nested features structure for database update."""
-        flat = {
-            "orders_enabled": features.get("orders_enabled"),
-            "reservations_enabled": features.get("reservations_enabled"),
-            "faqs_enabled": features.get("faqs_enabled"),
-        }
-        orders_sms = features.get("orders_sms_redirect")
-        reservations_sms = features.get("reservations_sms_redirect")
+        """Flatten nested features structure for database update.
 
-        if orders_sms:
-            flat["orders_sms_redirect_enabled"] = orders_sms.get("enabled", False)
+        This method preserves explicit None values so callers can clear fields
+        (set them to NULL in the database). Fields not present in the input
+        are omitted and will not be updated.
+        """
+        flat: Dict[str, Any] = {}
+
+        # Top-level feature flags: only include keys that are actually present
+        if "orders_enabled" in features:
+            flat["orders_enabled"] = features["orders_enabled"]
+        if "reservations_enabled" in features:
+            flat["reservations_enabled"] = features["reservations_enabled"]
+        if "faqs_enabled" in features:
+            flat["faqs_enabled"] = features["faqs_enabled"]
+
+        # Orders SMS redirect: only process if the caller provided this section
+        if "orders_sms_redirect" in features:
+            orders_sms = features.get("orders_sms_redirect") or {}
+            if "enabled" in orders_sms:
+                flat["orders_sms_redirect_enabled"] = orders_sms["enabled"]
             if "redirect_url" in orders_sms:
-                flat["orders_redirect_url"] = orders_sms.get("redirect_url")
+                flat["orders_redirect_url"] = orders_sms["redirect_url"]
             if "redirect_message" in orders_sms:
-                flat["orders_redirect_message"] = orders_sms.get("redirect_message")
+                flat["orders_redirect_message"] = orders_sms["redirect_message"]
 
-        if reservations_sms:
-            flat["reservations_sms_redirect_enabled"] = reservations_sms.get("enabled", False)
+        # Reservations SMS redirect: only process if the caller provided this section
+        if "reservations_sms_redirect" in features:
+            reservations_sms = features.get("reservations_sms_redirect") or {}
+            if "enabled" in reservations_sms:
+                flat["reservations_sms_redirect_enabled"] = reservations_sms["enabled"]
             if "redirect_url" in reservations_sms:
-                flat["reservations_redirect_url"] = reservations_sms.get("redirect_url")
+                flat["reservations_redirect_url"] = reservations_sms["redirect_url"]
             if "redirect_message" in reservations_sms:
-                flat["reservations_redirect_message"] = reservations_sms.get("redirect_message")
+                flat["reservations_redirect_message"] = reservations_sms["redirect_message"]
 
-        return {k: v for k, v in flat.items() if v is not None}
+        return flat
 
     # Not used currently. If needed, we can add this validation to restaurant create and update flows later.
     def _validate_feature_forwarding(
