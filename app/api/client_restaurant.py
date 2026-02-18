@@ -130,7 +130,21 @@ router = APIRouter(
                             "reservation_seating_capacity": 50,
                             "reservation_advance_days": 30,
                             "timezone": "America/Vancouver",
-                            "features": {"orders_enabled": True, "reservations_enabled": True, "faqs_enabled": True},
+                            "features": {
+                                "orders_enabled": True,
+                                "reservations_enabled": True,
+                                "faqs_enabled": True,
+                                "orders_sms_redirect": {
+                                    "enabled": False,
+                                    "redirect_url": None,
+                                    "redirect_message": None,
+                                },
+                                "reservations_sms_redirect": {
+                                    "enabled": False,
+                                    "redirect_url": None,
+                                    "redirect_message": None,
+                                },
+                            },
                             "created_at": "2024-02-01T10:00:00Z",
                             "updated_at": "2024-02-02T10:00:00Z",
                         }
@@ -153,7 +167,7 @@ async def get_restaurant(
     "/restaurant",
     status_code=status.HTTP_200_OK,
     summary="Update restaurant (Client)",
-    description="Update the authenticated restaurant. All fields are optional; server-side validation still applies. Sensitive integration fields cannot be updated via this endpoint. `forward_escalations` requires `escalation_phone_number`.",
+    description="Update the authenticated restaurant. All fields are optional; server-side validation still applies. Sensitive integration fields cannot be updated via this endpoint. `forward_escalations` requires `escalation_phone_number`. Agent capabilities (features) include SMS Redirect: when enabled, the agent sends an SMS with a link instead of processing orders/reservations directly. SMS redirect requires the corresponding direct capability to be disabled and a valid URL.",
     response_model=ClientRestaurantResponse,
     response_description="Updated restaurant details.",
     openapi_extra={
@@ -169,7 +183,17 @@ async def get_restaurant(
                         "escalation_phone_number": "+15550001111",
                         "reservation_seating_capacity": 60,
                         "reservation_advance_days": 14,
-                        "features": {"orders_enabled": True, "reservations_enabled": False, "faqs_enabled": True},
+                        "features": {
+                            "orders_enabled": True,
+                            "reservations_enabled": False,
+                            "faqs_enabled": True,
+                            "orders_sms_redirect": {"enabled": False, "redirect_url": None, "redirect_message": None},
+                            "reservations_sms_redirect": {
+                                "enabled": False,
+                                "redirect_url": None,
+                                "redirect_message": None,
+                            },
+                        },
                     },
                 }
             },
@@ -202,7 +226,21 @@ async def get_restaurant(
                             "reservation_seating_capacity": 60,
                             "reservation_advance_days": 14,
                             "timezone": "America/Vancouver",
-                            "features": {"orders_enabled": True, "reservations_enabled": False, "faqs_enabled": True},
+                            "features": {
+                                "orders_enabled": True,
+                                "reservations_enabled": False,
+                                "faqs_enabled": True,
+                                "orders_sms_redirect": {
+                                    "enabled": False,
+                                    "redirect_url": None,
+                                    "redirect_message": None,
+                                },
+                                "reservations_sms_redirect": {
+                                    "enabled": False,
+                                    "redirect_url": None,
+                                    "redirect_message": None,
+                                },
+                            },
                             "created_at": "2024-02-01T10:00:00Z",
                             "updated_at": "2024-02-02T10:00:00Z",
                         }

@@ -28,6 +28,11 @@ def get_function_definitions(feature_flags: Optional[Dict[str, Any]] = None) -> 
     faqs_enabled = bool(feature_flags.get("faqs_enabled", True))
     menu_enabled = orders_enabled or faqs_enabled
 
+    # SMS redirect flags
+    orders_sms_redirect_enabled = bool(feature_flags.get("orders_sms_redirect_enabled", False))
+    reservations_sms_redirect_enabled = bool(feature_flags.get("reservations_sms_redirect_enabled", False))
+    sms_redirect_enabled = orders_sms_redirect_enabled or reservations_sms_redirect_enabled
+
     create_order_schema = orders.CreateOrderArgs.model_json_schema()
     lookup_order_schema = orders.LookupOrderArgs.model_json_schema()
     lookup_order_by_id_schema = orders.LookupOrderByIdArgs.model_json_schema()
@@ -159,5 +164,23 @@ def get_function_definitions(feature_flags: Optional[Dict[str, Any]] = None) -> 
             ),
         ]
     )
+
+    # Add SMS redirect function if enabled for orders or reservations
+    if sms_redirect_enabled:
+        sms_redirect_schema = conversation.SendSMSRedirectArgs.model_json_schema()
+        definitions.append(
+            _definition(
+                name="send_sms_redirect",
+                description=(
+                    "Send SMS with ordering/reservation link to caller. "
+                    "Call IMMEDIATELY when customer wants to order (redirect_type='orders') or "
+                    "book a table (redirect_type='reservations'). "
+                    "Do NOT announce beforehand - just call the function directly. "
+                    "After calling, speak naturally using the returned message_to_customer content. "
+                    "Restaurant and phone number are automatic from context - only specify redirect_type."
+                ),
+                schema=sms_redirect_schema,
+            )
+        )
 
     return definitions
