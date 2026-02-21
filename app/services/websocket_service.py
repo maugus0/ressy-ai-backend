@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import json
+import os
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -11,6 +12,7 @@ from fastapi import WebSocket, WebSocketDisconnect
 
 from app.agent_fc.config import get_settings as get_fc_settings
 from app.agent_fc.functions import conversation, menu, orders, reservations
+from app.agent_fc.functions.function_context import NoArgs
 from app.agent_fc.models import AgentFrame
 from app.agent_fc.registry import FunctionRegistry
 from app.agent_fc.responses import AgentSideEffect
@@ -33,7 +35,6 @@ from app.utils.restaurant_hours import (
     DAYS_OF_WEEK,
     format_nearest_slot_label,
     format_operating_window,
-    get_day_operating_hours,
     is_restaurant_open_now,
     resolve_restaurant_timezone,
 )
@@ -205,6 +206,13 @@ class WebSocketService:
         # Get ALL menu items (both available and unavailable) to send to agent
         # This allows agent to inform customers when items are unavailable instead of saying "trouble checking"
         all_menu_items = self.menu_service.menu_repo.get_menus_by_restaurant(restaurant_id) if restaurant_id else []
+        item_ids = [item.get("id") for item in all_menu_items if item.get("id") is not None]
+        option_group_flags: Dict[int, bool] = {}
+        if item_ids:
+            try:
+                option_group_flags = self.menu_service.menu_repo.get_items_with_option_groups(item_ids)
+            except Exception as exc:
+                self.logger.warning("Failed to load menu option flags restaurant_id=%s: %s", restaurant_id, exc)
 
         # Process items in a single pass: separate by availability and build category structures
         # This minimizes iterations for better performance
@@ -227,6 +235,7 @@ class WebSocketService:
                 continue
             seen_item_ids.add(item_id)
 
+            has_customizations = option_group_flags.get(item_id, False)
             item_dict = {
                 "item_id": item_id,
                 "name": item_name,
@@ -234,6 +243,7 @@ class WebSocketService:
                 "price": float(item.get("price", 0)) if item.get("price") is not None else 0.0,
                 "category": item.get("category"),
                 "sub_category": item.get("sub_category"),
+                "has_customizations": has_customizations,
             }
 
             # Check availability (handle both boolean and int 0/1 from MySQL)
@@ -252,6 +262,7 @@ class WebSocketService:
                 "name": item_name,
                 "price": item_dict["price"],
                 "is_special": is_special_bool,  # Mark special items in menu structure
+                "has_customizations": has_customizations,
             }
 
             if is_available_bool:
@@ -317,29 +328,21 @@ class WebSocketService:
 
         # Get today's operating hours for agent context
         today_day_name = now_local.strftime("%A").lower()
-        today_open, today_close, today_is_closed, today_is_24_hours = get_day_operating_hours(
-            restaurant, today_day_name
-        )
         today_hours = {
             "day": today_day_name,
-            "open": today_open.strftime("%H:%M:%S") if today_open else None,
-            "close": today_close.strftime("%H:%M:%S") if today_close else None,
-            "is_closed": today_is_closed,
-            "is_24_hours": today_is_24_hours,
-            "display": format_operating_window(restaurant, today_day_name),
+            "hours": format_operating_window(restaurant, today_day_name),
         }
 
-        # Build operating_hours for all days (for agent to reference full week schedule)
-        operating_hours = {}
+        # Build compact weekly hours grouped by identical windows (for agent context)
+        weekly_hours = []
+        current_bucket = None
         for day in DAYS_OF_WEEK:
-            day_open, day_close, day_closed, day_24_hours = get_day_operating_hours(restaurant, day)
-            operating_hours[day] = {
-                "open": day_open.strftime("%H:%M:%S") if day_open else None,
-                "close": day_close.strftime("%H:%M:%S") if day_close else None,
-                "is_closed": day_closed,
-                "is_24_hours": day_24_hours,
-                "display": format_operating_window(restaurant, day),
-            }
+            hours_label = format_operating_window(restaurant, day)
+            if current_bucket and current_bucket["hours"] == hours_label:
+                current_bucket["days"].append(day)
+            else:
+                current_bucket = {"days": [day], "hours": hours_label}
+                weekly_hours.append(current_bucket)
 
         # Create combined structure showing all items per category with availability status
         # This makes it easier for the agent to see both available and unavailable items together
@@ -357,6 +360,7 @@ class WebSocketService:
                     "item_id": special.get("item_id"),
                     "name": special.get("name"),
                     "price": special.get("price"),
+                    "has_customizations": special.get("has_customizations", False),
                 }
             )
 
@@ -392,7 +396,7 @@ class WebSocketService:
                 "address": restaurant.get("full_address") or restaurant.get("address"),
                 "phone": restaurant_phone_fwd,
                 "phone_spoken": self._format_phone_spoken(restaurant_phone_fwd),
-                "operating_hours": operating_hours,
+                "weekly_hours": weekly_hours,
                 "today_hours": today_hours,
                 "is_open_now": is_open_now,
                 "prep_time_minutes": restaurant.get("prep_time_minutes", 20),
@@ -737,7 +741,7 @@ class WebSocketService:
             registry.register(
                 name="lookup_order",
                 handler=orders.lookup_order,
-                arg_model=orders.LookupOrderArgs,
+                arg_model=NoArgs,
             )
             registry.register(
                 name="lookup_order_by_id",
@@ -760,6 +764,11 @@ class WebSocketService:
                 handler=menu.get_menu_item_details,
                 arg_model=menu.GetMenuItemDetailsArgs,
             )
+            registry.register(
+                name="get_menu_item_customizations",
+                handler=menu.get_menu_item_customizations,
+                arg_model=menu.GetMenuItemCustomizationsArgs,
+            )
         if reservations_enabled:
             registry.register(
                 name="create_reservation",
@@ -769,7 +778,7 @@ class WebSocketService:
             registry.register(
                 name="lookup_reservation",
                 handler=reservations.lookup_reservation,
-                arg_model=reservations.LookupReservationArgs,
+                arg_model=NoArgs,
             )
             registry.register(
                 name="update_reservation",
@@ -867,6 +876,33 @@ class WebSocketService:
                 else:
                     self.logger.debug("Twilio send queue full; dropping message")
                 return False
+
+    def _drain_twilio_send_queue(self, twilio_send_queue: Optional[asyncio.Queue]) -> int:
+        if not twilio_send_queue:
+            return 0
+        drained = 0
+        while True:
+            try:
+                twilio_send_queue.get_nowait()
+                drained += 1
+            except asyncio.QueueEmpty:
+                break
+        return drained
+
+    def _get_twilio_chunk_interval(self) -> float:
+        env_override = os.getenv("TWILIO_OUTBOUND_PACING_SECONDS")
+        if env_override is not None:
+            try:
+                return max(float(env_override), 0.0)
+            except ValueError:
+                pass
+        sample_rate = getattr(settings, "DEEPGRAM_AUDIO_OUTPUT_SAMPLE_RATE", None)
+        encoding = (getattr(settings, "DEEPGRAM_AUDIO_OUTPUT_ENCODING", "") or "").lower()
+        buffer_size = getattr(settings, "TWILIO_OUTBOUND_CHUNK_SIZE", 2 * 160)
+        bytes_per_sample = 2 if "linear16" in encoding or "pcm" in encoding else 1
+        if sample_rate:
+            return max(buffer_size / (sample_rate * bytes_per_sample), 0.0)
+        return max(getattr(settings, "TWILIO_OUTBOUND_PACING_SECONDS", 0.04), 0.0)
 
     async def _flush_audio_buffer(
         self,
@@ -1016,8 +1052,6 @@ class WebSocketService:
             state.barge_in_start_time = time.perf_counter()
             state.barge_in_reported = False
             state.audio_buffer.clear()
-        elif event_type == "UserStoppedSpeaking":
-            state.barge_in_active = False
 
     async def _handle_audio_payload(
         self,
@@ -1071,6 +1105,8 @@ class WebSocketService:
         if role == "user":
             state.last_user_text_time = current_time
             state.in_function_chain = False
+            if state.barge_in_active:
+                state.barge_in_active = False
         elif role == "assistant":
             state.in_function_chain = False
             state.last_assistant_text_time = current_time
@@ -1187,6 +1223,8 @@ class WebSocketService:
         streamsid,
         twilio_send_queue: Optional[asyncio.Queue] = None,
     ) -> None:
+        if state.barge_in_active:
+            return
         now = time.perf_counter()
         try:
             state.audio_buffer.extend(message)
@@ -1216,16 +1254,21 @@ class WebSocketService:
         twilio_ws,
         streamsid,
         last_agent_audio_time,
+        agent_speaking: bool = False,
         twilio_send_queue: Optional[asyncio.Queue] = None,
     ):
-        """Clear Twilio audio only if user starts speaking after a gap."""
+        """Clear Twilio audio when the user interrupts active or recent agent speech."""
         if decoded.get("type") == "UserStartedSpeaking":
             now = asyncio.get_event_loop().time()
             threshold = float(getattr(settings, "BARGE_IN_CLEAR_SECONDS", 0.15))
-            if not last_agent_audio_time or (now - last_agent_audio_time) > threshold:
+            recent_audio = bool(last_agent_audio_time) and (now - last_agent_audio_time) <= threshold
+            if agent_speaking or recent_audio:
                 clear_msg = {"event": "clear", "streamSid": streamsid}
                 msg_json = json.dumps(clear_msg)
                 if twilio_send_queue:
+                    drained = self._drain_twilio_send_queue(twilio_send_queue)
+                    if drained:
+                        self.logger.debug("Barge-in: dropped %d queued Twilio frames", drained)
                     self._enqueue_twilio_message(twilio_send_queue, msg_json)
                 else:
                     await twilio_ws.send_text(msg_json)
@@ -1237,10 +1280,18 @@ class WebSocketService:
         sts_ws,
         streamsid,
         last_agent_audio_time,
+        agent_speaking: bool = False,
         twilio_send_queue: Optional[asyncio.Queue] = None,
     ):
         """Handle text messages and barge-in logic."""
-        await self.handle_barge_in(decoded, twilio_ws, streamsid, last_agent_audio_time, twilio_send_queue)
+        await self.handle_barge_in(
+            decoded,
+            twilio_ws,
+            streamsid,
+            last_agent_audio_time,
+            agent_speaking,
+            twilio_send_queue,
+        )
 
     async def buffer_flusher(
         self,
@@ -1295,7 +1346,7 @@ class WebSocketService:
         shutdown_event: Optional[asyncio.Event] = None,
     ) -> None:
         """Drain outbound queue and send to Twilio without blocking upstream loops."""
-        chunk_interval = max(getattr(settings, "TWILIO_OUTBOUND_PACING_SECONDS", 0.04), 0.0)
+        chunk_interval = self._get_twilio_chunk_interval()
         next_send_time = time.monotonic()
         try:
             while True:
@@ -1424,7 +1475,13 @@ class WebSocketService:
                     self._update_barge_in_state(decoded, state)
                     await self._handle_audio_payload(decoded, state, twilio_ws, streamsid, twilio_send_queue)
                     await self.handle_text_message(
-                        decoded, twilio_ws, sts_ws, streamsid, state.last_agent_audio_time, twilio_send_queue
+                        decoded,
+                        twilio_ws,
+                        sts_ws,
+                        streamsid,
+                        state.last_agent_audio_time,
+                        state.agent_speaking,
+                        twilio_send_queue,
                     )
                     await self._route_function_calls(decoded, state, transport, sts_ws)
                     self._store_transcript_entry(decoded, call_id, state)
@@ -1679,6 +1736,8 @@ class WebSocketService:
                             "call_id": call_id,
                             "restaurant_id": call_resources.restaurant_id,
                             "call_sid": call_sid,
+                            "customization_progress_by_item": state.customization_progress_by_item,
+                            "order_session_state": state.order_session_state,
                         }
                         if caller_number:
                             default_args["customer_contact"] = caller_number

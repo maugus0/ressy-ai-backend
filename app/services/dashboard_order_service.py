@@ -7,12 +7,14 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from app.repositories.mysql_menu_repo import MySQLMenuRepository
+from app.repositories.mysql_order_item_repo import MySQLOrderItemRepository
 from app.repositories.mysql_order_repo import MySQLOrderRepository
 from app.repositories.mysql_restaurant_repo import MySQLRestaurantRepository
 from app.repositories.mysql_user_repo import MySQLUserRepository
 from app.repositories.mysql_user_restaurant_metadata_repo import (
     MySQLUserRestaurantMetadataRepository,
 )
+from app.services.order_customization_service import OrderCustomizationService
 from app.utils.logging_config import get_logger
 from app.utils.timezone import isoformat_z, parse_datetime
 
@@ -71,6 +73,78 @@ class DashboardOrderService:
         self.user_repo = MySQLUserRepository()
         self.metadata_repo = MySQLUserRestaurantMetadataRepository()
         self.menu_repo = MySQLMenuRepository()
+        self.order_item_repo = MySQLOrderItemRepository()
+        self.customization_service = OrderCustomizationService(self.menu_repo)
+
+    def _attach_order_item_snapshots(self, order: Dict[str, Any]) -> Dict[str, Any]:
+        if not order or not order.get("id"):
+            return order
+        order_id = int(order["id"])
+        items = self.order_item_repo.list_order_items(order_id)
+        if not items:
+            order["order_items"] = []
+            return order
+        options = self.order_item_repo.list_order_item_options(order_id)
+        options_by_item: Dict[int, List[Dict[str, Any]]] = {}
+        for opt in options:
+            order_item_id = opt.get("order_item_id")
+            if order_item_id is None:
+                continue
+            options_by_item.setdefault(int(order_item_id), []).append(opt)
+        for item in items:
+            item_id = item.get("id")
+            item["options"] = options_by_item.get(int(item_id), []) if item_id is not None else []
+        order["order_items"] = items
+        return order
+
+    def _validate_and_price_order_details(
+        self, order_details: List[Dict[str, Any]]
+    ) -> tuple[list[Dict[str, Any]], float]:
+        priced_items: List[Dict[str, Any]] = []
+        total = 0.0
+        for item in order_details:
+            item_id = item.get("item_id")
+            options = item.get("options")
+            price = float(item.get("price") or 0)
+            quantity = max(int(item.get("quantity") or 1), 1)
+            if options and not item_id:
+                raise ValueError("Customizations require a valid item_id.")
+            if not item_id:
+                line_total = round(price * quantity, 2)
+                priced_items.append(
+                    {
+                        "menu_item_id": None,
+                        "item_name_snapshot": item.get("name"),
+                        "base_price_snapshot": price,
+                        "quantity": quantity,
+                        "instructions": item.get("instructions"),
+                        "final_unit_price_snapshot": price,
+                        "option_total_snapshot": 0.0,
+                        "total_price_snapshot": line_total,
+                        "option_snapshots": [],
+                    }
+                )
+                total += line_total
+                continue
+            validation = self.customization_service.validate_item_options(item_id, options)
+            if not validation.is_valid:
+                raise ValueError("Invalid customizations provided for one or more items.")
+            priced = self.customization_service.price_item(item_id, price, quantity, validation.normalized_options)
+            priced_items.append(
+                {
+                    "menu_item_id": item_id,
+                    "item_name_snapshot": item.get("name"),
+                    "base_price_snapshot": price,
+                    "quantity": quantity,
+                    "instructions": item.get("instructions"),
+                    "final_unit_price_snapshot": priced.final_unit_price,
+                    "option_total_snapshot": priced.option_total,
+                    "total_price_snapshot": priced.total_price,
+                    "option_snapshots": priced.option_snapshots,
+                }
+            )
+            total += priced.total_price
+        return priced_items, round(total, 2)
 
     def create_order(
         self,
@@ -174,6 +248,10 @@ class DashboardOrderService:
                 # Log but don't fail order creation if metadata mapping fails
                 logger.warning("Failed to create user-restaurant metadata: %s", meta_err)
 
+        priced_items, computed_total = self._validate_and_price_order_details(order_details)
+        if computed_total > 0:
+            total_amount = computed_total
+
         # Create order
         order_data = {
             "restaurant_id": restaurant_id,
@@ -184,6 +262,21 @@ class DashboardOrderService:
         }
 
         order_id = self.order_repo.create_order(user_id, order_data)
+        for item in priced_items:
+            order_item_id = self.order_item_repo.create_order_item(
+                order_id,
+                {
+                    "menu_item_id": item.get("menu_item_id"),
+                    "item_name_snapshot": item.get("item_name_snapshot"),
+                    "base_price_snapshot": item.get("base_price_snapshot"),
+                    "quantity": item.get("quantity"),
+                    "instructions": item.get("instructions"),
+                    "final_unit_price_snapshot": item.get("final_unit_price_snapshot"),
+                    "option_total_snapshot": item.get("option_total_snapshot"),
+                    "total_price_snapshot": item.get("total_price_snapshot"),
+                },
+            )
+            self.order_item_repo.create_order_item_options(order_item_id, item.get("option_snapshots", []))
 
         return {
             "order_id": order_id,
@@ -217,7 +310,8 @@ class DashboardOrderService:
         if not order:
             raise ValueError(f"Order with ID {order_id} not found")
 
-        return _transform_order(order)
+        order = _transform_order(order)
+        return self._attach_order_item_snapshots(order)
 
     def get_order_with_restaurant_check(self, order_id: int) -> Dict[str, Any]:
         """
@@ -246,7 +340,7 @@ class DashboardOrderService:
         if restaurant_id is not None:
             order["restaurant_id"] = int(restaurant_id)
 
-        return order
+        return self._attach_order_item_snapshots(order)
 
     def get_orders_by_restaurant(
         self,
@@ -305,7 +399,10 @@ class DashboardOrderService:
         )
 
         # Transform each order
-        transformed_orders = [_transform_order(order) for order in orders]
+        transformed_orders = []
+        for order in orders:
+            transformed = _transform_order(order)
+            transformed_orders.append(self._attach_order_item_snapshots(transformed))
 
         # Get total count
         total = self.order_repo.count_orders_by_restaurant(
@@ -361,6 +458,11 @@ class DashboardOrderService:
         if order.get("status") == "cancelled" and status != "pending":
             raise ValueError("Cannot update a cancelled order")
 
+        if order_details is not None:
+            priced_items, computed_total = self._validate_and_price_order_details(order_details)
+            if computed_total > 0:
+                total_amount = computed_total
+
         # Update order
         success = self.order_repo.update_order(
             order_id=order_id,
@@ -373,8 +475,27 @@ class DashboardOrderService:
         if not success:
             raise ValueError("Failed to update order")
 
+        if order_details is not None:
+            self.order_item_repo.delete_order_items_by_order(order_id)
+            for item in priced_items:
+                order_item_id = self.order_item_repo.create_order_item(
+                    order_id,
+                    {
+                        "menu_item_id": item.get("menu_item_id"),
+                        "item_name_snapshot": item.get("item_name_snapshot"),
+                        "base_price_snapshot": item.get("base_price_snapshot"),
+                        "quantity": item.get("quantity"),
+                        "instructions": item.get("instructions"),
+                        "final_unit_price_snapshot": item.get("final_unit_price_snapshot"),
+                        "option_total_snapshot": item.get("option_total_snapshot"),
+                        "total_price_snapshot": item.get("total_price_snapshot"),
+                    },
+                )
+                self.order_item_repo.create_order_item_options(order_item_id, item.get("option_snapshots", []))
+
         # Return updated order (transformed)
-        return _transform_order(self.order_repo.get_order_with_user(order_id))
+        updated = _transform_order(self.order_repo.get_order_with_user(order_id))
+        return self._attach_order_item_snapshots(updated)
 
     def update_order_status(self, order_id: int, status: str) -> Dict[str, Any]:
         """

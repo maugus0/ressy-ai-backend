@@ -80,8 +80,6 @@ class EndCallArgs(BaseModel):
 class EscalateToHumanArgs(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    restaurant_id: int
-    customer_contact: str
     reason: str
     urgency: Literal["standard", "urgent"] = "standard"
     feature_disabled: Optional[Literal["orders", "reservations", "faqs"]] = None
@@ -212,9 +210,23 @@ async def escalate_to_human(**kwargs) -> AgentFunctionResult:
     call_sid = context.get("call_sid")
     call_id = context.get("call_id")
     user_id = context.get("user_id")
+    restaurant_id_raw = context.get("restaurant_id")
+    customer_contact = context.get("customer_contact") or context.get("caller_phone")
+    try:
+        restaurant_id = int(restaurant_id_raw) if restaurant_id_raw is not None else None
+    except (TypeError, ValueError):
+        restaurant_id = None
+    if restaurant_id is None:
+        return AgentFunctionResult(
+            content={"status": "FAILED", "message": "Missing restaurant context."}, side_effects=[]
+        )
+    if not customer_contact:
+        return AgentFunctionResult(
+            content={"status": "FAILED", "message": "Missing caller contact context."}, side_effects=[]
+        )
     logger.info("escalate_to_human invoked urgency=%s reason=%s call_sid=%s", args.urgency, args.reason, call_sid)
 
-    restaurant = await load_restaurant(args.restaurant_id)
+    restaurant = await load_restaurant(restaurant_id)
     forward_escalations = False
     escalation_phone_number = None
     if restaurant:
@@ -230,9 +242,9 @@ async def escalate_to_human(**kwargs) -> AgentFunctionResult:
             {
                 "call_id": call_id,
                 "user_id": user_id,
-                "restaurant_id": str(args.restaurant_id),
+                "restaurant_id": str(restaurant_id),
                 "twilio_call_sid": call_sid,
-                "caller_phone": args.customer_contact,
+                "caller_phone": customer_contact,
                 "escalation_phone_number": escalation_phone_number,
                 "urgency": args.urgency,
                 "reason": args.reason,
@@ -254,13 +266,13 @@ async def escalate_to_human(**kwargs) -> AgentFunctionResult:
         "status": "HUMAN_ESCALATION_REQUESTED",
         "urgency": args.urgency,
         "reason": args.reason,
-        "customer_contact": args.customer_contact,
+        "customer_contact": customer_contact,
         "forwarding": should_forward,
     }
     asyncio.create_task(
         _emit_escalation_sse_event(
-            restaurant_id=int(args.restaurant_id),
-            caller_phone=args.customer_contact,
+            restaurant_id=restaurant_id,
+            caller_phone=customer_contact,
             reason=args.reason,
             urgency=args.urgency,
             call_sid=call_sid,

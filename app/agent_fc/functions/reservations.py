@@ -11,7 +11,12 @@ from typing import Any, Dict, Optional
 from pydantic import BaseModel, ConfigDict
 
 from app.agent_fc.functions.common_restaurant import load_restaurant
-from app.agent_fc.functions.function_context import split_call_context
+from app.agent_fc.functions.function_context import (
+    NoArgs,
+    context_customer_contact,
+    context_restaurant_id,
+    split_call_context,
+)
 from app.config import settings
 from app.repositories.mysql_reservation_repo import MySQLReservationRepository
 from app.repositories.mysql_restaurant_repo import MySQLRestaurantRepository
@@ -177,11 +182,9 @@ async def _send_voice_reservation_sms(
 class CreateReservationArgs(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    restaurant_id: int
     party_size: int
     datetime_iso: str
     customer_name: Optional[str] = None
-    customer_contact: str
     occasion: Optional[str] = None
     special_request: Optional[str] = None
     notes: Optional[str] = None
@@ -190,9 +193,7 @@ class CreateReservationArgs(BaseModel):
 class UpdateReservationArgs(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    customer_contact: str
     customer_name: Optional[str] = None
-    restaurant_id: int
     party_size: Optional[int] = None
     datetime_iso: Optional[str] = None
     special_request: Optional[str] = None
@@ -200,17 +201,9 @@ class UpdateReservationArgs(BaseModel):
     status: Optional[str] = None  # Allow status changes (e.g., "cancelled") within update window
 
 
-class LookupReservationArgs(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    customer_contact: str
-    restaurant_id: int
-
-
 class CheckAvailabilityArgs(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    restaurant_id: int
     party_size: int
     date_start_iso: str
 
@@ -251,13 +244,19 @@ async def create_reservation(**kwargs) -> Dict[str, Any]:
     context, model_kwargs = split_call_context(kwargs, CreateReservationArgs)
     args = CreateReservationArgs.model_validate(model_kwargs)
     call_sid = context.get("call_sid")
+    restaurant_id = context_restaurant_id(context)
+    customer_contact = context_customer_contact(context)
+    if restaurant_id is None:
+        return {"status": "FAILED", "message": "Missing restaurant context."}
+    if not customer_contact:
+        return {"status": "FAILED", "message": "Missing caller contact context."}
     logger.info(
         "create_reservation invoked restaurant_id=%s party_size=%s call_sid=%s",
-        args.restaurant_id,
+        restaurant_id,
         args.party_size,
         call_sid,
     )
-    restaurant = await load_restaurant(args.restaurant_id)
+    restaurant = await load_restaurant(restaurant_id)
     if not restaurant:
         return {
             "status": "FAILED",
@@ -305,7 +304,7 @@ async def create_reservation(**kwargs) -> Dict[str, Any]:
         if slot_dt.tzinfo:
             slot_dt = slot_dt.replace(tzinfo=None)
         used_capacity = reservation_repo.get_slot_confirmed_capacity(
-            restaurant_id=int(args.restaurant_id),
+            restaurant_id=restaurant_id,
             date_time=slot_dt,
             reservation_type="in-house",
         )
@@ -334,7 +333,7 @@ async def create_reservation(**kwargs) -> Dict[str, Any]:
         user_id = user_repo.create_or_update_user(
             {
                 "name": args.customer_name,
-                "phone_number": args.customer_contact,
+                "phone_number": customer_contact,
                 "email": None,
                 "address": None,
                 "is_spam": False,
@@ -346,7 +345,7 @@ async def create_reservation(**kwargs) -> Dict[str, Any]:
         try:
             metadata_repo.create_mapping(
                 user_id=user_id,
-                restaurant_id=int(args.restaurant_id),
+                restaurant_id=restaurant_id,
                 source="reservation",
                 notes="Created via voice agent reservation",
             )
@@ -371,7 +370,7 @@ async def create_reservation(**kwargs) -> Dict[str, Any]:
         # 5. Create slot booking with expires_at = date_time + 15 minutes
         expires_at = reservation_datetime + timedelta(minutes=15)
         slot_id = reservation_repo.create_slot_booking(
-            restaurant_id=int(args.restaurant_id),
+            restaurant_id=restaurant_id,
             date_time=reservation_datetime,
             expires_at=expires_at,
             reservation_token=reservation_token,
@@ -400,7 +399,7 @@ async def create_reservation(**kwargs) -> Dict[str, Any]:
             "party_size": args.party_size,
             "datetime": reservation_iso,
             "customer_name": args.customer_name,
-            "customer_contact": args.customer_contact,
+            "customer_contact": customer_contact,
             "occasion": args.occasion,
             "special_request": args.special_request,
             "notes": final_notes,
@@ -415,12 +414,12 @@ async def create_reservation(**kwargs) -> Dict[str, Any]:
                 logger.debug(
                     "[DEBUG] Logging reservation creation history: reservation_id=%s, restaurant_id=%s",
                     reservation["reservation_id"],
-                    args.restaurant_id,
+                    restaurant_id,
                 )
                 history_service = _get_history_service()
                 history_id = history_service.log_reservation_created(
                     reservation_id=reservation["reservation_id"],
-                    restaurant_id=int(args.restaurant_id),
+                    restaurant_id=restaurant_id,
                     reservation_data={
                         "status": "pending",
                         "party_size": args.party_size,
@@ -442,7 +441,7 @@ async def create_reservation(**kwargs) -> Dict[str, Any]:
         # Emit SSE event for new reservation (background task)
         asyncio.create_task(
             _emit_reservation_sse_event(
-                restaurant_id=int(args.restaurant_id),
+                restaurant_id=restaurant_id,
                 reservation_id=reservation["reservation_id"],
                 subtype=ReservationEventSubtype.NEW_RESERVATION,
                 data={
@@ -457,12 +456,12 @@ async def create_reservation(**kwargs) -> Dict[str, Any]:
         )
 
         # Send SMS notification for voice-created reservation (background task)
-        if args.customer_contact:
+        if customer_contact:
             asyncio.create_task(
                 _send_voice_reservation_sms(
                     restaurant=restaurant,
                     reservation_id=reservation["reservation_id"],
-                    phone_number=args.customer_contact,
+                    phone_number=customer_contact,
                     confirmation_number=reservation.get("confirmation_number"),
                 )
             )
@@ -486,22 +485,28 @@ async def lookup_reservation(**kwargs) -> Dict[str, Any]:
     Look up the latest reservation for a caller using their phone number.
     Similar to lookup_order but for reservations.
     """
-    context, model_kwargs = split_call_context(kwargs, LookupReservationArgs)
-    args = LookupReservationArgs.model_validate(model_kwargs)
+    context, model_kwargs = split_call_context(kwargs, NoArgs)
+    NoArgs.model_validate(model_kwargs)
     call_sid = context.get("call_sid")
-    logger.info("lookup_reservation invoked customer_contact=%s call_sid=%s", args.customer_contact, call_sid)
+    restaurant_id = context_restaurant_id(context)
+    customer_contact = context_customer_contact(context)
+    if restaurant_id is None:
+        return {"status": "FAILED", "message": "Missing restaurant context."}
+    if not customer_contact:
+        return {"status": "FAILED", "message": "Missing caller contact context."}
+    logger.info("lookup_reservation invoked customer_contact=%s call_sid=%s", customer_contact, call_sid)
 
     def _lookup():
         user_repo = _get_user_repo()
         reservation_repo = _get_reservation_repo()
 
         # Find user by phone number
-        user_id = user_repo.get_user_id_by_phone_or_email(args.customer_contact, None)
+        user_id = user_repo.get_user_id_by_phone_or_email(customer_contact, None)
         if not user_id:
             return None
 
         # Get the latest reservation for this user
-        reservation = reservation_repo.get_latest_by_user(user_id, restaurant_id=args.restaurant_id)
+        reservation = reservation_repo.get_latest_by_user(user_id, restaurant_id=restaurant_id)
         return reservation
 
     reservation = await _run_service_call(_lookup)
@@ -545,8 +550,14 @@ async def update_reservation(**kwargs) -> Dict[str, Any]:
     context, model_kwargs = split_call_context(kwargs, UpdateReservationArgs)
     args = UpdateReservationArgs.model_validate(model_kwargs)
     call_sid = context.get("call_sid")
-    logger.info("update_reservation invoked customer_contact=%s call_sid=%s", args.customer_contact, call_sid)
-    restaurant = await load_restaurant(args.restaurant_id)
+    restaurant_id = context_restaurant_id(context)
+    customer_contact = context_customer_contact(context)
+    if restaurant_id is None:
+        return {"status": "FAILED", "message": "Missing restaurant context."}
+    if not customer_contact:
+        return {"status": "FAILED", "message": "Missing caller contact context."}
+    logger.info("update_reservation invoked customer_contact=%s call_sid=%s", customer_contact, call_sid)
+    restaurant = await load_restaurant(restaurant_id)
     if not restaurant:
         return {
             "status": "FAILED",
@@ -566,10 +577,10 @@ async def update_reservation(**kwargs) -> Dict[str, Any]:
         user_repo = _get_user_repo()
         reservation_repo = _get_reservation_repo()
 
-        user_id = user_repo.get_user_id_by_phone_or_email(args.customer_contact, None)
+        user_id = user_repo.get_user_id_by_phone_or_email(customer_contact, None)
         if not user_id:
             return None, None, None
-        reservation = reservation_repo.get_latest_by_user(user_id, restaurant_id=args.restaurant_id)
+        reservation = reservation_repo.get_latest_by_user(user_id, restaurant_id=restaurant_id)
         if not reservation:
             return None, None, None
 
@@ -594,11 +605,11 @@ async def update_reservation(**kwargs) -> Dict[str, Any]:
             slot_dt = candidate_datetime.replace(second=0, microsecond=0)
             if slot_dt.tzinfo:
                 slot_dt = slot_dt.replace(tzinfo=None)
-            used_capacity = reservation_repo.get_slot_confirmed_capacity(
-                restaurant_id=int(args.restaurant_id),
-                date_time=slot_dt,
-                reservation_type="in-house",
-            )
+                used_capacity = reservation_repo.get_slot_confirmed_capacity(
+                    restaurant_id=restaurant_id,
+                    date_time=slot_dt,
+                    reservation_type="in-house",
+                )
             current_party_size = reservation.get("party_size", 0)
             if reservation.get("status") == "confirmed":
                 used_capacity -= current_party_size
@@ -611,7 +622,7 @@ async def update_reservation(**kwargs) -> Dict[str, Any]:
             user_repo.create_or_update_user(
                 {
                     "name": args.customer_name,
-                    "phone_number": args.customer_contact,
+                    "phone_number": customer_contact,
                     "email": None,
                     "address": None,
                     "is_spam": False,
@@ -700,7 +711,7 @@ async def update_reservation(**kwargs) -> Dict[str, Any]:
         }
 
     updated = result
-    restaurant_id = extra or args.restaurant_id
+    restaurant_id = extra or restaurant_id
 
     # Log activity history for voice agent reservation update (run in thread since it's a DB operation)
     def _log_history():
@@ -786,13 +797,16 @@ async def check_reservation_availability(**kwargs) -> Dict[str, Any]:
     context, model_kwargs = split_call_context(kwargs, CheckAvailabilityArgs)
     args = CheckAvailabilityArgs.model_validate(model_kwargs)
     call_sid = context.get("call_sid")
+    restaurant_id = context_restaurant_id(context)
+    if restaurant_id is None:
+        return {"status": "FAILED", "message": "Missing restaurant context."}
     logger.info(
         "check_reservation_availability invoked restaurant_id=%s party_size=%s call_sid=%s",
-        args.restaurant_id,
+        restaurant_id,
         args.party_size,
         call_sid,
     )
-    restaurant = await load_restaurant(args.restaurant_id)
+    restaurant = await load_restaurant(restaurant_id)
     if not restaurant:
         return {
             "status": "FAILED",
@@ -833,7 +847,7 @@ async def check_reservation_availability(**kwargs) -> Dict[str, Any]:
             capacity_start = window_start.replace(tzinfo=restaurant_tz).astimezone(timezone.utc).replace(tzinfo=None)
             capacity_end = window_end.replace(tzinfo=restaurant_tz).astimezone(timezone.utc).replace(tzinfo=None)
             capacity_map_utc = reservation_service.get_capacity_map(
-                restaurant_id=int(args.restaurant_id),
+                restaurant_id=restaurant_id,
                 window_start=capacity_start,
                 window_end=capacity_end,
             )
@@ -904,7 +918,7 @@ async def check_reservation_availability(**kwargs) -> Dict[str, Any]:
                     )
 
             return {
-                "restaurant_id": args.restaurant_id,
+                "restaurant_id": restaurant_id,
                 "party_size": args.party_size,
                 "seating_capacity": seating_capacity,
                 "date_time": args.date_start_iso,
@@ -916,7 +930,7 @@ async def check_reservation_availability(**kwargs) -> Dict[str, Any]:
         except Exception as exc:
             logger.exception("[ERROR] check_reservation_availability failed: %s", exc)
             return {
-                "restaurant_id": args.restaurant_id,
+                "restaurant_id": restaurant_id,
                 "party_size": args.party_size,
                 "requested_slot_available": None,
                 "nearest_forward_slot": None,

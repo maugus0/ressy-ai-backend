@@ -126,6 +126,7 @@ async def create_menu_item(
                                     "sub_category": "Classic",
                                     "is_available": True,
                                     "is_special": False,
+                                    "option_groups": None,
                                 }
                             ],
                             "pagination": {"page": 1, "limit": 50, "total": 1, "pages": 1},
@@ -217,6 +218,35 @@ async def get_menu_categories(
                             "sub_category": "Classic",
                             "is_available": True,
                             "is_special": False,
+                            "option_groups": [
+                                {
+                                    "id": 12,
+                                    "restaurant_id": 10,
+                                    "name": "Toppings",
+                                    "description": "Choose your toppings",
+                                    "selection_type": "multiple",
+                                    "min_select": 0,
+                                    "max_select": 5,
+                                    "free_allowance": 2,
+                                    "allows_quantity": True,
+                                    "max_quantity_per_option": 2,
+                                    "prompt_style": "ASK_ALWAYS",
+                                    "is_required": False,
+                                    "is_available": True,
+                                    "sort_order": 1,
+                                    "values": [
+                                        {
+                                            "id": 101,
+                                            "group_id": 12,
+                                            "name": "Pepperoni",
+                                            "price_delta": 1.5,
+                                            "is_default": False,
+                                            "is_available": True,
+                                            "sort_order": 1,
+                                        }
+                                    ],
+                                }
+                            ],
                         }
                     }
                 },
