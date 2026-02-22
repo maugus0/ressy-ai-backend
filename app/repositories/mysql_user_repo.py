@@ -469,3 +469,49 @@ class MySQLUserRepository(MySQLBaseRepository):
     def delete_user(self, user_id: int) -> int:
         """Delete user by id."""
         return self._execute_update("DELETE FROM Users WHERE id = %s", (user_id,))
+
+    def mark_user_global_spam(self, user_id: int, reason: Optional[str] = None) -> int:
+        """
+        Mark a user as global spam in the Users table.
+
+        Args:
+            user_id: User ID
+            reason: Optional reason for global spam marking
+
+        Returns:
+            Number of rows updated
+        """
+        query = "UPDATE Users SET is_spam = TRUE, updated_at = NOW() WHERE id = %s"
+        return self._execute_update(query, (user_id,))
+
+    def get_user_spam_status(self, user_id: int, restaurant_id: int) -> Dict:
+        """
+        Get spam status for a user (both restaurant-specific and global).
+
+        Args:
+            user_id: User ID
+            restaurant_id: Restaurant ID
+
+        Returns:
+            Dictionary with spam status information
+        """
+        user = self.get_user_by_id(user_id)
+        if not user:
+            return {"error": "User not found"}
+
+        # Check restaurant-specific spam
+        from app.repositories.mysql_user_restaurant_metadata_repo import (
+            MySQLUserRestaurantMetadataRepository,
+        )
+
+        metadata_repo = MySQLUserRestaurantMetadataRepository()
+        is_restaurant_spam = metadata_repo.is_spam(user_id, restaurant_id)
+        spam_count = metadata_repo.get_spam_count_by_user(user_id)
+
+        return {
+            "user_id": user_id,
+            "restaurant_id": restaurant_id,
+            "is_global_spam": bool(user.get("is_spam", False)),
+            "is_restaurant_spam": is_restaurant_spam,
+            "spam_restaurant_count": spam_count,
+        }

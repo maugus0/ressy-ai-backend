@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-from .functions import conversation, menu, orders, reservations
+from .functions import conversation, menu, orders, reservations, spam_detection
 
 
 def _definition(name: str, description: str, schema: Dict[str, Any]) -> Dict[str, Any]:
@@ -41,6 +41,7 @@ def get_function_definitions(feature_flags: Optional[Dict[str, Any]] = None) -> 
     # filler_schema = conversation.AgentFillerArgs.model_json_schema()
     end_call_schema = conversation.EndCallArgs.model_json_schema()
     escalate_schema = conversation.EscalateToHumanArgs.model_json_schema()
+    detect_spam_schema = spam_detection.DetectSpamBehaviorArgs.model_json_schema()
 
     definitions: List[Dict[str, Any]] = []
 
@@ -156,6 +157,15 @@ def get_function_definitions(feature_flags: Optional[Dict[str, Any]] = None) -> 
                 "4. Caller wants to place large orders (more than 20 items) or reservations (party size more than 10). "
                 "5. If a feature is disabled for this restaurant, include feature_disabled as one of: orders, reservations, faqs.",
                 schema=escalate_schema,
+            ),
+            _definition(
+                name="detect_spam_behavior",
+                description="IMMEDIATELY call this function if you detect spam or non-human behavior during the call. "
+                "Indicators include: immediate perfectly-timed DTMF tones, no background noise, pre-recorded loops, "
+                "repetitive non-conversational patterns, or any behavior that suggests this is not a genuine human caller. "
+                "This function will create a notification for the restaurant admin to review and will disconnect the call. "
+                "You do NOT mark the user as spam - only restaurant admins can do that after reviewing the notification.",
+                schema=detect_spam_schema,
             ),
         ]
     )

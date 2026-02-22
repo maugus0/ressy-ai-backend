@@ -10,7 +10,7 @@ import websockets
 from fastapi import WebSocket, WebSocketDisconnect
 
 from app.agent_fc.config import get_settings as get_fc_settings
-from app.agent_fc.functions import conversation, menu, orders, reservations
+from app.agent_fc.functions import conversation, menu, orders, reservations, spam_detection
 from app.agent_fc.models import AgentFrame
 from app.agent_fc.registry import FunctionRegistry
 from app.agent_fc.responses import AgentSideEffect
@@ -18,6 +18,9 @@ from app.agent_fc.router import FunctionCallRouter
 from app.agent_fc.transport import Transport
 from app.config import settings
 from app.repositories.mysql_user_repo import MySQLUserRepository
+from app.repositories.mysql_user_restaurant_metadata_repo import (
+    MySQLUserRestaurantMetadataRepository,
+)
 from app.services.call_service import CallService
 from app.services.callmanager.call_filler import FillerManager
 from app.services.callmanager.call_latency import log_agent_audio_start_latency, log_assistant_text_latency
@@ -56,6 +59,7 @@ class WebSocketService:
         self.deepgram_service = DeepgramService()
         self.call_service = CallService()
         self.user_repo = MySQLUserRepository()
+        self.metadata_repo = MySQLUserRestaurantMetadataRepository()
         self.restaurant_service = RestaurantService()
         self.menu_service = MenuService()
         self.faq_service = FAQService()
@@ -521,6 +525,218 @@ class WebSocketService:
         except Exception as exc:
             self.logger.warning("[Close] Failed to close Deepgram websocket: %s", exc)
 
+    async def _check_and_block_spam_user(
+        self,
+        caller_number: str,
+        restaurant_id: int,
+        twilio_ws: WebSocket,
+        streamsid_queue: asyncio.Queue,
+        shutdown_event: asyncio.Event,
+        audio_queue: asyncio.Queue,
+    ) -> bool:
+        """
+        Check if user is marked as spam and block the call if so.
+
+        Args:
+            caller_number: Caller's phone number
+            restaurant_id: Restaurant ID
+            twilio_ws: Twilio WebSocket connection
+            streamsid_queue: Queue for stream SID
+            shutdown_event: Shutdown event
+            audio_queue: Audio queue
+
+        Returns:
+            True if call was blocked, False otherwise
+        """
+        try:
+            # Get user by phone number (wrap sync DB call to avoid blocking event loop)
+            user_id = await asyncio.to_thread(
+                self.user_repo.get_user_id_by_phone_or_email,
+                caller_number,
+                None,
+            )
+            if not user_id:
+                return False  # New user, not marked as spam
+
+            # Check global spam first (wrap sync DB call to avoid blocking event loop)
+            user = await asyncio.to_thread(
+                self.user_repo.get_user_by_id,
+                user_id,
+            )
+            if user and user.get("is_spam"):
+                self.logger.warning("Call blocked: User %s is marked as global spam", user_id)
+                await self._play_spam_message_and_disconnect(
+                    twilio_ws,
+                    streamsid_queue,
+                    shutdown_event,
+                    audio_queue,
+                    is_global=True,
+                )
+                return True
+
+            # Check restaurant-specific spam (wrap sync DB call to avoid blocking event loop)
+            is_restaurant_spam = await asyncio.to_thread(
+                self.metadata_repo.is_spam,
+                user_id,
+                restaurant_id,
+            )
+            if is_restaurant_spam:
+                self.logger.warning(
+                    "Call blocked: User %s is marked as spam for restaurant %s",
+                    user_id,
+                    restaurant_id,
+                )
+                await self._play_spam_message_and_disconnect(
+                    twilio_ws,
+                    streamsid_queue,
+                    shutdown_event,
+                    audio_queue,
+                    is_global=False,
+                )
+                return True
+
+            return False
+        except Exception as e:
+            self.logger.exception("Error checking spam status: %s", e)
+            return False  # Don't block on error, allow call to proceed
+
+    async def _play_spam_message_and_disconnect(
+        self,
+        twilio_ws: WebSocket,
+        streamsid_queue: asyncio.Queue,
+        shutdown_event: asyncio.Event,
+        audio_queue: asyncio.Queue,
+        is_global: bool = False,
+    ):
+        """
+        Play spam blocking message and disconnect the call.
+
+        Args:
+            twilio_ws: Twilio WebSocket connection
+            streamsid_queue: Queue for stream SID
+            shutdown_event: Shutdown event
+            audio_queue: Audio queue
+            is_global: True if global spam, False if restaurant-specific
+        """
+        # Message based on spam type
+        if is_global:
+            message = "Ressy has marked you as spam. Please contact ressy directly to unblock you."
+        else:
+            message = "Ressy has marked you as spam. Please contact restaurant directly to unblock you."
+
+        self.logger.info("Playing spam blocking message: %s", message)
+
+        try:
+            # Wait for stream SID from Twilio start event
+            try:
+                streamsid = await asyncio.wait_for(streamsid_queue.get(), timeout=5.0)
+            except asyncio.TimeoutError:
+                self.logger.warning("Timeout waiting for Twilio streamSid for spam message")
+                shutdown_event.set()
+                return
+
+            # Connect to Deepgram with default API key to play the message
+            async with self.deepgram_service.sts_connect() as sts_ws:
+                async with self._connections_lock:
+                    self._active_deepgram.add(sts_ws)
+
+                try:
+                    # Build config with the spam message as the greeting
+                    config_message = {
+                        "type": "Settings",
+                        "audio": {
+                            "input": {
+                                "encoding": settings.DEEPGRAM_AUDIO_INPUT_ENCODING or "mulaw",
+                                "sample_rate": settings.DEEPGRAM_AUDIO_INPUT_SAMPLE_RATE or 8000,
+                            },
+                            "output": {
+                                "encoding": settings.DEEPGRAM_AUDIO_OUTPUT_ENCODING or "mulaw",
+                                "sample_rate": settings.DEEPGRAM_AUDIO_OUTPUT_SAMPLE_RATE or 8000,
+                                "container": settings.DEEPGRAM_AUDIO_OUTPUT_CONTAINER or "none",
+                            },
+                        },
+                        "agent": {
+                            "language": settings.DEEPGRAM_AGENT_LANGUAGE,
+                            "listen": {
+                                "provider": {
+                                    "type": "deepgram",
+                                    "model": settings.DEEPGRAM_LISTEN_MODEL,
+                                    "endpointing": settings.DEEPGRAM_ENDPOINTING_MS,
+                                    "interim_results": settings.DEEPGRAM_INTERIM_RESULTS,
+                                    "utterance_end_ms": settings.DEEPGRAM_UTTERANCE_END_MS,
+                                }
+                            },
+                            "think": {
+                                "provider": {
+                                    "type": settings.DEEPGRAM_THINK_PROVIDER_TYPE,
+                                    "model": settings.DEEPGRAM_THINK_MODEL,
+                                },
+                                "prompt": "You are an automated message system. Do not respond to any user input. Just play the greeting message and end the call.",
+                            },
+                            "speak": {
+                                "provider": {
+                                    "type": "deepgram",
+                                    "model": settings.DEEPGRAM_SPEAK_MODEL,
+                                }
+                            },
+                            "greeting": message,
+                        },
+                    }
+                    await sts_ws.send(json.dumps(config_message))
+                    self.logger.info("Sent spam blocking message to Deepgram")
+
+                    # Create a stream state for audio handling
+                    state = self._create_stream_state()
+
+                    # Listen for Deepgram responses and forward audio to Twilio
+                    start_time = asyncio.get_event_loop().time()
+                    timeout_seconds = 15.0  # Max time to wait for message to play
+
+                    async for message in sts_ws:
+                        elapsed = asyncio.get_event_loop().time() - start_time
+                        if elapsed > timeout_seconds:
+                            self.logger.warning("Timeout waiting for spam message audio")
+                            break
+
+                        if isinstance(message, str):
+                            decoded = json.loads(message)
+                            msg_type = decoded.get("type")
+
+                            if msg_type == "AgentAudioDone":
+                                # Flush remaining audio and mark as done
+                                await self._flush_audio_buffer(state, twilio_ws, streamsid, None)
+                                # Give time for audio to play
+                                await asyncio.sleep(2.0)
+                                break
+                            elif msg_type == "ConversationAudio":
+                                audio_data = decoded.get("audio")
+                                if audio_data:
+                                    audio_bytes = base64.b64decode(audio_data)
+                                    # Use the existing binary audio handler
+                                    await self._handle_binary_audio(audio_bytes, state, twilio_ws, streamsid, None)
+
+                        elif isinstance(message, (bytes, bytearray, memoryview)):
+                            await self._handle_binary_audio(message, state, twilio_ws, streamsid, None)
+
+                finally:
+                    async with self._connections_lock:
+                        self._active_deepgram.discard(sts_ws)
+
+            # Set shutdown event and close connection
+            shutdown_event.set()
+            try:
+                await twilio_ws.close()
+            except Exception:
+                pass
+
+        except Exception as e:
+            self.logger.exception("Error playing spam message: %s", e)
+            shutdown_event.set()
+            try:
+                await twilio_ws.close()
+            except Exception:
+                pass
+
     async def _handle_unregistered_twilio_call(
         self,
         twilio_ws,
@@ -777,6 +993,11 @@ class WebSocketService:
             name="escalate_to_human",
             handler=conversation.escalate_to_human,
             arg_model=conversation.EscalateToHumanArgs,
+        )
+        registry.register(
+            name="detect_spam_behavior",
+            handler=spam_detection.detect_spam_behavior,
+            arg_model=spam_detection.DetectSpamBehaviorArgs,
         )
 
         transport = Transport(send_callable=sts_ws.send)
@@ -1585,6 +1806,18 @@ class WebSocketService:
                 return
             else:
                 self.logger.info("Serving call for restaurant: %s", restaurant_record.get("name"))
+
+            # Check spam status before proceeding with call
+            restaurant_id = restaurant_record.get("id")
+            if caller_number and restaurant_id:
+                spam_blocked = await self._check_and_block_spam_user(
+                    caller_number, restaurant_id, twilio_ws, streamsid_queue, shutdown_event, audio_queue
+                )
+                if spam_blocked:
+                    self.logger.info(
+                        "Call blocked due to spam status: caller=%s restaurant_id=%s", caller_number, restaurant_id
+                    )
+                    return
 
             deepgram_details = restaurant_record.get("deepgram_details") if restaurant_record else None
             if isinstance(deepgram_details, str):

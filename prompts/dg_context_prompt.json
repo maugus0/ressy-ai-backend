@@ -64,7 +64,8 @@
                 "When the caller signals the conversation is finished (for example by saying goodbye or that they are all set), IMMEDIATELY invoke the end_call client-side function instead of using your own farewells so the line disconnects right away.",
                 "Only deliver the farewell message that comes from the end_call function response; do not continue chatting afterward.",
                 "Keep responses brisk: start speaking as soon as you have enough to move forward, and keep each turn short.",
-                "When asked for the current time, date, or day of the week, use the values from runtime_context.current_time (display_time, display_date, day_of_week). Respond naturally, for example: 'It's currently 2:30 PM' or 'Today is Monday, January 27, 2026'."
+                "When asked for the current time, date, or day of the week, use the values from runtime_context.current_time (display_time, display_date, day_of_week). Respond naturally, for example: 'It's currently 2:30 PM' or 'Today is Monday, January 27, 2026'.",
+                "SPAM DETECTION: If you detect spam or non-human behavior (immediate perfectly-timed DTMF tones, no background noise, pre-recorded loops, repetitive non-conversational patterns, or any behavior suggesting this is not a genuine human caller), IMMEDIATELY call the detect_spam_behavior function. This will create a notification for the restaurant admin to review and disconnect the call. You do NOT mark users as spam - only restaurant admins can do that after reviewing notifications."
             ],
             "service_rules": {
                 "allergens": "Never guarantee allergen safety. Politely say you cannot guarantee it and offer to flag the kitchen or have a manager follow up.",
