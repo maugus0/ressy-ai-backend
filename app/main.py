@@ -1,6 +1,7 @@
 import asyncio
 import urllib.parse
 from contextlib import asynccontextmanager
+from typing import Any, Optional
 from xml.sax.saxutils import escape
 
 from dotenv import load_dotenv
@@ -41,9 +42,12 @@ from app.api import (
 )
 from app.api.websocket import twilio_websocket_handler
 from app.repositories.db_pool import close_db_pool, get_db_pool
+from app.services.call_service import CallService
 from app.services.escalation_service import EscalationService
+from app.services.notification_persistence_service import NotificationPersistenceService
 from app.services.restaurant_service import RestaurantService
 from app.services.sse_service import SSEService
+from app.services.user_service import UserService
 from app.utils.encoding import install_utc_jsonable_encoder
 from app.utils.logging_config import get_logger, setup_logging
 from app.utils.utc_json_response import UTCJSONResponse
@@ -165,7 +169,7 @@ app = FastAPI(
         },
         {
             "name": "Server-Sent Events",
-            "description": "Real-time event streaming via Server-Sent Events (SSE). Subscribe to live updates for orders, reservations, and escalations. Supports escalation events (user_requested, internal_server_error, suspected_spam), order events (new_order, order_updated, order_cancelled), and reservation events (new_reservation, reservation_updated, reservation_cancelled).",
+            "description": "Real-time event streaming via Server-Sent Events (SSE). Subscribe to live updates for orders, reservations, and escalations. Supports escalation events (user_requested, internal_server_error, suspected_spam, sms_redirect_failed, kill_switch_redirected), order events (new_order, order_updated, order_cancelled), and reservation events (new_reservation, reservation_updated, reservation_cancelled).",
         },
         {
             "name": "Voice Agent",
@@ -241,12 +245,145 @@ async def twilio_websocket(websocket: WebSocket):
     await twilio_websocket_handler(websocket)
 
 
+def _as_bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return False
+    try:
+        return bool(int(value))
+    except (TypeError, ValueError):
+        return str(value).strip().lower() in {"true", "yes", "on"}
+
+
+async def _record_kill_switch_bypass(
+    *,
+    restaurant: dict,
+    caller_phone: Optional[str],
+    call_sid: Optional[str],
+) -> None:
+    """
+    Persist side effects for a call bypassed by restaurant kill switch.
+    Best-effort only: failures are logged and do not block TwiML response.
+    """
+    restaurant_id_raw = restaurant.get("id")
+    restaurant_id_str = str(restaurant_id_raw) if restaurant_id_raw is not None else None
+    try:
+        restaurant_id_int = int(restaurant_id_raw) if restaurant_id_raw is not None else None
+    except (TypeError, ValueError):
+        restaurant_id_int = None
+
+    reason = "Call redirected because restaurant kill switch is enabled"
+    escalation_phone = str(restaurant.get("escalation_phone_number") or "").strip() or None
+
+    user_id: Optional[int] = None
+    call_id: Optional[int] = None
+    escalation_id: Optional[int] = None
+
+    try:
+        user_payload = {"phone_number": caller_phone} if caller_phone else {}
+        user_result = UserService().create_user(user_payload)
+        user_id_value = user_result.get("user_id")
+        user_id = int(user_id_value) if user_id_value is not None else None
+    except Exception as exc:  # noqa: BLE001 - defensive
+        logger.warning("Kill-switch bypass: failed to resolve/create user for caller=%s: %s", caller_phone, exc)
+
+    if user_id is not None and restaurant_id_str is not None:
+        try:
+            call_id = int(CallService().create_call_session(str(user_id), call_sid, None, restaurant_id_str))
+        except Exception as exc:  # noqa: BLE001 - defensive
+            logger.warning("Kill-switch bypass: failed to create call session call_sid=%s: %s", call_sid, exc)
+
+    if call_id is not None:
+        try:
+            CallService().finalize_call_with_status(call_id, "agent_bypassed", duration_seconds=0, cost=0.0)
+        except Exception as exc:  # noqa: BLE001 - defensive
+            logger.warning("Kill-switch bypass: failed to finalize call_id=%s: %s", call_id, exc)
+
+    if call_id is not None and user_id is not None and restaurant_id_str is not None:
+        try:
+            escalation_id = int(
+                EscalationService().create_escalation(
+                    {
+                        "call_id": call_id,
+                        "user_id": str(user_id),
+                        "restaurant_id": restaurant_id_str,
+                        "twilio_call_sid": call_sid,
+                        "caller_phone": caller_phone,
+                        "escalation_phone_number": escalation_phone,
+                        "urgency": "standard",
+                        "reason": reason,
+                        "status": "raised",
+                    }
+                )
+            )
+        except Exception as exc:  # noqa: BLE001 - defensive
+            logger.warning("Kill-switch bypass: failed to create escalation call_sid=%s: %s", call_sid, exc)
+
+    if escalation_id is not None:
+        try:
+            EscalationService().mark_forwarded(escalation_id)
+        except Exception as exc:  # noqa: BLE001 - defensive
+            logger.warning("Kill-switch bypass: failed to mark escalation forwarded id=%s: %s", escalation_id, exc)
+
+    if restaurant_id_int is not None:
+        try:
+            await SSEService().emit_escalation_kill_switch_redirected(
+                restaurant_id=restaurant_id_int,
+                call_id=str(call_id) if call_id is not None else None,
+                caller_phone=caller_phone,
+                reason=reason,
+                data={"twilio_call_sid": call_sid},
+            )
+        except Exception as exc:  # noqa: BLE001 - defensive
+            logger.warning("Kill-switch bypass: failed to emit SSE event restaurant_id=%s: %s", restaurant_id_int, exc)
+
+        try:
+            NotificationPersistenceService().create_notification(
+                restaurant_id=restaurant_id_int,
+                type="escalation",
+                subtype="kill_switch_redirected",
+                data={
+                    "caller_phone": caller_phone,
+                    "reason": reason,
+                    "urgency": "standard",
+                    "twilio_call_sid": call_sid,
+                    "escalation_phone_number": escalation_phone,
+                    "escalation_id": escalation_id,
+                },
+                entity_id=escalation_id if escalation_id is not None else call_id,
+            )
+        except Exception as exc:  # noqa: BLE001 - defensive
+            logger.warning(
+                "Kill-switch bypass: failed to persist notification restaurant_id=%s: %s",
+                restaurant_id_int,
+                exc,
+            )
+
+
+async def _record_kill_switch_bypass_safe(
+    *,
+    restaurant: dict,
+    caller_phone: Optional[str],
+    call_sid: Optional[str],
+) -> None:
+    """Wrapper to ensure background kill-switch side effects never raise out of task."""
+    try:
+        await _record_kill_switch_bypass(
+            restaurant=restaurant,
+            caller_phone=caller_phone,
+            call_sid=call_sid,
+        )
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.exception("Kill-switch bypass background task failed call_sid=%s: %s", call_sid, exc)
+
+
 @app.post(
     "/voice",
     summary="Twilio Voice Webhook",
-    description="Twilio webhook endpoint that receives incoming call requests and returns TwiML to connect the call to the WebSocket stream. "
-    "This endpoint is called by Twilio when a call is received. It generates the WebSocket connection URL and returns TwiML instructions.",
-    response_description="TwiML XML response instructing Twilio to connect the call to the WebSocket stream.",
+    description="Twilio webhook endpoint that receives incoming call requests and returns TwiML. "
+    "By default, calls are connected to the WebSocket stream. If the restaurant kill switch is enabled and forwarding is configured, the call is immediately redirected to escalation_phone_number.",
+    response_description="TwiML XML response instructing Twilio to either connect to the WebSocket stream or immediately dial escalation staff.",
     tags=["Voice Agent"],
     include_in_schema=True,
 )
@@ -262,8 +399,8 @@ async def voice(request: Request):
     - CallSid: Twilio call session ID
 
     **Response**: TwiML XML that instructs Twilio to:
-    - Connect the call to the WebSocket stream at /twilio
-    - Stream audio bidirectionally for voice agent processing
+    - Connect the call to the WebSocket stream at /twilio for normal agent flow
+    - OR immediately forward to staff when kill switch is enabled and forwarding is configured
 
     **Note**: This is a Twilio webhook endpoint, not a standard REST API endpoint.
     """
@@ -290,6 +427,48 @@ async def voice(request: Request):
             from_number,
             to_number,
         )
+
+        restaurant = {}
+        if to_number:
+            try:
+                restaurant = RestaurantService().get_restaurant_by_twilio(to_number) or {}
+            except Exception as exc:  # noqa: BLE001 - defensive
+                logger.warning("Kill-switch check failed for to=%s call_sid=%s: %s", to_number, call_sid, exc)
+                restaurant = {}
+
+        if restaurant and _as_bool(restaurant.get("kill_switch_enabled")):
+            forward_escalations = _as_bool(restaurant.get("forward_escalations"))
+            escalation_phone = str(restaurant.get("escalation_phone_number") or "").strip()
+            if forward_escalations and escalation_phone:
+                logger.warning(
+                    "Kill switch active for restaurant_id=%s call_sid=%s. Redirecting call to escalation number.",
+                    restaurant.get("id"),
+                    call_sid,
+                )
+                asyncio.create_task(
+                    _record_kill_switch_bypass_safe(
+                        restaurant=restaurant,
+                        caller_phone=from_number,
+                        call_sid=call_sid,
+                    )
+                )
+                dial_number = escape(escalation_phone)
+                caller_id = escape(str(to_number))
+                xml = f"""
+                <Response>
+                    <Dial callerId="{caller_id}" timeout="25">
+                        <Number>{dial_number}</Number>
+                    </Dial>
+                </Response>
+                """
+                return Response(content=xml.strip(), media_type="application/xml")
+            logger.warning(
+                "Kill switch active but forwarding misconfigured for restaurant_id=%s call_sid=%s. "
+                "Falling back to agent routing.",
+                restaurant.get("id"),
+                call_sid,
+            )
+
         params = {
             "fromNumber": from_number,
             "toNumber": to_number,

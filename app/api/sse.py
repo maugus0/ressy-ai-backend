@@ -54,7 +54,10 @@ class EscalationEventRequest(BaseModel):
 
     subtype: str = Field(
         ...,
-        description="Escalation subtype: user_requested, internal_server_error, suspected_spam",
+        description=(
+            "Escalation subtype: user_requested, internal_server_error, suspected_spam, "
+            "sms_redirect_failed, kill_switch_redirected"
+        ),
         json_schema_extra={"example": "user_requested"},
     )
     call_id: Optional[str] = Field(
@@ -93,6 +96,11 @@ class EscalationEventRequest(BaseModel):
         None,
         description="List of spam indicators detected (for suspected_spam subtype)",
         json_schema_extra={"example": ["rapid_hangup", "known_spam_number", "automated_voice"]},
+    )
+    redirect_type: Optional[str] = Field(
+        None,
+        description="Redirect category for sms_redirect_failed subtype (orders or reservations)",
+        json_schema_extra={"example": "orders"},
     )
 
 
@@ -196,6 +204,8 @@ You can authenticate in two ways:
 | `escalation` | `user_requested` | User asked to speak with a human |
 | `escalation` | `internal_server_error` | System error occurred during call |
 | `escalation` | `suspected_spam` | Call flagged as potential spam |
+| `escalation` | `sms_redirect_failed` | SMS redirect attempt failed |
+| `escalation` | `kill_switch_redirected` | Call was auto-redirected due to kill switch |
 | `order` | `new_order` | New order created |
 | `order` | `order_updated` | Order status or details changed |
 | `order` | `order_cancelled` | Order was cancelled |
@@ -395,6 +405,8 @@ errors occur during a call.
 | `user_requested` | User asked to speak with a human | `reason` (recommended), `caller_phone` |
 | `internal_server_error` | System error during call processing | `error_message`, `error_code` |
 | `suspected_spam` | Call flagged as potential spam | `spam_score`, `indicators` |
+| `sms_redirect_failed` | SMS redirect failed during call | `redirect_type` (recommended), `reason` |
+| `kill_switch_redirected` | Call redirected because kill switch is enabled | `reason` (optional), `caller_phone` |
 
 **Use Cases**:
 - Voice agent detects user frustration or explicit request for human
@@ -456,7 +468,7 @@ errors occur during a call.
             "content": {
                 "application/json": {
                     "example": {
-                        "detail": "Invalid subtype 'unknown'. Must be one of: user_requested, internal_server_error, suspected_spam"
+                        "detail": "Invalid subtype 'unknown'. Must be one of: user_requested, internal_server_error, suspected_spam, sms_redirect_failed, kill_switch_redirected"
                     }
                 }
             },
@@ -514,6 +526,21 @@ async def trigger_escalation(
             caller_phone=request.caller_phone,
             spam_score=request.spam_score,
             indicators=request.indicators,
+        )
+    elif request.subtype == EscalationEventSubtype.SMS_REDIRECT_FAILED.value:
+        event = await sse_service.emit_escalation_sms_redirect_failed(
+            restaurant_id=restaurant_id,
+            call_id=request.call_id,
+            caller_phone=request.caller_phone,
+            redirect_type=request.redirect_type,
+            reason=request.reason,
+        )
+    elif request.subtype == EscalationEventSubtype.KILL_SWITCH_REDIRECTED.value:
+        event = await sse_service.emit_escalation_kill_switch_redirected(
+            restaurant_id=restaurant_id,
+            call_id=request.call_id,
+            caller_phone=request.caller_phone,
+            reason=request.reason,
         )
     else:
         raise HTTPException(status_code=400, detail="Unknown escalation subtype")

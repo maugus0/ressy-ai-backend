@@ -654,6 +654,24 @@ class TestNotificationTitleBuilder:
         )
         assert title == "Escalation — Suspected Spam Call"
 
+    def test_escalation_sms_redirect_failed(self):
+        """Escalation SMS redirect failed title."""
+        title = NotificationPersistenceService.build_notification_title(
+            "escalation",
+            "sms_redirect_failed",
+            {"reason": "timeout"},
+        )
+        assert title == "Escalation — SMS Redirect Failed"
+
+    def test_escalation_kill_switch_redirected(self):
+        """Escalation kill switch redirected title."""
+        title = NotificationPersistenceService.build_notification_title(
+            "escalation",
+            "kill_switch_redirected",
+            {"reason": "kill switch"},
+        )
+        assert title == "Escalation — Kill Switch Redirected"
+
 
 class TestNotificationMessageBuilder:
     """Tests for NotificationPersistenceService.build_notification_message"""
@@ -695,3 +713,25 @@ class TestNotificationMessageBuilder:
         assert "Customer wants manager" in message
         assert "+1234567890" in message
         assert "standard" in message
+
+    def test_escalation_sms_redirect_failed(self):
+        """Escalation SMS redirect failed message."""
+        message = NotificationPersistenceService.build_notification_message(
+            "escalation",
+            "sms_redirect_failed",
+            {"redirect_type": "orders", "caller_phone": "+1234567890", "reason": "twilio timeout"},
+        )
+        assert "Could not send SMS redirect for orders." in message
+        assert "+1234567890" in message
+        assert "twilio timeout" in message
+
+    def test_escalation_kill_switch_redirected(self):
+        """Escalation kill switch redirected message."""
+        message = NotificationPersistenceService.build_notification_message(
+            "escalation",
+            "kill_switch_redirected",
+            {"caller_phone": "+1234567890", "reason": "dependency outage"},
+        )
+        assert "kill switch is enabled" in message
+        assert "+1234567890" in message
+        assert "dependency outage" in message

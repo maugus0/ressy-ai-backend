@@ -32,6 +32,9 @@ class ClientRestaurantResponse(BaseModel):
     twilio_phone_number: str | None = None
     forward_escalations: bool | None = None
     escalation_phone_number: str | None = None
+    kill_switch_enabled: bool = False
+    kill_switch_can_redirect: bool = False
+    kill_switch_blockers: list[str] = Field(default_factory=list)
     forward_minutes: int | None = None
     backward_minutes: int | None = None
     is_credit_card_required_for_reservation: bool | None = None
@@ -86,6 +89,13 @@ class ClientUpdateRestaurantRequest(BaseModel):
         if isinstance(value, str):
             return _strip_or_none(value)
         return value
+
+
+class ClientKillSwitchUpdateRequest(BaseModel):
+    """Client payload for kill-switch toggle."""
+
+    enabled: bool = Field(..., description="Enable or disable kill switch")
+    model_config = ConfigDict(extra="ignore")
 
 
 router = APIRouter(
@@ -267,4 +277,68 @@ async def update_restaurant(
             detail="FAQ Agent Capability cannot be disabled.",
         )
     result = service.update_restaurant(restaurant_id, data.model_dump(exclude_unset=True))
+    return ClientRestaurantResponse(**result)
+
+
+@router.patch(
+    "/restaurant/kill-switch",
+    status_code=status.HTTP_200_OK,
+    summary="Set Kill Switch (Client)",
+    description="Enable or disable kill switch for the authenticated restaurant.",
+    response_model=ClientRestaurantResponse,
+    response_description="Updated restaurant details.",
+    openapi_extra={
+        "requestBody": {
+            "required": True,
+            "content": {
+                "application/json": {
+                    "schema": ClientKillSwitchUpdateRequest.model_json_schema(),
+                    "example": {"enabled": True},
+                }
+            },
+        },
+        "responses": {
+            200: {
+                "description": "Kill switch updated for authenticated restaurant",
+                "content": {
+                    "application/json": {
+                        "example": {
+                            "id": 10,
+                            "name": "Ressy Test Kitchen",
+                            "forward_escalations": True,
+                            "escalation_phone_number": "+15550001111",
+                            "kill_switch_enabled": True,
+                            "kill_switch_can_redirect": True,
+                            "kill_switch_blockers": [],
+                        }
+                    }
+                },
+            },
+            400: {
+                "description": "Kill switch cannot be enabled because forwarding is misconfigured",
+                "content": {
+                    "application/json": {
+                        "example": {
+                            "detail": {
+                                "message": "Cannot enable kill switch until escalation forwarding is fully configured",
+                                "kill_switch_blockers": [
+                                    "forward_escalations_disabled",
+                                    "escalation_phone_number_missing",
+                                ],
+                            }
+                        }
+                    }
+                },
+            },
+        },
+    },
+)
+async def set_kill_switch(
+    payload: dict = Body(..., description="Kill-switch toggle payload"),
+    service=Depends(get_restaurant_service),
+    claims: dict = Depends(get_current_restaurant_user),
+):
+    restaurant_id = int(claims["restaurant_id"])
+    data = validate_payload(ClientKillSwitchUpdateRequest, payload)
+    result = service.set_restaurant_kill_switch(restaurant_id, data.enabled)
     return ClientRestaurantResponse(**result)

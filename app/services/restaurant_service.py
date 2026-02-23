@@ -164,6 +164,31 @@ class RestaurantService:
         except (TypeError, ValueError):
             return default
 
+    def _compute_kill_switch_blockers(
+        self, forward_escalations: Any, escalation_phone_number: Optional[str]
+    ) -> list[str]:
+        """Return blocking reasons that prevent safe kill-switch redirection."""
+        blockers: list[str] = []
+        forwarding_enabled = self._normalize_feature_value(forward_escalations, default=False)
+        escalation_phone = str(escalation_phone_number).strip() if escalation_phone_number is not None else ""
+
+        if not forwarding_enabled:
+            blockers.append("forward_escalations_disabled")
+        if not escalation_phone:
+            blockers.append("escalation_phone_number_missing")
+        return blockers
+
+    def _annotate_kill_switch_fields(self, restaurant: Dict[str, Any]) -> None:
+        """Attach computed kill-switch readiness fields to a restaurant payload."""
+        kill_switch_enabled = self._normalize_feature_value(restaurant.get("kill_switch_enabled"), default=False)
+        blockers = self._compute_kill_switch_blockers(
+            restaurant.get("forward_escalations"),
+            restaurant.get("escalation_phone_number"),
+        )
+        restaurant["kill_switch_enabled"] = kill_switch_enabled
+        restaurant["kill_switch_can_redirect"] = len(blockers) == 0
+        restaurant["kill_switch_blockers"] = blockers
+
     def _merge_sms_redirect_config(
         self, current: Optional[Dict[str, Any]], incoming: Optional[Dict[str, Any]]
     ) -> Dict[str, Any]:
@@ -327,6 +352,13 @@ class RestaurantService:
                 restaurant["forward_escalations"] = bool(int(restaurant["forward_escalations"]))
             except (TypeError, ValueError):
                 restaurant["forward_escalations"] = False
+        if "kill_switch_enabled" in restaurant:
+            try:
+                restaurant["kill_switch_enabled"] = bool(int(restaurant["kill_switch_enabled"]))
+            except (TypeError, ValueError):
+                restaurant["kill_switch_enabled"] = False
+        else:
+            restaurant["kill_switch_enabled"] = False
         features_source = restaurant.get("features")
         if features_source is None and restaurant.get("id") is not None:
             try:
@@ -345,6 +377,7 @@ class RestaurantService:
         restaurant.pop("reservations_sms_redirect_enabled", None)
         restaurant.pop("reservations_redirect_url", None)
         restaurant.pop("reservations_redirect_message", None)
+        self._annotate_kill_switch_fields(restaurant)
         return restaurant
 
     def _format_timezone_field(self, value: Optional[str]) -> Optional[str]:
@@ -542,6 +575,7 @@ class RestaurantService:
             "is_credit_card_required_for_reservation": data.get("is_credit_card_required_for_reservation", False),
             "forward_escalations": data.get("forward_escalations", False),
             "escalation_phone_number": data.get("escalation_phone_number"),
+            "kill_switch_enabled": data.get("kill_switch_enabled", False),
             "timezone": timezone_value,
             "reservation_seating_capacity": data.get("reservation_seating_capacity", 50),
             "reservation_advance_days": data.get("reservation_advance_days", 30),
@@ -689,6 +723,25 @@ class RestaurantService:
         escalation_phone_number = data.get("escalation_phone_number", current.get("escalation_phone_number"))
         self._validate_escalation_forwarding(forward_escalations, escalation_phone_number)
 
+        # Guard against kill-switch state drift: if kill switch is currently enabled,
+        # forwarding must remain valid unless this update explicitly disables kill switch.
+        current_kill_switch_enabled = self._normalize_feature_value(current.get("kill_switch_enabled"), default=False)
+        requested_kill_switch = data.get("kill_switch_enabled")
+        requested_kill_switch_disabled = requested_kill_switch is not None and not bool(requested_kill_switch)
+        if current_kill_switch_enabled and not requested_kill_switch_disabled:
+            blockers = self._compute_kill_switch_blockers(forward_escalations, escalation_phone_number)
+            if blockers:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail={
+                        "message": (
+                            "Cannot apply update while kill switch is enabled and escalation forwarding would be invalid. "
+                            "Disable kill switch first or keep forwarding fully configured."
+                        ),
+                        "kill_switch_blockers": blockers,
+                    },
+                )
+
         merged_features = self._merge_feature_flags(current.get("features", {}), feature_updates)
 
         # Validate SMS redirect business rules
@@ -713,6 +766,121 @@ class RestaurantService:
 
         # Return refreshed record with parsed JSON fields
         return self._get_or_404(int(restaurant_id))
+
+    def set_restaurant_kill_switch(self, restaurant_id: int, enabled: bool) -> Dict[str, Any]:
+        """Enable or disable kill switch for a single restaurant."""
+        current = self._get_or_404(int(restaurant_id))
+        current_enabled = self._normalize_feature_value(current.get("kill_switch_enabled"), default=False)
+        desired = bool(enabled)
+
+        if desired:
+            blockers = current.get("kill_switch_blockers") or self._compute_kill_switch_blockers(
+                current.get("forward_escalations"),
+                current.get("escalation_phone_number"),
+            )
+            if blockers:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail={
+                        "message": "Cannot enable kill switch until escalation forwarding is fully configured",
+                        "kill_switch_blockers": blockers,
+                    },
+                )
+
+        if current_enabled == desired:
+            return current
+
+        try:
+            updated = self.restaurant_repo.update(int(restaurant_id), {"kill_switch_enabled": desired})
+        except Exception as exc:  # pragma: no cover - defensive logging for DB errors
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to update kill switch: {exc}",
+            )
+
+        if not updated:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to update kill switch",
+            )
+        return self._get_or_404(int(restaurant_id))
+
+    def set_all_restaurants_kill_switch(self, enabled: bool) -> Dict[str, Any]:
+        """Bulk update kill switch for all restaurants."""
+        try:
+            candidates = self.restaurant_repo.list_kill_switch_candidates()
+        except Exception as exc:  # pragma: no cover - defensive logging for DB errors
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to fetch restaurants for kill switch update: {exc}",
+            )
+
+        targeted_count = len(candidates)
+        desired = bool(enabled)
+
+        if targeted_count == 0:
+            return {
+                "enabled": desired,
+                "targeted_count": 0,
+                "eligible_count": 0,
+                "updated_count": 0,
+                "skipped_count": 0,
+                "skipped": [],
+            }
+
+        if not desired:
+            try:
+                updated_count = self.restaurant_repo.set_kill_switch_all(False)
+            except Exception as exc:  # pragma: no cover - defensive logging for DB errors
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"Failed to bulk disable kill switch: {exc}",
+                )
+            return {
+                "enabled": False,
+                "targeted_count": targeted_count,
+                "eligible_count": targeted_count,
+                "updated_count": updated_count,
+                "skipped_count": 0,
+                "skipped": [],
+            }
+
+        ready_ids: list[int] = []
+        skipped: list[Dict[str, Any]] = []
+        for restaurant in candidates:
+            blockers = self._compute_kill_switch_blockers(
+                restaurant.get("forward_escalations"),
+                restaurant.get("escalation_phone_number"),
+            )
+            if blockers:
+                skipped.append(
+                    {
+                        "restaurant_id": int(restaurant["id"]),
+                        "restaurant_name": restaurant.get("name"),
+                        "kill_switch_blockers": blockers,
+                    }
+                )
+                continue
+            ready_ids.append(int(restaurant["id"]))
+
+        updated_count = 0
+        if ready_ids:
+            try:
+                updated_count = self.restaurant_repo.set_kill_switch_for_ids(ready_ids, True)
+            except Exception as exc:  # pragma: no cover - defensive logging for DB errors
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"Failed to bulk enable kill switch: {exc}",
+                )
+
+        return {
+            "enabled": True,
+            "targeted_count": targeted_count,
+            "eligible_count": len(ready_ids),
+            "updated_count": updated_count,
+            "skipped_count": len(skipped),
+            "skipped": skipped,
+        }
 
     def delete_restaurant(self, restaurant_id: int) -> Dict[str, str]:
         """Delete a restaurant."""

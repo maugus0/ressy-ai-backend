@@ -30,6 +30,7 @@ class InMemoryRestaurantRepository:
             "is_credit_card_required_for_reservation": False,
             "forward_escalations": False,
             "escalation_phone_number": None,
+            "kill_switch_enabled": False,
             "created_at": None,
             "updated_at": None,
         }
@@ -61,6 +62,7 @@ class InMemoryRestaurantRepository:
             "is_credit_card_required_for_reservation": data.get("is_credit_card_required_for_reservation", False),
             "forward_escalations": data.get("forward_escalations", False),
             "escalation_phone_number": data.get("escalation_phone_number"),
+            "kill_switch_enabled": data.get("kill_switch_enabled", False),
             "created_at": datetime.now(timezone.utc),
             "updated_at": datetime.now(timezone.utc),
         }
@@ -132,6 +134,45 @@ class InMemoryRestaurantRepository:
         restaurant["updated_at"] = datetime.now(timezone.utc)
         self._restaurants[restaurant_id] = restaurant
         return True
+
+    def list_kill_switch_candidates(self) -> List[Dict[str, Any]]:
+        rows: List[Dict[str, Any]] = []
+        for restaurant in sorted(self._restaurants.values(), key=lambda r: r.get("id", 0)):
+            rows.append(
+                {
+                    "id": restaurant.get("id"),
+                    "name": restaurant.get("name"),
+                    "forward_escalations": restaurant.get("forward_escalations", False),
+                    "escalation_phone_number": restaurant.get("escalation_phone_number"),
+                    "kill_switch_enabled": restaurant.get("kill_switch_enabled", False),
+                }
+            )
+        return rows
+
+    def set_kill_switch_all(self, enabled: bool) -> int:
+        count = 0
+        for restaurant_id, restaurant in self._restaurants.items():
+            new_value = bool(enabled)
+            if restaurant.get("kill_switch_enabled") != new_value:
+                restaurant["kill_switch_enabled"] = new_value
+                restaurant["updated_at"] = datetime.now(timezone.utc)
+                self._restaurants[restaurant_id] = restaurant
+                count += 1
+        return count
+
+    def set_kill_switch_for_ids(self, restaurant_ids: List[int], enabled: bool) -> int:
+        count = 0
+        for restaurant_id in restaurant_ids:
+            restaurant = self._restaurants.get(int(restaurant_id))
+            if not restaurant:
+                continue
+            new_value = bool(enabled)
+            if restaurant.get("kill_switch_enabled") != new_value:
+                restaurant["kill_switch_enabled"] = new_value
+                restaurant["updated_at"] = datetime.now(timezone.utc)
+                self._restaurants[int(restaurant_id)] = restaurant
+                count += 1
+        return count
 
     def delete(self, restaurant_id: int) -> int:
         removed = self._restaurants.pop(restaurant_id, None)

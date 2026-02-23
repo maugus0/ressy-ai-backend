@@ -2,7 +2,7 @@
 Server-Sent Events (SSE) Service for real-time event broadcasting.
 
 Supports the following event types:
-- Escalation: user_requested, internal_server_error, suspected_spam
+- Escalation: user_requested, internal_server_error, suspected_spam, sms_redirect_failed, kill_switch_redirected
 - Order: new_order, order_updated, order_cancelled
 - Reservation: new_reservation, reservation_updated, reservation_cancelled
 """
@@ -66,6 +66,7 @@ class EscalationEventSubtype(str, Enum):
     INTERNAL_SERVER_ERROR = "internal_server_error"
     SUSPECTED_SPAM = "suspected_spam"
     SMS_REDIRECT_FAILED = "sms_redirect_failed"
+    KILL_SWITCH_REDIRECTED = "kill_switch_redirected"
 
 
 class OrderEventSubtype(str, Enum):
@@ -458,6 +459,30 @@ class SSEService:
         return await self.emit_event(
             event_type=SSEEventType.ESCALATION,
             subtype=EscalationEventSubtype.SMS_REDIRECT_FAILED.value,
+            restaurant_id=restaurant_id,
+            data=event_data,
+        )
+
+    async def emit_escalation_kill_switch_redirected(
+        self,
+        restaurant_id: int,
+        call_id: Optional[str] = None,
+        caller_phone: Optional[str] = None,
+        reason: Optional[str] = None,
+        data: Optional[Dict[str, Any]] = None,
+    ) -> SSEEvent:
+        """
+        Emit an escalation event when a call is redirected due to kill switch.
+        """
+        event_data = {
+            "call_id": call_id,
+            "caller_phone": caller_phone,
+            "reason": reason or "Call redirected due to restaurant kill switch",
+            **(data or {}),
+        }
+        return await self.emit_event(
+            event_type=SSEEventType.ESCALATION,
+            subtype=EscalationEventSubtype.KILL_SWITCH_REDIRECTED.value,
             restaurant_id=restaurant_id,
             data=event_data,
         )

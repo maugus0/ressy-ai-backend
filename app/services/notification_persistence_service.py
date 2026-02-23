@@ -99,6 +99,10 @@ class NotificationPersistenceService:
                 return "⚠ Escalation — System Error During Call"
             if subtype == "suspected_spam":
                 return "Escalation — Suspected Spam Call"
+            if subtype == "sms_redirect_failed":
+                return "Escalation — SMS Redirect Failed"
+            if subtype == "kill_switch_redirected":
+                return "Escalation — Kill Switch Redirected"
         return f"{type}/{subtype}"
 
     @staticmethod
@@ -166,6 +170,13 @@ class NotificationPersistenceService:
                 return f"A system error occurred during the call. {reason} Caller: {caller}.".strip()
             if subtype == "suspected_spam":
                 return f"A call was flagged as suspected spam. {reason} Caller: {caller}.".strip()
+            if subtype == "sms_redirect_failed":
+                redirect_type = data.get("redirect_type") or "request"
+                return f"Could not send SMS redirect for {redirect_type}. Caller: {caller}. {reason}".strip()
+            if subtype == "kill_switch_redirected":
+                return (
+                    f"Call was redirected to staff because kill switch is enabled. Caller: {caller}. {reason}".strip()
+                )
         return ""
 
     def create_notification(

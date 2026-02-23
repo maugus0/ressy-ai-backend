@@ -127,3 +127,92 @@ def test_forward_escalations_requires_number_on_create(client_with_overrides):
     client = client_with_overrides
     resp = client.post("/api/v1/restaurants/", json={"name": "Escalations", "forward_escalations": True})
     assert resp.status_code == 400
+
+
+def test_admin_enable_kill_switch_requires_forwarding_readiness(client_with_overrides):
+    client = client_with_overrides
+    create = client.post("/api/v1/restaurants/", json={"name": "Kill Switch Invalid"})
+    rid = create.json()["id"]
+
+    toggle = client.patch(f"/api/v1/restaurants/{rid}/kill-switch", json={"enabled": True})
+    assert toggle.status_code == 400
+    detail = toggle.json()["detail"]
+    assert detail["message"].startswith("Cannot enable kill switch")
+    assert "forward_escalations_disabled" in detail["kill_switch_blockers"]
+    assert "escalation_phone_number_missing" in detail["kill_switch_blockers"]
+
+
+def test_admin_can_toggle_restaurant_kill_switch(client_with_overrides):
+    client = client_with_overrides
+    create = client.post(
+        "/api/v1/restaurants/",
+        json={
+            "name": "Kill Switch Ready",
+            "forward_escalations": True,
+            "escalation_phone_number": "+15550001111",
+        },
+    )
+    rid = create.json()["id"]
+
+    enable = client.patch(f"/api/v1/restaurants/{rid}/kill-switch", json={"enabled": True})
+    assert enable.status_code == 200
+    enabled_payload = enable.json()
+    assert enabled_payload["kill_switch_enabled"] is True
+    assert enabled_payload["kill_switch_can_redirect"] is True
+    assert enabled_payload["kill_switch_blockers"] == []
+
+    disable = client.patch(f"/api/v1/restaurants/{rid}/kill-switch", json={"enabled": False})
+    assert disable.status_code == 200
+    assert disable.json()["kill_switch_enabled"] is False
+
+
+def test_admin_bulk_enable_kill_switch_skips_invalid_restaurants(client_with_overrides):
+    client = client_with_overrides
+    ready_resp = client.post(
+        "/api/v1/restaurants/",
+        json={
+            "name": "Bulk Ready",
+            "forward_escalations": True,
+            "escalation_phone_number": "+15550002222",
+        },
+    )
+    invalid_resp = client.post("/api/v1/restaurants/", json={"name": "Bulk Invalid"})
+    ready_id = ready_resp.json()["id"]
+    invalid_id = invalid_resp.json()["id"]
+
+    bulk_enable = client.patch("/api/v1/restaurants/kill-switch/all", json={"enabled": True})
+    assert bulk_enable.status_code == 200
+    body = bulk_enable.json()
+    assert body["enabled"] is True
+    assert body["targeted_count"] == 2
+    assert body["eligible_count"] == 1
+    assert body["updated_count"] == 1
+    assert body["skipped_count"] == 1
+    assert body["skipped"][0]["restaurant_id"] == invalid_id
+    assert "forward_escalations_disabled" in body["skipped"][0]["kill_switch_blockers"]
+
+    ready = client.get(f"/api/v1/restaurants/{ready_id}")
+    invalid = client.get(f"/api/v1/restaurants/{invalid_id}")
+    assert ready.json()["kill_switch_enabled"] is True
+    assert invalid.json()["kill_switch_enabled"] is False
+
+
+def test_admin_update_rejects_invalid_forwarding_when_kill_switch_enabled(client_with_overrides):
+    client = client_with_overrides
+    created = client.post(
+        "/api/v1/restaurants/",
+        json={
+            "name": "Kill Switch Drift Guard",
+            "forward_escalations": True,
+            "escalation_phone_number": "+15550003333",
+        },
+    )
+    rid = created.json()["id"]
+    enable = client.patch(f"/api/v1/restaurants/{rid}/kill-switch", json={"enabled": True})
+    assert enable.status_code == 200
+
+    bad_update = client.put(f"/api/v1/restaurants/{rid}", json={"forward_escalations": False})
+    assert bad_update.status_code == 400
+    detail = bad_update.json()["detail"]
+    assert "kill switch is enabled" in detail["message"].lower()
+    assert "forward_escalations_disabled" in detail["kill_switch_blockers"]
