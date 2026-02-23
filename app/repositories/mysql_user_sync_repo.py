@@ -9,7 +9,10 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
 from app.repositories.mysql_base import MySQLBaseRepository
+from app.utils.logging_config import get_logger
 from app.utils.timezone import json_default
+
+logger = get_logger(__name__)
 
 
 class MySQLUserSyncRepository(MySQLBaseRepository):
@@ -63,7 +66,7 @@ class MySQLUserSyncRepository(MySQLBaseRepository):
             query += " AND (u.updated_at IS NULL OR u.updated_at < %s)"
             params.append(last_sync_before)
 
-        query += " ORDER BY u.updated_at ASC NULLS FIRST LIMIT %s"
+        query += " ORDER BY (u.updated_at IS NULL) DESC, u.updated_at ASC LIMIT %s"
         params.append(limit)
 
         return self._execute_query(query, tuple(params))
@@ -205,7 +208,8 @@ class MySQLUserSyncRepository(MySQLBaseRepository):
                     successful += 1
                 else:
                     failed += 1
-            except Exception:
+            except Exception as e:
+                logger.exception("Error updating user profile in batch: %s", e)
                 failed += 1
                 continue
 

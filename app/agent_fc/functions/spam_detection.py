@@ -67,15 +67,17 @@ async def detect_spam_behavior(**kwargs) -> AgentFunctionResult:
         notification_service = NotificationPersistenceService()
         notification_service.create_notification(
             restaurant_id=args.restaurant_id,
-            type="spam",
-            subtype="detected",
+            type="escalation",
+            subtype="suspected_spam",
             data={
                 "caller_phone": args.customer_contact,
                 "user_id": user_id,
                 "call_id": call_id,
                 "call_sid": call_sid,
-                "indicators": args.indicators,
+                "indicators": [args.indicators] if isinstance(args.indicators, str) else args.indicators,
                 "confidence": args.confidence,
+                "spam_score": 0.9 if args.confidence == "high" else 0.7 if args.confidence == "medium" else 0.5,
+                "reason": f"AI detected spam behavior: {args.indicators}",
                 "transcript_summary": args.transcript_summary,
                 "ai_detected": True,
             },

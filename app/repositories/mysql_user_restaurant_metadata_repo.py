@@ -184,10 +184,10 @@ class MySQLUserRestaurantMetadataRepository(MySQLBaseRepository):
         query = """
             INSERT INTO User_Restaurant_Metadata
             (user_id, restaurant_id, source, notes, is_spam, created_at, updated_at)
-            VALUES (%s, %s, 'spam_marking', %s, TRUE, NOW(), NOW()) AS new_row
+            VALUES (%s, %s, 'spam_marking', %s, TRUE, NOW(), NOW())
             ON DUPLICATE KEY UPDATE
                 is_spam = TRUE,
-                notes = COALESCE(new_row.notes, User_Restaurant_Metadata.notes),
+                notes = COALESCE(VALUES(notes), User_Restaurant_Metadata.notes),
                 updated_at = NOW()
         """
         return self._execute_insert(query, (user_id, restaurant_id, notes))

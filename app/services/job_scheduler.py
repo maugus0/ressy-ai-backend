@@ -24,7 +24,7 @@ class JobScheduler:
     """
 
     _instance: Optional["JobScheduler"] = None
-    _lock = asyncio.Lock()
+    _lock: Optional[asyncio.Lock] = None
 
     def __new__(cls):
         """Singleton pattern for job scheduler."""
@@ -62,7 +62,7 @@ class JobScheduler:
 
         try:
             if self.scheduler.running:
-                self.scheduler.shutdown(wait=True)
+                await asyncio.to_thread(self.scheduler.shutdown, wait=True)
                 logger.info("[JobScheduler] Scheduler shut down successfully")
             self.scheduler = None
             self._jobs_registered = False

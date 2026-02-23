@@ -117,21 +117,26 @@ async def mark_user_as_spam(
     )
 
     # Check if threshold reached for global spam
+    # Use atomic check-and-update to prevent race conditions
     spam_count = metadata_repo.get_spam_count_by_user(request.user_id)
     is_global_spam = bool(user.get("is_spam", False))
 
     if spam_count >= settings.SPAM_GLOBAL_THRESHOLD and not is_global_spam:
-        # Mark as global spam
-        user_repo.mark_user_global_spam(
+        # Mark as global spam atomically (only updates if not already marked)
+        affected = user_repo.mark_user_global_spam(
             request.user_id,
             reason=f"Marked as spam by {spam_count} restaurants (threshold: {settings.SPAM_GLOBAL_THRESHOLD})",
         )
-        is_global_spam = True
-        logger.info(
-            "User %s automatically marked as global spam (marked by %d restaurants)",
-            request.user_id,
-            spam_count,
-        )
+        if affected > 0:
+            is_global_spam = True
+            logger.info(
+                "User %s automatically marked as global spam (marked by %d restaurants)",
+                request.user_id,
+                spam_count,
+            )
+        else:
+            # Another request already marked this user as global spam
+            is_global_spam = True
 
     # Create notification (if notification service is available)
     try:
@@ -142,12 +147,15 @@ async def mark_user_as_spam(
         notification_service = NotificationPersistenceService()
         notification_service.create_notification(
             restaurant_id=request.restaurant_id,
-            type="spam",
-            subtype="marked",
+            type="escalation",
+            subtype="suspected_spam",
             data={
                 "user_id": request.user_id,
                 "phone_number": user.get("phone_number"),
-                "reason": request.reason,
+                "caller_phone": user.get("phone_number"),
+                "reason": f"User marked as spam. Reason: {request.reason}" if request.reason else "User marked as spam",
+                "indicators": ["manual_mark"],
+                "spam_score": 1.0,
                 "ai_summary": request.ai_summary,
             },
             entity_id=request.user_id,

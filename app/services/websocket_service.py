@@ -620,9 +620,9 @@ class WebSocketService:
         """
         # Message based on spam type
         if is_global:
-            message = "Ressy has marked you as spam. Please contact ressy directly to unblock you."
+            message = "Ressy has marked you as spam. Please contact Ressy support directly to unblock you."
         else:
-            message = "Ressy has marked you as spam. Please contact restaurant directly to unblock you."
+            message = "Ressy has marked you as spam. Please contact the restaurant directly to unblock you."
 
         self.logger.info("Playing spam blocking message: %s", message)
 

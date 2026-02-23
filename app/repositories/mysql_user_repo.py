@@ -473,6 +473,7 @@ class MySQLUserRepository(MySQLBaseRepository):
     def mark_user_global_spam(self, user_id: int, reason: Optional[str] = None) -> int:
         """
         Mark a user as global spam in the Users table.
+        Uses atomic UPDATE to prevent race conditions.
 
         Args:
             user_id: User ID
@@ -481,7 +482,7 @@ class MySQLUserRepository(MySQLBaseRepository):
         Returns:
             Number of rows updated
         """
-        query = "UPDATE Users SET is_spam = TRUE, updated_at = NOW() WHERE id = %s"
+        query = "UPDATE Users SET is_spam = TRUE, updated_at = NOW() WHERE id = %s AND is_spam = FALSE"
         return self._execute_update(query, (user_id,))
 
     def get_user_spam_status(self, user_id: int, restaurant_id: int) -> Dict:

@@ -147,9 +147,6 @@ class Settings:
     USER_PROFILE_SYNC_BATCH_SIZE = int(
         os.getenv("USER_PROFILE_SYNC_BATCH_SIZE", "100")
     )  # Number of users to process per batch
-    USER_PROFILE_SYNC_MAX_RETRIES = int(
-        os.getenv("USER_PROFILE_SYNC_MAX_RETRIES", "3")
-    )  # Retry attempts for failed updates
     USER_PROFILE_SYNC_LAST_SYNC_WINDOW_HOURS = int(
         os.getenv("USER_PROFILE_SYNC_LAST_SYNC_WINDOW_HOURS", "24")
     )  # Only sync users updated in last X hours
