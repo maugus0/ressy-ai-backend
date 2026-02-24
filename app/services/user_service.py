@@ -142,7 +142,7 @@ class UserService:
         # Add statistics for each user using a batch query to avoid N+1 problem
         user_ids = [user["id"] for user in users]
         stats_by_user_id = self.user_repo.get_users_statistics(user_ids, restaurant_id)
-        
+
         users_with_stats = []
         for user in users:
             stats = stats_by_user_id.get(user["id"], {})
@@ -150,7 +150,9 @@ class UserService:
             # The query already includes restaurant_is_spam field
             restaurant_spam_status = bool(user.get("restaurant_is_spam", False))
             user_with_stats = {
-                **{k: v for k, v in user.items() if k != "restaurant_is_spam"},  # Remove restaurant_is_spam from response
+                **{
+                    k: v for k, v in user.items() if k != "restaurant_is_spam"
+                },  # Remove restaurant_is_spam from response
                 "is_spam": 1 if restaurant_spam_status else 0,
                 "statistics": stats,
             }
@@ -289,7 +291,7 @@ class UserService:
             duplicate_id = self.user_repo.get_user_id_by_phone_or_email(None, email)
             if duplicate_id and duplicate_id != user_id:
                 raise ValueError("Another user with this email already exists")
-        
+
         # Update user fields (excluding is_spam which is handled above)
         if user_data:
             rows_affected = self.user_repo.update_user(user_id, user_data)

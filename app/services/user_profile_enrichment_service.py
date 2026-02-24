@@ -53,30 +53,12 @@ class UserProfileEnrichmentService:
                 result["error"] = f"User {user_id} not found"
                 return result
 
-            # Get aggregated data
-            aggregated_data = self.sync_repo.get_user_aggregated_data(user_id)
-
             # Determine updates needed
             updates = {}
             updated_fields = []
 
-            # Update statistics fields from aggregated data
-            # These are always overwritten with latest aggregated values
-            if aggregated_data.get("orders"):
-                orders_data = aggregated_data["orders"]
-                # Note: We don't store order statistics in Users table directly
-                # This is for future extensibility if we add statistics columns
-
-            if aggregated_data.get("reservations"):
-                reservations_data = aggregated_data["reservations"]
-                # Note: We don't store reservation statistics in Users table directly
-                # This is for future extensibility if we add statistics columns
-
-            if aggregated_data.get("calls"):
-                calls_data = aggregated_data["calls"]
-                # Note: We don't store call statistics in Users table directly
-                # This is for future extensibility if we add statistics columns
-
+            # Note: We don't store order/reservation/call statistics in Users table directly
+            # This is for future extensibility if we add statistics columns
             # For now, the enrichment service ensures the user record exists and is properly linked
             # Future enhancements can update name/address from latest transactions if those fields
             # are added to Orders/Reservations/Calls tables

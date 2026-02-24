@@ -7,7 +7,7 @@ Allows restaurant admins to mark/unmark users as spam and check spam status.
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.security import HTTPBearer
 from pydantic import BaseModel, Field
 
@@ -304,8 +304,8 @@ async def get_spam_status(
     if not restaurant_id:
         raise HTTPException(status_code=400, detail="restaurant_id is required")
 
-    status = user_repo.get_user_spam_status(user_id, restaurant_id)
-    if "error" in status:
-        raise HTTPException(status_code=404, detail=status["error"])
+    spam_status = user_repo.get_user_spam_status(user_id, restaurant_id)
+    if "error" in spam_status:
+        raise HTTPException(status_code=404, detail=spam_status["error"])
 
-    return SpamStatusResponse(**status)
+    return SpamStatusResponse(**spam_status)

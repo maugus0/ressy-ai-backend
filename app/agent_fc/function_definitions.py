@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional
 from .functions import conversation, menu, orders, reservations, spam_detection
 from .functions.function_context import NoArgs
 
+
 def _definition(name: str, description: str, schema: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "name": name,

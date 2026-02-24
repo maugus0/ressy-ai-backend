@@ -397,14 +397,14 @@ async def redirect(request: Request):
             return Response(content="<Response><Hangup/></Response>", media_type="application/xml")
 
         restaurant_id = str(restaurant.get("id"))
-        
+
         # Check if caller is marked as spam - play message via TwiML Say
         from app.repositories.mysql_user_repo import MySQLUserRepository
         from app.repositories.mysql_user_restaurant_metadata_repo import MySQLUserRestaurantMetadataRepository
-        
+
         user_repo = MySQLUserRepository()
         metadata_repo = MySQLUserRestaurantMetadataRepository()
-        
+
         user_id = user_repo.get_user_id_by_phone_or_email(twilio_from, None)
         if user_id:
             # Check global spam first
@@ -414,9 +414,9 @@ async def redirect(request: Request):
                 message = escape("Ressy has marked you as spam. Please contact Ressy support directly to unblock you.")
                 return Response(
                     content=f'<Response><Say language="en-US" voice="alice">{message}</Say><Hangup/></Response>',
-                    media_type="application/xml"
+                    media_type="application/xml",
                 )
-            
+
             # Check restaurant-specific spam
             is_restaurant_spam = metadata_repo.is_spam(user_id, int(restaurant_id))
             if is_restaurant_spam:
@@ -424,9 +424,9 @@ async def redirect(request: Request):
                 message = escape("Ressy has marked you as spam. Please contact the restaurant directly to unblock you.")
                 return Response(
                     content=f'<Response><Say language="en-US" voice="alice">{message}</Say><Hangup/></Response>',
-                    media_type="application/xml"
+                    media_type="application/xml",
                 )
-        
+
         escalation = escalation_service.get_latest_by_call_sid_and_restaurant(call_sid, restaurant_id)
         if not escalation:
             logger.info("No escalation found for call_sid=%s restaurant_id=%s", call_sid, restaurant_id)
