@@ -1,7 +1,6 @@
 """Tests for the main FastAPI application."""
 
 import os
-import time
 
 import pytest
 from fastapi.testclient import TestClient
@@ -147,11 +146,6 @@ def test_voice_kill_switch_redirects_and_persists_side_effects(client, monkeypat
     assert "<Dial" in response.text
     assert "<Number>+15550001111</Number>" in response.text
     assert "<Stream" not in response.text
-
-    # Kill-switch persistence now runs in a background task; wait briefly for side-effects.
-    deadline = time.time() + 1.0
-    while "notification" not in captured and time.time() < deadline:
-        time.sleep(0.01)
 
     assert captured["user_payload"] == {"phone_number": "+14155551234"}
     assert captured["call_session"]["twilio_sid"] == "CAKS1"

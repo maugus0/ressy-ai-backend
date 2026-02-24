@@ -659,8 +659,9 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
             UPDATE Restaurants
             SET kill_switch_enabled = %s,
                 updated_at = NOW()
+            WHERE kill_switch_enabled <> %s
         """
-        return self._execute_update(query, (enabled,))
+        return self._execute_update(query, (enabled, enabled))
 
     def set_kill_switch_for_ids(self, restaurant_ids: List[int], enabled: bool) -> int:
         """
@@ -675,8 +676,9 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
             SET kill_switch_enabled = %s,
                 updated_at = NOW()
             WHERE id IN ({placeholders})
+              AND kill_switch_enabled <> %s
         """
-        params = [enabled, *restaurant_ids]
+        params = [enabled, *restaurant_ids, enabled]
         return self._execute_update(query, tuple(params))
 
     def delete(self, restaurant_id: int) -> bool:

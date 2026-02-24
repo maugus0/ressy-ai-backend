@@ -5,9 +5,10 @@ from typing import Any, Optional
 from xml.sax.saxutils import escape
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, WebSocket
+from fastapi import BackgroundTasks, FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
+from starlette.concurrency import run_in_threadpool
 from starlette.requests import Request
 from starlette.responses import Response
 
@@ -282,7 +283,7 @@ async def _record_kill_switch_bypass(
 
     try:
         user_payload = {"phone_number": caller_phone} if caller_phone else {}
-        user_result = UserService().create_user(user_payload)
+        user_result = await run_in_threadpool(UserService().create_user, user_payload)
         user_id_value = user_result.get("user_id")
         user_id = int(user_id_value) if user_id_value is not None else None
     except Exception as exc:  # noqa: BLE001 - defensive
@@ -290,20 +291,31 @@ async def _record_kill_switch_bypass(
 
     if user_id is not None and restaurant_id_str is not None:
         try:
-            call_id = int(CallService().create_call_session(str(user_id), call_sid, None, restaurant_id_str))
+            call_id = int(
+                await run_in_threadpool(
+                    CallService().create_call_session, str(user_id), call_sid, None, restaurant_id_str
+                )
+            )
         except Exception as exc:  # noqa: BLE001 - defensive
             logger.warning("Kill-switch bypass: failed to create call session call_sid=%s: %s", call_sid, exc)
 
     if call_id is not None:
         try:
-            CallService().finalize_call_with_status(call_id, "agent_bypassed", duration_seconds=0, cost=0.0)
+            await run_in_threadpool(
+                CallService().finalize_call_with_status,
+                call_id,
+                "agent_bypassed",
+                duration_seconds=0,
+                cost=0.0,
+            )
         except Exception as exc:  # noqa: BLE001 - defensive
             logger.warning("Kill-switch bypass: failed to finalize call_id=%s: %s", call_id, exc)
 
     if call_id is not None and user_id is not None and restaurant_id_str is not None:
         try:
             escalation_id = int(
-                EscalationService().create_escalation(
+                await run_in_threadpool(
+                    EscalationService().create_escalation,
                     {
                         "call_id": call_id,
                         "user_id": str(user_id),
@@ -314,7 +326,7 @@ async def _record_kill_switch_bypass(
                         "urgency": "standard",
                         "reason": reason,
                         "status": "raised",
-                    }
+                    },
                 )
             )
         except Exception as exc:  # noqa: BLE001 - defensive
@@ -322,7 +334,7 @@ async def _record_kill_switch_bypass(
 
     if escalation_id is not None:
         try:
-            EscalationService().mark_forwarded(escalation_id)
+            await run_in_threadpool(EscalationService().mark_forwarded, escalation_id)
         except Exception as exc:  # noqa: BLE001 - defensive
             logger.warning("Kill-switch bypass: failed to mark escalation forwarded id=%s: %s", escalation_id, exc)
 
@@ -339,7 +351,8 @@ async def _record_kill_switch_bypass(
             logger.warning("Kill-switch bypass: failed to emit SSE event restaurant_id=%s: %s", restaurant_id_int, exc)
 
         try:
-            NotificationPersistenceService().create_notification(
+            await run_in_threadpool(
+                NotificationPersistenceService().create_notification,
                 restaurant_id=restaurant_id_int,
                 type="escalation",
                 subtype="kill_switch_redirected",
@@ -405,6 +418,7 @@ async def voice(request: Request):
     **Note**: This is a Twilio webhook endpoint, not a standard REST API endpoint.
     """
     try:
+        background_tasks = BackgroundTasks()
         form = await request.form()
         # Twilio provides these in POST form data.
         twilio_from = form.get("From")
@@ -445,12 +459,11 @@ async def voice(request: Request):
                     restaurant.get("id"),
                     call_sid,
                 )
-                asyncio.create_task(
-                    _record_kill_switch_bypass_safe(
-                        restaurant=restaurant,
-                        caller_phone=from_number,
-                        call_sid=call_sid,
-                    )
+                background_tasks.add_task(
+                    _record_kill_switch_bypass_safe,
+                    restaurant=restaurant,
+                    caller_phone=from_number,
+                    call_sid=call_sid,
                 )
                 dial_number = escape(escalation_phone)
                 caller_id = escape(str(to_number))
@@ -461,7 +474,7 @@ async def voice(request: Request):
                     </Dial>
                 </Response>
                 """
-                return Response(content=xml.strip(), media_type="application/xml")
+                return Response(content=xml.strip(), media_type="application/xml", background=background_tasks)
             logger.warning(
                 "Kill switch active but forwarding misconfigured for restaurant_id=%s call_sid=%s. "
                 "Falling back to agent routing.",
