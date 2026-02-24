@@ -895,9 +895,9 @@ class WebSocketService:
             arg_model=conversation.EscalateToHumanArgs,
         )
         registry.register(
-            name="detect_spam_behavior",
-            handler=spam_detection.detect_spam_behavior,
-            arg_model=spam_detection.DetectSpamBehaviorArgs,
+            name="mark_potential_scam",
+            handler=spam_detection.mark_potential_scam,
+            arg_model=spam_detection.MarkPotentialScamArgs,
         )
 
         transport = Transport(send_callable=sts_ws.send)

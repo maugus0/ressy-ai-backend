@@ -1,7 +1,6 @@
-"""Spam detection agent function.
+"""Mark potential scam agent function.
 
-Detects spam behavior during calls and creates notifications for restaurant admins.
-AI does NOT mark users as spam - only creates notifications for admin review.
+Marks potential scam behavior during calls and creates notifications for restaurant admins.
 """
 
 from __future__ import annotations
@@ -25,45 +24,49 @@ def _get_sse_service() -> SSEService:
     return SSEService()
 
 
-class DetectSpamBehaviorArgs(BaseModel):
+class MarkPotentialScamArgs(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    restaurant_id: int
-    customer_contact: str
     indicators: str  # Description of spam indicators detected
     confidence: Literal["low", "medium", "high"] = "medium"
     transcript_summary: Optional[str] = None  # Summary of suspicious conversation
 
 
-async def detect_spam_behavior(**kwargs) -> AgentFunctionResult:
+async def mark_potential_scam(**kwargs) -> AgentFunctionResult:
     """
-    Detect spam behavior during a call and create notification for restaurant admin.
+    Mark potential scam during a call and create notification for restaurant admin.
 
     This function:
-    1. Creates a notification (type: "spam", subtype: "detected") for restaurant admin
+    1. Creates a notification (type: "escalation", subtype: "suspected_spam") for restaurant admin
     2. Disconnects the call immediately
-    3. Does NOT mark the user as spam - only restaurant admins can do that via API
 
     Args:
-        restaurant_id: Restaurant ID
-        customer_contact: Caller's phone number
-        indicators: Description of spam indicators (e.g., "Immediate DTMF tones, no background noise")
+        indicators: Description of spam indicators (e.g., "Repeated unrelated questions")
         confidence: Confidence level of spam detection
         transcript_summary: Optional summary of suspicious conversation
 
     Returns:
         AgentFunctionResult with side effect to disconnect call
     """
-    context, model_kwargs = split_call_context(kwargs, DetectSpamBehaviorArgs)
-    args = DetectSpamBehaviorArgs.model_validate(model_kwargs)
+    context, model_kwargs = split_call_context(kwargs, MarkPotentialScamArgs)
+    args = MarkPotentialScamArgs.model_validate(model_kwargs)
     call_sid = context.get("call_sid")
     call_id = context.get("call_id")
     user_id = context.get("user_id")
+    restaurant_id = context.get("restaurant_id")
+    customer_contact = context.get("customer_contact")
+
+    if not restaurant_id:
+        logger.error("mark_potential_scam: restaurant_id not found in context")
+        return AgentFunctionResult(
+            content={"status": "ERROR", "message": "Restaurant ID not found"},
+            side_effects=[AgentSideEffect({"type": "close"}, delay_seconds=0.5)],
+        )
 
     logger.warning(
         "Spam detected: user_id=%s restaurant_id=%s call_sid=%s indicators=%s confidence=%s",
         user_id,
-        args.restaurant_id,
+        restaurant_id,
         call_sid,
         args.indicators,
         args.confidence,
@@ -72,8 +75,8 @@ async def detect_spam_behavior(**kwargs) -> AgentFunctionResult:
     # Emit SSE event and create notification (similar to escalation pattern)
     asyncio.create_task(
         _emit_spam_sse_event_and_notification(
-            restaurant_id=int(args.restaurant_id),
-            caller_phone=args.customer_contact,
+            restaurant_id=int(restaurant_id),
+            caller_phone=customer_contact,
             indicators=args.indicators,
             confidence=args.confidence,
             transcript_summary=args.transcript_summary,
@@ -88,7 +91,7 @@ async def detect_spam_behavior(**kwargs) -> AgentFunctionResult:
     return AgentFunctionResult(
         content={
             "status": "SPAM_DETECTED",
-            "restaurant_id": args.restaurant_id,
+            "restaurant_id": restaurant_id,
             "indicators": args.indicators,
             "confidence": args.confidence,
         },

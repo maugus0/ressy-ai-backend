@@ -142,8 +142,8 @@ class Settings:
         "on",
     }
     USER_PROFILE_SYNC_INTERVAL_MINUTES = int(
-        os.getenv("USER_PROFILE_SYNC_INTERVAL_MINUTES", "60")
-    )  # How often to run sync job
+        os.getenv("USER_PROFILE_SYNC_INTERVAL_MINUTES", "1440")
+    )  # How often to run sync job (default: once per day)
     USER_PROFILE_SYNC_BATCH_SIZE = int(
         os.getenv("USER_PROFILE_SYNC_BATCH_SIZE", "100")
     )  # Number of users to process per batch
