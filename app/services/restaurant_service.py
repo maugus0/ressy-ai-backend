@@ -164,9 +164,31 @@ class RestaurantService:
         except (TypeError, ValueError):
             return default
 
-    def _merge_feature_flags(self, current: Dict[str, Any], incoming: Optional[Dict[str, Any]]) -> Dict[str, bool]:
-        """Merge incoming feature flags with current values and defaults."""
+    def _merge_sms_redirect_config(
+        self, current: Optional[Dict[str, Any]], incoming: Optional[Dict[str, Any]]
+    ) -> Dict[str, Any]:
+        """Merge SMS redirect config with current values and defaults."""
+        current = current or {}
         incoming = incoming or {}
+        return {
+            "enabled": self._normalize_feature_value(
+                incoming.get("enabled"),
+                default=self._normalize_feature_value(current.get("enabled"), False),
+            ),
+            "redirect_url": incoming.get("redirect_url") if "redirect_url" in incoming else current.get("redirect_url"),
+            "redirect_message": (
+                incoming.get("redirect_message") if "redirect_message" in incoming else current.get("redirect_message")
+            ),
+        }
+
+    def _merge_feature_flags(self, current: Dict[str, Any], incoming: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        """Merge incoming feature flags with current values and defaults (including SMS redirect)."""
+        incoming = incoming or {}
+        current_orders_sms = current.get("orders_sms_redirect") or {}
+        current_reservations_sms = current.get("reservations_sms_redirect") or {}
+        incoming_orders_sms = incoming.get("orders_sms_redirect")
+        incoming_reservations_sms = incoming.get("reservations_sms_redirect")
+
         return {
             "orders_enabled": self._normalize_feature_value(
                 incoming.get("orders_enabled"),
@@ -180,7 +202,92 @@ class RestaurantService:
                 incoming.get("faqs_enabled"),
                 default=self._normalize_feature_value(current.get("faqs_enabled"), True),
             ),
+            "orders_sms_redirect": self._merge_sms_redirect_config(current_orders_sms, incoming_orders_sms),
+            "reservations_sms_redirect": self._merge_sms_redirect_config(
+                current_reservations_sms, incoming_reservations_sms
+            ),
         }
+
+    @staticmethod
+    def validate_sms_redirect_rules(features: Dict[str, Any]) -> None:
+        """Validate SMS redirect business rules.
+
+        Rules:
+        - orders_sms_redirect.enabled requires orders_enabled = False
+        - reservations_sms_redirect.enabled requires reservations_enabled = False
+        - URL is required when SMS redirect is enabled
+        """
+        orders_enabled = features.get("orders_enabled", True)
+        reservations_enabled = features.get("reservations_enabled", True)
+        orders_sms = features.get("orders_sms_redirect") or {}
+        reservations_sms = features.get("reservations_sms_redirect") or {}
+
+        # Orders SMS redirect validation
+        if orders_sms.get("enabled"):
+            if orders_enabled:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Cannot enable Orders SMS Redirect while Orders capability is enabled. "
+                    "Please set orders_enabled=false first.",
+                )
+            if not orders_sms.get("redirect_url"):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Orders redirect URL is required when Orders SMS Redirect is enabled.",
+                )
+
+        # Reservations SMS redirect validation
+        if reservations_sms.get("enabled"):
+            if reservations_enabled:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Cannot enable Reservations SMS Redirect while Reservations capability is enabled. "
+                    "Please set reservations_enabled=false first.",
+                )
+            if not reservations_sms.get("redirect_url"):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Reservations redirect URL is required when Reservations SMS Redirect is enabled.",
+                )
+
+    def _flatten_features_for_db(self, features: Dict[str, Any]) -> Dict[str, Any]:
+        """Flatten nested features structure for database update.
+
+        This method preserves explicit None values so callers can clear fields
+        (set them to NULL in the database). Fields not present in the input
+        are omitted and will not be updated.
+        """
+        flat: Dict[str, Any] = {}
+
+        # Top-level feature flags: only include keys that are actually present
+        if "orders_enabled" in features:
+            flat["orders_enabled"] = features["orders_enabled"]
+        if "reservations_enabled" in features:
+            flat["reservations_enabled"] = features["reservations_enabled"]
+        if "faqs_enabled" in features:
+            flat["faqs_enabled"] = features["faqs_enabled"]
+
+        # Orders SMS redirect: only process if the caller provided this section
+        if "orders_sms_redirect" in features:
+            orders_sms = features.get("orders_sms_redirect") or {}
+            if "enabled" in orders_sms:
+                flat["orders_sms_redirect_enabled"] = orders_sms["enabled"]
+            if "redirect_url" in orders_sms:
+                flat["orders_redirect_url"] = orders_sms["redirect_url"]
+            if "redirect_message" in orders_sms:
+                flat["orders_redirect_message"] = orders_sms["redirect_message"]
+
+        # Reservations SMS redirect: only process if the caller provided this section
+        if "reservations_sms_redirect" in features:
+            reservations_sms = features.get("reservations_sms_redirect") or {}
+            if "enabled" in reservations_sms:
+                flat["reservations_sms_redirect_enabled"] = reservations_sms["enabled"]
+            if "redirect_url" in reservations_sms:
+                flat["reservations_redirect_url"] = reservations_sms["redirect_url"]
+            if "redirect_message" in reservations_sms:
+                flat["reservations_redirect_message"] = reservations_sms["redirect_message"]
+
+        return flat
 
     # Not used currently. If needed, we can add this validation to restaurant create and update flows later.
     def _validate_feature_forwarding(
@@ -231,6 +338,13 @@ class RestaurantService:
         restaurant.pop("orders_enabled", None)
         restaurant.pop("reservations_enabled", None)
         restaurant.pop("faqs_enabled", None)
+        # Remove flat SMS redirect fields if present
+        restaurant.pop("orders_sms_redirect_enabled", None)
+        restaurant.pop("orders_redirect_url", None)
+        restaurant.pop("orders_redirect_message", None)
+        restaurant.pop("reservations_sms_redirect_enabled", None)
+        restaurant.pop("reservations_redirect_url", None)
+        restaurant.pop("reservations_redirect_message", None)
         return restaurant
 
     def _format_timezone_field(self, value: Optional[str]) -> Optional[str]:
@@ -405,6 +519,12 @@ class RestaurantService:
         self._ensure_unique_twilio_number(data.get("twilio_phone_number"))
         feature_flags = self._merge_feature_flags({}, data.get("features"))
 
+        # Validate SMS redirect business rules
+        self.validate_sms_redirect_rules(feature_flags)
+
+        # Flatten features for database update
+        flat_feature_flags = self._flatten_features_for_db(feature_flags)
+
         # Validate and flatten operating_hours if provided
         if "operating_hours" in data:
             self._validate_operating_hours(data["operating_hours"])
@@ -475,7 +595,7 @@ class RestaurantService:
         try:
             restaurant_id = self.restaurant_repo.create(payload)
             self.features_repo.create_defaults(restaurant_id)
-            self.features_repo.update(restaurant_id, feature_flags)
+            self.features_repo.update(restaurant_id, flat_feature_flags)
         except Exception as exc:  # pragma: no cover - defensive logging for DB errors
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -571,11 +691,17 @@ class RestaurantService:
 
         merged_features = self._merge_feature_flags(current.get("features", {}), feature_updates)
 
+        # Validate SMS redirect business rules
+        self.validate_sms_redirect_rules(merged_features)
+
+        # Flatten features for database update
+        flat_features = self._flatten_features_for_db(merged_features)
+
         try:
             updated = self.restaurant_repo.update(int(restaurant_id), data)
             if feature_updates is not None:
                 self.features_repo.create_defaults(int(restaurant_id))
-                self.features_repo.update(int(restaurant_id), merged_features)
+                self.features_repo.update(int(restaurant_id), flat_features)
         except Exception as exc:  # pragma: no cover - defensive logging for DB errors
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

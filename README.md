@@ -24,7 +24,7 @@ FastAPI backend for a multitenant, function-calling voice agent. It streams Twil
 
 - **Multitenant Voice Agent**: Routes calls to restaurants based on Twilio phone numbers
 - **WebSocket Call Flow**: Real-time audio streaming between Twilio and Deepgram STS
-- **Function Calling**: Deepgram Agent FC integration for orders, reservations, and FAQs
+- **Function Calling**: Deepgram Agent FC integration for orders, reservations, FAQs, and SMS Redirect
 - **REST APIs**: Comprehensive API for managing restaurants, menus, orders, users, and more
 - **MySQL Persistence**: Robust data layer with repository pattern
 - **Dynamic Prompts**: Restaurant-specific AI prompts with menu items and FAQs
@@ -231,7 +231,7 @@ Required for voice calls and Twilio webhooks. App can run without them for non-v
 
 *Required for voice and SMS functionality to work. App runs without them, but voice and SMS features will be disabled.
 
-**SMS Notifications:** When order or reservation status changes, customers automatically receive SMS notifications via Twilio. All messages use a warm, personalized "Ressy" brand voice and end with "Yours sincerely, Ressy AI" signature.
+**SMS Notifications:** When order or reservation status changes, customers automatically receive SMS notifications via Twilio. All messages use a warm, personalized "Ressy" brand voice and end with "Yours sincerely, RessyAI" signature.
 
 **Credential Priority (Restaurant First, Fallback to .env):**
 
@@ -766,8 +766,8 @@ All endpoints are organized by tags in the Swagger documentation:
 - **Restaurants** (`/api/v1/restaurants/*`) - Admin only:
   - `POST /api/v1/restaurants/` - Create restaurant (validates phone and integration settings)
   - `GET /api/v1/restaurants/` - List restaurants with pagination, search, and credit-card filter
-  - `GET /api/v1/restaurants/{id}` - Get restaurant details (includes integration JSON fields)
-  - `PUT /api/v1/restaurants/{id}` - Update restaurant (partial updates supported)
+  - `GET /api/v1/restaurants/{id}` - Get restaurant details (includes integration JSON fields and agent capabilities)
+  - `PUT /api/v1/restaurants/{id}` - Update restaurant (partial updates supported; includes agent capabilities)
   - `DELETE /api/v1/restaurants/{id}` - Delete restaurant
   - `GET /api/v1/restaurants/{id}/stats` - Aggregated stats (menus, FAQs, admins, calls, minute usage)
 
@@ -794,7 +794,7 @@ All endpoints are organized by tags in the Swagger documentation:
 - **Client CRM (scoped, `/api/v1/client/*`)** – restaurant_id is taken from the authenticated restaurant token (`claims["restaurant_id"]`), and user UUID is `claims["sub"]`. **Note**: Sensitive integration details (`twilio_details`, `deepgram_details`, `open_table_details`) are excluded from client endpoints for security:
   - FAQs: `GET/POST /api/v1/client/faqs`, `GET/PUT/DELETE /api/v1/client/faqs/{faq_id}`, `POST /api/v1/client/faqs/bulk`
   - Menus: `GET/POST /api/v1/client/menu`, `GET/PUT/DELETE /api/v1/client/menu/{menu_id}`, `PATCH /api/v1/client/menu/{menu_id}/availability`, `PATCH /api/v1/client/menu/{menu_id}/special`, `PATCH /api/v1/client/menu/bulk-availability`, `GET /api/v1/client/menu/categories`
-  - Restaurant self: `GET /api/v1/client/restaurant`, `PUT /api/v1/client/restaurant` (excludes sensitive integration fields)
+  - Restaurant self: `GET /api/v1/client/restaurant`, `PUT /api/v1/client/restaurant` (excludes sensitive integration fields; supports agent capabilities including SMS Redirect)
   - Client users (manager role only except self reset): `GET/POST /api/v1/client/users`, `GET/PUT/DELETE /api/v1/client/users/{uuid}`, `POST /api/v1/client/users/{uuid}/reset-password`, `PUT /api/v1/client/users/{uuid}/role`, `POST /api/v1/client/users/bulk`, `POST /api/v1/client/me/reset-password` (self-service)
   - Analytics: `GET /api/v1/client/analytics` - Comprehensive restaurant analytics (calls, reservations, orders, menu, FAQs, customers, recent activity, today's schedule, pending orders), `GET /api/v1/client/analytics/calls` - Detailed call analytics, `GET /api/v1/client/analytics/reservations` - Reservation analytics, `GET /api/v1/client/analytics/orders` - Order analytics, `GET /api/v1/client/analytics/menu` - Menu analytics
 
@@ -904,6 +904,37 @@ When running locally, visit:
 
 **Security Note**: Client CRM endpoints (`/api/v1/client/*`) exclude sensitive integration details (`twilio_details`, `deepgram_details`, `open_table_details`) from responses. These fields are only accessible through Admin CRM endpoints for security purposes.
 
+### Agent Capabilities
+
+Restaurant `features` control what the voice agent can do for callers. Configure via `PUT /api/v1/restaurants/{id}` (Admin) or `PUT /api/v1/client/restaurant` (Client).
+
+| Capability | Field | Description |
+|------------|-------|-------------|
+| **Orders (Direct)** | `orders_enabled` | Agent takes pickup orders directly over the phone. Default: `true`. |
+| **Reservations (Direct)** | `reservations_enabled` | Agent makes table reservations directly. Default: `true`. |
+| **FAQs** | `faqs_enabled` | Agent answers FAQ questions. **Cannot be disabled.** Always `true`. |
+| **Orders SMS Redirect** | `orders_sms_redirect` | When enabled, agent sends an SMS with a link to order online instead of taking orders. Requires `orders_enabled=false` and a valid `redirect_url`. |
+| **Reservations SMS Redirect** | `reservations_sms_redirect` | When enabled, agent sends an SMS with a link to book online instead of making reservations. Requires `reservations_enabled=false` and a valid `redirect_url`. |
+
+**SMS Redirect configuration:**
+```json
+{
+  "orders_sms_redirect": {
+    "enabled": true,
+    "redirect_url": "https://order.example.com/restaurant",
+    "redirect_message": null
+  }
+}
+```
+- `enabled`: Enable SMS redirect for this capability.
+- `redirect_url`: **Required when enabled.** Must start with `http://` or `https://`.
+- `redirect_message`: Optional custom SMS body text. The redirect URL is automatically appended in a predefined format. Default messages include a "RessyAI" signature.
+
+**Business rules:**
+- SMS Redirect for orders requires `orders_enabled=false`.
+- SMS Redirect for reservations requires `reservations_enabled=false`.
+- FAQs cannot be disabled.
+
 ### Password Policy
 
 - Admin and client-user passwords must be at least 8 characters and include uppercase, lowercase, and numeric characters.
@@ -996,6 +1027,7 @@ curl --location 'http://localhost:5001/api/v1/restaurants' \
 - `forward_minutes` (optional, integer, default 0): Forward booking window in minutes
 - `backward_minutes` (optional, integer, default 0): Backward booking window in minutes
 - `is_credit_card_required_for_reservation` (optional, boolean, default false): Require credit card for reservation
+- `features` (optional, object): Agent capabilities—`orders_enabled`, `reservations_enabled`, `faqs_enabled` (cannot disable), and optionally `orders_sms_redirect` / `reservations_sms_redirect` for SMS link redirect. See [Agent Capabilities](#agent-capabilities).
 
 #### Get All Restaurants
 
@@ -1014,6 +1046,7 @@ curl --location 'http://localhost:5001/api/v1/restaurants?page=1&limit=20&search
 - `limit` (optional, default 20, min 1, max 100): Items per page
 - `search` (optional): Search by restaurant name (partial match)
 - `is_credit_card_required` (optional, boolean): Filter by credit card requirement
+- `orders_enabled`, `reservations_enabled`, `faqs_enabled` (optional, boolean): Filter by agent capability flags
 
 #### Get Restaurant by ID
 
@@ -1170,6 +1203,12 @@ Run in numerical order (001, 002, … 032). Key migrations:
 30. **030_create_restaurant_features.sql** – Restaurant_Features
 31. **031_add_daily_operating_hours.sql** – Per-day operating hours (replaces single opening/closing time)
 32. **032_add_24_hours_flag.sql** – Per-day `is_24_hours` flag (when true, open/close times ignored for that day)
+33. **033_create_notification_logs.sql** – Notification_Logs
+34. **034_alter_notification_logs_columns.sql** – Notification_Logs column updates
+35. **035_add_notification_logs_twilio_sid_index.sql** – Twilio SID index
+36. **036_recreate_notifications.sql** – Notifications table
+37. **037_add_sms_redirect_features.sql** – SMS Redirect fields on Restaurant_Features (orders/reservations redirect URL and message)
+38. **038_add_sms_redirect_entity_type.sql** – Add 'sms_redirect' to Notification_Logs entity_type ENUM
 
 **Restaurant operating hours:** Per-day hours (031) support `open`, `close`, `is_closed`, and `is_24_hours` per day. When `is_24_hours` is true for a day, the restaurant is treated as open all day and open/close times are ignored. The voice agent (Deepgram function-calling in `app/agent_fc/`) uses shared utilities (`app.utils.restaurant_hours`: `is_restaurant_open_now`, `is_datetime_within_operating_hours`, `format_operating_window`), which already handle per-day and 24-hour logic—**no agent function code changes are required** for `is_24_hours`.
 

@@ -149,6 +149,12 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
                     COALESCE(rf.orders_enabled, TRUE) AS orders_enabled,
                     COALESCE(rf.reservations_enabled, TRUE) AS reservations_enabled,
                     COALESCE(rf.faqs_enabled, TRUE) AS faqs_enabled,
+                    COALESCE(rf.orders_sms_redirect_enabled, FALSE) AS orders_sms_redirect_enabled,
+                    rf.orders_redirect_url,
+                    rf.orders_redirect_message,
+                    COALESCE(rf.reservations_sms_redirect_enabled, FALSE) AS reservations_sms_redirect_enabled,
+                    rf.reservations_redirect_url,
+                    rf.reservations_redirect_message,
                     r.created_at,
                     r.updated_at
                 FROM Restaurants r
@@ -169,12 +175,22 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
                     result["reservation_advance_days"] = 30
                 if "timezone" not in result:
                     result["timezone"] = None
-                if "orders_enabled" not in result:
-                    result["orders_enabled"] = True
-                if "reservations_enabled" not in result:
-                    result["reservations_enabled"] = True
-                if "faqs_enabled" not in result:
-                    result["faqs_enabled"] = True
+                # Build nested features dict for websocket service compatibility
+                result["features"] = {
+                    "orders_enabled": bool(result.get("orders_enabled", True)),
+                    "reservations_enabled": bool(result.get("reservations_enabled", True)),
+                    "faqs_enabled": bool(result.get("faqs_enabled", True)),
+                    "orders_sms_redirect": {
+                        "enabled": bool(result.get("orders_sms_redirect_enabled", False)),
+                        "redirect_url": result.get("orders_redirect_url"),
+                        "redirect_message": result.get("orders_redirect_message"),
+                    },
+                    "reservations_sms_redirect": {
+                        "enabled": bool(result.get("reservations_sms_redirect_enabled", False)),
+                        "redirect_url": result.get("reservations_redirect_url"),
+                        "redirect_message": result.get("reservations_redirect_message"),
+                    },
+                }
                 return result
             return None
         except Exception:

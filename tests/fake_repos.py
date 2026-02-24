@@ -580,6 +580,16 @@ class InMemoryMenuRepository:
         """Get all menu items for a restaurant."""
         return [self._clone(m) for m in self._menus.values() if m.get("restaurant_id") == restaurant_id]
 
+    def get_option_groups_for_item(self, menu_item_id: int) -> List[Dict[str, Any]]:
+        return []
+
+    def get_menu_item_with_options(self, menu_item_id: int) -> Optional[Dict[str, Any]]:
+        item = self.get_by_id(menu_item_id)
+        if not item:
+            return None
+        item["option_groups"] = []
+        return item
+
     def item_name_exists(self, restaurant_id: int, item_name: str, exclude_menu_id: Optional[int] = None) -> bool:
         for menu in self._menus.values():
             if menu.get("restaurant_id") != restaurant_id:

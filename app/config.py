@@ -82,7 +82,7 @@ class Settings:
     # Twilio audio pipeline tuning
     TWILIO_INBOUND_BUFFER_SIZE = int(os.getenv("TWILIO_INBOUND_BUFFER_SIZE", str(3 * 160)))  # bytes
     TWILIO_INBOUND_FLUSH_INTERVAL = float(os.getenv("TWILIO_INBOUND_FLUSH_INTERVAL", "0.15"))  # seconds
-    TWILIO_OUTBOUND_CHUNK_SIZE = int(os.getenv("TWILIO_OUTBOUND_CHUNK_SIZE", str(2 * 160)))  # bytes
+    TWILIO_OUTBOUND_CHUNK_SIZE = int(os.getenv("TWILIO_OUTBOUND_CHUNK_SIZE", "160"))  # bytes
     TWILIO_OUTBOUND_QUEUE_MAXSIZE = int(os.getenv("TWILIO_OUTBOUND_QUEUE_MAXSIZE", "1000"))
     TWILIO_OUTBOUND_PACING_SECONDS = float(os.getenv("TWILIO_OUTBOUND_PACING_SECONDS", "0.04"))  # seconds per chunk
 

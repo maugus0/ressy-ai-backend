@@ -231,7 +231,7 @@ class MenuService:
         Raises:
             HTTPException: 404 if menu item not found
         """
-        item = self.menu_repo.get_by_id(menu_id)
+        item = self.menu_repo.get_menu_item_with_options(menu_id)
         if not item:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Menu item not found")
         self._enrich_with_restaurant_name(item)
@@ -242,6 +242,7 @@ class MenuService:
         item = self.menu_repo.get_menu_by_id(restaurant_id, menu_id)
         if not item:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Menu item not found")
+        item["option_groups"] = self.menu_repo.get_option_groups_for_item(menu_id)
         self._enrich_with_restaurant_name(item, {restaurant_id: None})
         return item
 

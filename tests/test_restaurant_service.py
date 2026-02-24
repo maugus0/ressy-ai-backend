@@ -127,3 +127,99 @@ def test_normalize_timezone_rejects_invalid():
     service, _ = _build_service()
     with pytest.raises(HTTPException):
         service._normalize_timezone("Not/A_Timezone")
+
+
+class TestSMSRedirectValidation:
+    """Tests for SMS redirect business rule validation."""
+
+    def test_orders_sms_redirect_requires_orders_disabled(self):
+        """Orders SMS redirect requires orders_enabled=False."""
+        features = {
+            "orders_enabled": True,
+            "orders_sms_redirect": {
+                "enabled": True,
+                "redirect_url": "https://order.example.com",
+            },
+        }
+        with pytest.raises(HTTPException) as exc_info:
+            RestaurantService.validate_sms_redirect_rules(features)
+        assert exc_info.value.status_code == 400
+        assert "Orders" in exc_info.value.detail
+
+    def test_orders_sms_redirect_requires_url(self):
+        """Orders SMS redirect requires a redirect URL."""
+        features = {
+            "orders_enabled": False,
+            "orders_sms_redirect": {
+                "enabled": True,
+                "redirect_url": None,
+            },
+        }
+        with pytest.raises(HTTPException) as exc_info:
+            RestaurantService.validate_sms_redirect_rules(features)
+        assert exc_info.value.status_code == 400
+        assert "URL" in exc_info.value.detail
+
+    def test_reservations_sms_redirect_requires_reservations_disabled(self):
+        """Reservations SMS redirect requires reservations_enabled=False."""
+        features = {
+            "reservations_enabled": True,
+            "reservations_sms_redirect": {
+                "enabled": True,
+                "redirect_url": "https://book.example.com",
+            },
+        }
+        with pytest.raises(HTTPException) as exc_info:
+            RestaurantService.validate_sms_redirect_rules(features)
+        assert exc_info.value.status_code == 400
+        assert "Reservations" in exc_info.value.detail
+
+    def test_reservations_sms_redirect_requires_url(self):
+        """Reservations SMS redirect requires a redirect URL."""
+        features = {
+            "reservations_enabled": False,
+            "reservations_sms_redirect": {
+                "enabled": True,
+                "redirect_url": None,
+            },
+        }
+        with pytest.raises(HTTPException) as exc_info:
+            RestaurantService.validate_sms_redirect_rules(features)
+        assert exc_info.value.status_code == 400
+        assert "URL" in exc_info.value.detail
+
+    def test_valid_orders_sms_redirect_passes(self):
+        """Valid orders SMS redirect configuration passes validation."""
+        features = {
+            "orders_enabled": False,
+            "orders_sms_redirect": {
+                "enabled": True,
+                "redirect_url": "https://order.example.com",
+            },
+        }
+        # Should not raise
+        RestaurantService.validate_sms_redirect_rules(features)
+
+    def test_valid_reservations_sms_redirect_passes(self):
+        """Valid reservations SMS redirect configuration passes validation."""
+        features = {
+            "reservations_enabled": False,
+            "reservations_sms_redirect": {
+                "enabled": True,
+                "redirect_url": "https://book.example.com",
+            },
+        }
+        # Should not raise
+        RestaurantService.validate_sms_redirect_rules(features)
+
+    def test_disabled_sms_redirect_skips_validation(self):
+        """Disabled SMS redirect skips URL validation."""
+        features = {
+            "orders_enabled": True,
+            "orders_sms_redirect": {
+                "enabled": False,
+                "redirect_url": None,
+            },
+        }
+        # Should not raise - SMS redirect is disabled
+        RestaurantService.validate_sms_redirect_rules(features)

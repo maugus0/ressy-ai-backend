@@ -10,7 +10,7 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional
 
 from .functions import conversation, menu, orders, reservations, spam_detection
-
+from .functions.function_context import NoArgs
 
 def _definition(name: str, description: str, schema: Dict[str, Any]) -> Dict[str, Any]:
     return {
@@ -28,12 +28,17 @@ def get_function_definitions(feature_flags: Optional[Dict[str, Any]] = None) -> 
     faqs_enabled = bool(feature_flags.get("faqs_enabled", True))
     menu_enabled = orders_enabled or faqs_enabled
 
+    # SMS redirect flags
+    orders_sms_redirect_enabled = bool(feature_flags.get("orders_sms_redirect_enabled", False))
+    reservations_sms_redirect_enabled = bool(feature_flags.get("reservations_sms_redirect_enabled", False))
+    sms_redirect_enabled = orders_sms_redirect_enabled or reservations_sms_redirect_enabled
+
     create_order_schema = orders.CreateOrderArgs.model_json_schema()
-    lookup_order_schema = orders.LookupOrderArgs.model_json_schema()
+    lookup_order_schema = NoArgs.model_json_schema()
     lookup_order_by_id_schema = orders.LookupOrderByIdArgs.model_json_schema()
     create_res_schema = reservations.CreateReservationArgs.model_json_schema()
     update_res_schema = reservations.UpdateReservationArgs.model_json_schema()
-    lookup_res_schema = reservations.LookupReservationArgs.model_json_schema()
+    lookup_res_schema = NoArgs.model_json_schema()
     check_items_schema = orders.CheckItemsAvailabilityArgs.model_json_schema()
     res_check_avail_schema = reservations.CheckAvailabilityArgs.model_json_schema()
     update_order_details_schema = orders.UpdateOrderDetailsArgs.model_json_schema()
@@ -62,8 +67,8 @@ def get_function_definitions(feature_flags: Optional[Dict[str, Any]] = None) -> 
                     name="lookup_order_by_id",
                     description=(
                         "Look up a specific order by order ID. Use this when the caller provides an order ID/number "
-                        "(e.g., 'What's the status of order 12345?'). Requires order_id, restaurant_id, and customer_contact "
-                        "(phone number) to verify the order belongs to the caller and restaurant."
+                        "(e.g., 'What's the status of order 12345?'). Uses default call context for restaurant and caller "
+                        "verification, and uses order_id from function args."
                     ),
                     schema=lookup_order_by_id_schema,
                 ),
@@ -88,12 +93,27 @@ def get_function_definitions(feature_flags: Optional[Dict[str, Any]] = None) -> 
             _definition(
                 name="get_menu_item_details",
                 description=(
-                    "Retrieve price/description/prep-time details for a specific menu item by item_id, OR search the restaurant menu by search_term. "
-                    "For searching, use the base form of the main food item keyword (e.g., convert plurals to singulars like 'tacos' → 'taco', and remove size/flavor modifiers like 'large spicy chicken tacos' → 'chicken taco'). "
-                    "IMPORTANT: For general menu browsing or listing categories, answer directly from the menu context provided in your system prompt. "
-                    "Only use this function when customer asks for specific details (price, description, prep time) about ONE specific item."
+                    "Retrieve price/description/prep-time details for a specific menu item by item_id. Only use this "
+                    "function when customer asks for specific details (price, description, prep time) about ONE "
+                    "specific item."
                 ),
                 schema=menu_item_details_schema,
+            )
+        )
+        definitions.append(
+            _definition(
+                name="get_menu_item_customizations",
+                description=(
+                    "Retrieve customization progression for one selected menu item by item_id. "
+                    "Call this immediately after item selection whenever has_customizations=true, before any "
+                    "customization dialogue, and do it silently in the background. "
+                    "The response returns next_group (single actionable group), pending_group_id, remaining_group_ids, and deferred_group_ids. "
+                    "Present only next_group to the caller. After the caller answers, call this function again with "
+                    "completed_group_ids including the prior pending_group_id so the flow advances. "
+                    "Do not ask about remaining/deferred groups until they are returned as next_group in a later call. "
+                    "Set include_ask_if_mentioned=true only when the caller explicitly asks for additional customizations."
+                ),
+                schema=menu.GetMenuItemCustomizationsArgs.model_json_schema(),
             )
         )
 
@@ -116,7 +136,7 @@ def get_function_definitions(feature_flags: Optional[Dict[str, Any]] = None) -> 
                 _definition(
                     name="update_reservation",
                     description=(
-                        "Update the latest reservation for a caller. Requires customer_contact (phone number). "
+                        "Update the latest reservation for a caller using default call context for caller and restaurant. "
                         "Optional fields to update: party_size (number of guests), datetime_iso (new date/time in ISO format), "
                         "special_request (dietary needs, preferences), notes (additional info)."
                     ),
@@ -167,5 +187,23 @@ def get_function_definitions(feature_flags: Optional[Dict[str, Any]] = None) -> 
             ),
         ]
     )
+
+    # Add SMS redirect function if enabled for orders or reservations
+    if sms_redirect_enabled:
+        sms_redirect_schema = conversation.SendSMSRedirectArgs.model_json_schema()
+        definitions.append(
+            _definition(
+                name="send_sms_redirect",
+                description=(
+                    "Send SMS with ordering/reservation link to caller. "
+                    "Call IMMEDIATELY when customer wants to order (redirect_type='orders') or "
+                    "book a table (redirect_type='reservations'). "
+                    "Do NOT announce beforehand - just call the function directly. "
+                    "After calling, speak naturally using the returned message_to_customer content. "
+                    "Restaurant and phone number are automatic from context - only specify redirect_type."
+                ),
+                schema=sms_redirect_schema,
+            )
+        )
 
     return definitions

@@ -2,7 +2,7 @@
 Service for sending SMS notifications to customers (orders, reservations).
 
 All SMS messages use warm, personalized "Ressy" brand voice with genuine care
-for the customer. Messages end with "Yours sincerely, Ressy AI" signature.
+for the customer. Messages end with "Yours sincerely, RessyAI" signature.
 """
 
 import asyncio
@@ -16,8 +16,18 @@ from app.utils.pii_masking import mask_phone_number
 
 logger = get_logger(__name__)
 
+
+class SMSSendError(Exception):
+    """Raised when SMS sending fails and caller requested raise_on_failure=True."""
+
+    def __init__(self, message: str, log_id: int, error_message: Optional[str] = None):
+        super().__init__(message)
+        self.log_id = log_id
+        self.error_message = error_message
+
+
 # Signature appended to all SMS messages
-SMS_SIGNATURE = "\n\nYours sincerely,\nRessy AI"
+SMS_SIGNATURE = "\n\nYours sincerely,\nRessyAI"
 
 # Valid statuses for orders and reservations (for validation warnings)
 VALID_ORDER_STATUSES = {"pending", "confirmed", "preparing", "ready", "completed", "cancelled"}
@@ -322,6 +332,63 @@ class NotificationService:
                     )
             return log_id
 
+    async def send_sms(
+        self,
+        restaurant_id: int,
+        entity_type: str,
+        entity_id: int,
+        recipient_phone: str,
+        message_content: str,
+        from_number: str,
+        account_sid: Optional[str] = None,
+        auth_token: Optional[str] = None,
+        raise_on_failure: bool = False,
+    ) -> int:
+        """Send an SMS notification and log it.
+
+        This is the public interface for sending generic SMS notifications.
+
+        Args:
+            restaurant_id: Restaurant ID for logging
+            entity_type: Type of entity ('order', 'reservation', 'sms_redirect')
+            entity_id: ID of the entity (order_id, reservation_id, call_id)
+            recipient_phone: Phone number to send SMS to
+            message_content: SMS body content
+            from_number: Twilio phone number to send from
+            account_sid: Optional Twilio account SID (uses default if not provided)
+            auth_token: Optional Twilio auth token (uses default if not provided)
+            raise_on_failure: If True, raises SMSSendError when Twilio returns failure.
+                              If False (default), silently logs failure for background retry.
+
+        Returns:
+            log_id: The notification log ID
+
+        Raises:
+            SMSSendError: If raise_on_failure=True and SMS sending fails
+        """
+        # Create log entry first
+        log_id = await asyncio.to_thread(
+            self.notification_repo.create_log,
+            restaurant_id=restaurant_id,
+            entity_type=entity_type,
+            entity_id=entity_id,
+            recipient_phone=recipient_phone,
+            message_content=message_content,
+        )
+
+        # Send the SMS
+        await self._send_notification(
+            log_id=log_id,
+            recipient_phone=recipient_phone,
+            message_content=message_content,
+            from_number=from_number,
+            account_sid=account_sid,
+            auth_token=auth_token,
+            raise_on_failure=raise_on_failure,
+        )
+
+        return log_id
+
     async def _send_notification(
         self,
         log_id: int,
@@ -330,11 +397,24 @@ class NotificationService:
         from_number: str,
         account_sid: Optional[str] = None,
         auth_token: Optional[str] = None,
+        raise_on_failure: bool = False,
     ) -> None:
         """Send SMS and update log status (sent/failed).
 
         Uses account_sid/auth_token when both provided (restaurant's Twilio account).
         Database operations are wrapped with asyncio.to_thread() to avoid blocking.
+
+        Args:
+            log_id: Notification log ID to update
+            recipient_phone: Phone number to send SMS to
+            message_content: SMS body content
+            from_number: Twilio phone number to send from
+            account_sid: Optional Twilio account SID
+            auth_token: Optional Twilio auth token
+            raise_on_failure: If True, raises SMSSendError on Twilio failure
+
+        Raises:
+            SMSSendError: If raise_on_failure=True and Twilio returns failure
         """
         logger.info(
             "Sending SMS notification log_id=%d to=%s from=%s message_length=%d",
@@ -371,3 +451,10 @@ class NotificationService:
                 self.notification_repo.increment_retry_count,
                 log_id,
             )
+            # Raise if caller needs to handle failure explicitly
+            if raise_on_failure:
+                raise SMSSendError(
+                    f"SMS send failed: {result.error_message}",
+                    log_id=log_id,
+                    error_message=result.error_message,
+                )
