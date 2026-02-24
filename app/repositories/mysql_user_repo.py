@@ -178,9 +178,10 @@ class MySQLUserRepository(MySQLBaseRepository):
                 u.is_spam,
                 u.credit_card,
                 u.created_at,
-                u.updated_at
+                u.updated_at,
+                COALESCE(urm.is_spam, FALSE) as restaurant_is_spam
             FROM Users u
-            LEFT JOIN User_Restaurant_Metadata urm ON u.id = urm.user_id
+            LEFT JOIN User_Restaurant_Metadata urm ON u.id = urm.user_id AND urm.restaurant_id = %s
             LEFT JOIN Reservations r ON u.id = r.user_id
             LEFT JOIN Slot_Bookings sb ON r.slot_booking_id = sb.id
             LEFT JOIN Calls c ON u.id = c.user_id
@@ -190,7 +191,7 @@ class MySQLUserRepository(MySQLBaseRepository):
                 OR c.restaurant_id = %s
             )
         """
-        params: List = [restaurant_id, restaurant_id, str(restaurant_id)]
+        params: List = [restaurant_id, restaurant_id, restaurant_id, str(restaurant_id)]
 
         if search:
             query += """ AND (
@@ -202,7 +203,8 @@ class MySQLUserRepository(MySQLBaseRepository):
             params.extend([search_pattern, search_pattern, search_pattern])
 
         if is_spam is not None:
-            query += " AND u.is_spam = %s"
+            # Filter by restaurant-specific spam status
+            query += " AND COALESCE(urm.is_spam, FALSE) = %s"
             params.append(is_spam)
 
         query += " ORDER BY u.created_at DESC LIMIT %s OFFSET %s"
@@ -230,7 +232,7 @@ class MySQLUserRepository(MySQLBaseRepository):
         query = """
             SELECT COUNT(DISTINCT u.id) as total
             FROM Users u
-            LEFT JOIN User_Restaurant_Metadata urm ON u.id = urm.user_id
+            LEFT JOIN User_Restaurant_Metadata urm ON u.id = urm.user_id AND urm.restaurant_id = %s
             LEFT JOIN Reservations r ON u.id = r.user_id
             LEFT JOIN Slot_Bookings sb ON r.slot_booking_id = sb.id
             LEFT JOIN Calls c ON u.id = c.user_id
@@ -240,7 +242,7 @@ class MySQLUserRepository(MySQLBaseRepository):
                 OR c.restaurant_id = %s
             )
         """
-        params: List = [restaurant_id, restaurant_id, restaurant_id]
+        params: List = [restaurant_id, restaurant_id, restaurant_id, str(restaurant_id)]
 
         if search:
             query += """ AND (
@@ -252,7 +254,8 @@ class MySQLUserRepository(MySQLBaseRepository):
             params.extend([search_pattern, search_pattern, search_pattern])
 
         if is_spam is not None:
-            query += " AND u.is_spam = %s"
+            # Filter by restaurant-specific spam status
+            query += " AND COALESCE(urm.is_spam, FALSE) = %s"
             params.append(is_spam)
 
         results = self._execute_query(query, tuple(params))

@@ -6,6 +6,7 @@ AI does NOT mark users as spam - only creates notifications for admin review.
 
 from __future__ import annotations
 
+import asyncio
 from typing import Literal, Optional
 
 from pydantic import BaseModel, ConfigDict
@@ -13,9 +14,15 @@ from pydantic import BaseModel, ConfigDict
 from app.agent_fc.functions.function_context import split_call_context
 from app.agent_fc.responses import AgentFunctionResult, AgentSideEffect
 from app.services.notification_persistence_service import NotificationPersistenceService
+from app.services.sse_service import SSEService
 from app.utils.logging_config import get_logger
 
 logger = get_logger(__name__)
+
+
+def _get_sse_service() -> SSEService:
+    """Create fresh SSE service instance per function call."""
+    return SSEService()
 
 
 class DetectSpamBehaviorArgs(BaseModel):
@@ -62,34 +69,19 @@ async def detect_spam_behavior(**kwargs) -> AgentFunctionResult:
         args.confidence,
     )
 
-    # Create notification for restaurant admin (AI detection - NOT marking as spam)
-    try:
-        notification_service = NotificationPersistenceService()
-        notification_service.create_notification(
-            restaurant_id=args.restaurant_id,
-            type="escalation",
-            subtype="suspected_spam",
-            data={
-                "caller_phone": args.customer_contact,
-                "user_id": user_id,
-                "call_id": call_id,
-                "call_sid": call_sid,
-                "indicators": [args.indicators] if isinstance(args.indicators, str) else args.indicators,
-                "confidence": args.confidence,
-                "spam_score": 0.9 if args.confidence == "high" else 0.7 if args.confidence == "medium" else 0.5,
-                "reason": f"AI detected spam behavior: {args.indicators}",
-                "transcript_summary": args.transcript_summary,
-                "ai_detected": True,
-            },
-            entity_id=int(call_id) if call_id else None,
+    # Emit SSE event and create notification (similar to escalation pattern)
+    asyncio.create_task(
+        _emit_spam_sse_event_and_notification(
+            restaurant_id=int(args.restaurant_id),
+            caller_phone=args.customer_contact,
+            indicators=args.indicators,
+            confidence=args.confidence,
+            transcript_summary=args.transcript_summary,
+            call_sid=call_sid,
+            call_id=call_id,
+            user_id=user_id,
         )
-        logger.info(
-            "Spam detection notification created: restaurant_id=%s user_id=%s",
-            args.restaurant_id,
-            user_id,
-        )
-    except Exception as exc:
-        logger.exception("Failed to create spam detection notification: %s", exc)
+    )
 
     # Disconnect the call immediately
     message = "Thank you for calling. Goodbye."
@@ -105,3 +97,66 @@ async def detect_spam_behavior(**kwargs) -> AgentFunctionResult:
             AgentSideEffect({"type": "close"}, delay_seconds=0.5),
         ],
     )
+
+
+async def _emit_spam_sse_event_and_notification(
+    restaurant_id: int,
+    caller_phone: str,
+    indicators: str,
+    confidence: Literal["low", "medium", "high"],
+    transcript_summary: Optional[str],
+    call_sid: Optional[str] = None,
+    call_id: Optional[int] = None,
+    user_id: Optional[int] = None,
+) -> None:
+    """Broadcast spam detection to SSE subscribers and persist notification; keep failures from affecting the call flow."""
+    # Emit SSE event
+    try:
+        sse_service = _get_sse_service()
+        spam_score = 0.9 if confidence == "high" else 0.7 if confidence == "medium" else 0.5
+        indicators_list = [indicators] if isinstance(indicators, str) else indicators
+        await sse_service.emit_escalation_suspected_spam(
+            restaurant_id=restaurant_id,
+            call_id=str(call_id) if call_id else None,
+            caller_phone=caller_phone,
+            spam_score=spam_score,
+            indicators=indicators_list,
+            data={
+                "confidence": confidence,
+                "user_id": user_id,
+                "call_sid": call_sid,
+                "transcript_summary": transcript_summary,
+                "ai_detected": True,
+            },
+        )
+    except Exception as exc:  # noqa: BLE001 - defensive
+        logger.warning("Failed to emit spam detection SSE event call_sid=%s: %s", call_sid, exc)
+
+    # Create notification
+    try:
+        notification_service = NotificationPersistenceService()
+        notification_service.create_notification(
+            restaurant_id=restaurant_id,
+            type="escalation",
+            subtype="suspected_spam",
+            data={
+                "caller_phone": caller_phone,
+                "user_id": user_id,
+                "call_id": call_id,
+                "call_sid": call_sid,
+                "indicators": [indicators] if isinstance(indicators, str) else indicators,
+                "confidence": confidence,
+                "spam_score": 0.9 if confidence == "high" else 0.7 if confidence == "medium" else 0.5,
+                "reason": f"AI detected spam behavior: {indicators}",
+                "transcript_summary": transcript_summary,
+                "ai_detected": True,
+            },
+            entity_id=int(call_id) if call_id else None,
+        )
+        logger.info(
+            "Spam detection notification created: restaurant_id=%s user_id=%s",
+            restaurant_id,
+            user_id,
+        )
+    except Exception as exc:  # noqa: BLE001 - defensive
+        logger.warning("Spam detection notification persistence failed call_sid=%s: %s", call_sid, exc)

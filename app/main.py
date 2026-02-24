@@ -35,7 +35,6 @@ from app.api import (
     opentable,
     reservations,
     restaurants,
-    spam_management,
     sse,
     testing,
 )
@@ -249,7 +248,6 @@ app.include_router(client_restaurant.router)
 app.include_router(client_client_users.router)
 app.include_router(client_analytics.router, tags=["Client Analytics"])
 app.include_router(job_management.router)
-app.include_router(spam_management.router)
 
 # Testing routes (keep last)
 app.include_router(testing.router)
@@ -395,6 +393,36 @@ async def redirect(request: Request):
             return Response(content="<Response><Hangup/></Response>", media_type="application/xml")
 
         restaurant_id = str(restaurant.get("id"))
+        
+        # Check if caller is marked as spam - play message via TwiML Say
+        from app.repositories.mysql_user_repo import MySQLUserRepository
+        from app.repositories.mysql_user_restaurant_metadata_repo import MySQLUserRestaurantMetadataRepository
+        
+        user_repo = MySQLUserRepository()
+        metadata_repo = MySQLUserRestaurantMetadataRepository()
+        
+        user_id = user_repo.get_user_id_by_phone_or_email(twilio_from, None)
+        if user_id:
+            # Check global spam first
+            user = user_repo.get_user_by_id(user_id)
+            if user and user.get("is_spam"):
+                logger.info("Call blocked: User %s is marked as global spam", user_id)
+                message = escape("Ressy has marked you as spam. Please contact Ressy support directly to unblock you.")
+                return Response(
+                    content=f'<Response><Say language="en-US" voice="alice">{message}</Say><Hangup/></Response>',
+                    media_type="application/xml"
+                )
+            
+            # Check restaurant-specific spam
+            is_restaurant_spam = metadata_repo.is_spam(user_id, int(restaurant_id))
+            if is_restaurant_spam:
+                logger.info("Call blocked: User %s is marked as spam for restaurant %s", user_id, restaurant_id)
+                message = escape("Ressy has marked you as spam. Please contact the restaurant directly to unblock you.")
+                return Response(
+                    content=f'<Response><Say language="en-US" voice="alice">{message}</Say><Hangup/></Response>',
+                    media_type="application/xml"
+                )
+        
         escalation = escalation_service.get_latest_by_call_sid_and_restaurant(call_sid, restaurant_id)
         if not escalation:
             logger.info("No escalation found for call_sid=%s restaurant_id=%s", call_sid, restaurant_id)

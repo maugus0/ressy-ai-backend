@@ -103,7 +103,7 @@ class UpdateUserRequest(BaseModel):
     )
     is_spam: Optional[bool] = Field(
         None,
-        description="Mark user as spam/blocked",
+        description="Mark user as spam/blocked for the restaurant (restaurant-specific spam marking). For restaurant users, this marks spam for their restaurant. For admins, this marks spam for the user's associated restaurant.",
         json_schema_extra={"example": False},
     )
     credit_card: Optional[str] = Field(
@@ -453,6 +453,26 @@ async def get_user_dashboard(
     """Get a user by ID with authorization check."""
     user = _check_user_access(current_user, user_id, user_service)
 
+    # Get restaurant_id for restaurant-specific spam status
+    restaurant_id = None
+    if current_user.get("user_type") == "restaurant":
+        restaurant_id = current_user.get("restaurant_id")
+    elif current_user.get("user_type") == "admin":
+        # For admin, use first restaurant from user's associations
+        restaurant_ids = user.get("restaurant_ids", [])
+        if restaurant_ids:
+            restaurant_id = restaurant_ids[0]
+
+    # Replace is_spam with restaurant-specific spam status if restaurant_id is available
+    if restaurant_id and user:
+        from app.repositories.mysql_user_restaurant_metadata_repo import (
+            MySQLUserRestaurantMetadataRepository,
+        )
+
+        metadata_repo = MySQLUserRestaurantMetadataRepository()
+        restaurant_spam_status = metadata_repo.is_spam(user_id, restaurant_id)
+        user["is_spam"] = 1 if restaurant_spam_status else 0
+
     # Remove restaurant_ids from response for clients (restaurant users)
     # Admins should see restaurant_ids, but clients should not
     user_type = current_user.get("user_type")
@@ -527,7 +547,18 @@ async def update_user(
         if not user_data:
             raise HTTPException(status_code=400, detail="No fields provided for update")
 
-        result = user_service.update_user_dashboard(user_id, user_data)
+        # Get restaurant_id from current_user for spam management
+        restaurant_id = None
+        if current_user.get("user_type") == "restaurant":
+            restaurant_id = current_user.get("restaurant_id")
+        elif current_user.get("user_type") == "admin":
+            # For admin, get restaurant_id from user's restaurant associations
+            user = user_service.get_user_with_restaurant_check(user_id)
+            restaurant_ids = user.get("restaurant_ids", [])
+            if restaurant_ids:
+                restaurant_id = restaurant_ids[0]  # Use first restaurant for admin updates
+
+        result = user_service.update_user_dashboard(user_id, user_data, restaurant_id=restaurant_id)
         return result
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
