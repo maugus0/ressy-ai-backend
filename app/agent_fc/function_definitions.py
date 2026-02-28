@@ -47,7 +47,7 @@ def get_function_definitions(feature_flags: Optional[Dict[str, Any]] = None) -> 
     # filler_schema = conversation.AgentFillerArgs.model_json_schema()
     end_call_schema = conversation.EndCallArgs.model_json_schema()
     escalate_schema = conversation.EscalateToHumanArgs.model_json_schema()
-    mark_potential_scam_schema = spam_detection.MarkPotentialScamArgs.model_json_schema()
+    mark_potential_spam_schema = spam_detection.MarkPotentialSpamArgs.model_json_schema()
 
     definitions: List[Dict[str, Any]] = []
 
@@ -180,11 +180,11 @@ def get_function_definitions(feature_flags: Optional[Dict[str, Any]] = None) -> 
                 schema=escalate_schema,
             ),
             _definition(
-                name="mark_potential_scam",
+                name="mark_potential_spam",
                 description="IMMEDIATELY call this function if you detect spam or non-human behavior during the call. "
                 "Indicators include: repetitive non-conversational patterns, or any behavior that suggests this is not a genuine human caller. "
                 "This function will create a notification for the restaurant admin to review and will disconnect the call.",
-                schema=mark_potential_scam_schema,
+                schema=mark_potential_spam_schema,
             ),
         ]
     )

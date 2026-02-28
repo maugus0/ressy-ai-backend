@@ -922,9 +922,9 @@ class WebSocketService:
             arg_model=conversation.EscalateToHumanArgs,
         )
         registry.register(
-            name="mark_potential_scam",
-            handler=spam_detection.mark_potential_scam,
-            arg_model=spam_detection.MarkPotentialScamArgs,
+            name="mark_potential_spam",
+            handler=spam_detection.mark_potential_spam,
+            arg_model=spam_detection.MarkPotentialSpamArgs,
         )
 
         # Register SMS redirect function if enabled for orders or reservations

@@ -1,6 +1,6 @@
-"""Mark potential scam agent function.
+"""Mark potential spam agent function.
 
-Marks potential scam behavior during calls and creates notifications for restaurant admins.
+Marks potential spam behavior during calls and creates notifications for restaurant admins.
 """
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ def _get_sse_service() -> SSEService:
     return SSEService()
 
 
-class MarkPotentialScamArgs(BaseModel):
+class MarkPotentialSpamArgs(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     indicators: str  # Description of spam indicators detected
@@ -32,9 +32,9 @@ class MarkPotentialScamArgs(BaseModel):
     transcript_summary: Optional[str] = None  # Summary of suspicious conversation
 
 
-async def mark_potential_scam(**kwargs) -> AgentFunctionResult:
+async def mark_potential_spam(**kwargs) -> AgentFunctionResult:
     """
-    Mark potential scam during a call and create notification for restaurant admin.
+    Mark potential spam during a call and create notification for restaurant admin.
 
     This function:
     1. Creates a notification (type: "escalation", subtype: "suspected_spam") for restaurant admin
@@ -48,8 +48,8 @@ async def mark_potential_scam(**kwargs) -> AgentFunctionResult:
     Returns:
         AgentFunctionResult with side effect to disconnect call
     """
-    context, model_kwargs = split_call_context(kwargs, MarkPotentialScamArgs)
-    args = MarkPotentialScamArgs.model_validate(model_kwargs)
+    context, model_kwargs = split_call_context(kwargs, MarkPotentialSpamArgs)
+    args = MarkPotentialSpamArgs.model_validate(model_kwargs)
     call_sid = context.get("call_sid")
     call_id = context.get("call_id")
     user_id = context.get("user_id")
@@ -57,7 +57,7 @@ async def mark_potential_scam(**kwargs) -> AgentFunctionResult:
     customer_contact = context.get("customer_contact")
 
     if not restaurant_id:
-        logger.error("mark_potential_scam: restaurant_id not found in context")
+        logger.error("mark_potential_spam: restaurant_id not found in context")
         return AgentFunctionResult(
             content={"status": "ERROR", "message": "Restaurant ID not found"},
             side_effects=[AgentSideEffect({"type": "close"}, delay_seconds=0.5)],
