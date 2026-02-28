@@ -1,5 +1,5 @@
 import json
-from typing import Any, Dict
+from typing import Any, Dict, List, Optional
 
 import requests
 
@@ -101,4 +101,89 @@ class SquareClient:
             raise
         except Exception as e:
             logger.exception(f"[Square API] Unexpected error: {e}")
+            raise
+
+    def list_catalog(self, types: Optional[List[str]] = None) -> Dict[str, Any]:
+        """
+        List catalog objects from Square.
+        
+        Args:
+            types: Optional list of catalog object types to filter (e.g., ["ITEM", "MODIFIER_LIST"])
+                  If None, returns all types
+        
+        Returns:
+            The Square API catalog response with objects array
+        """
+        url = f"{self.base_url}/v2/catalog/list"
+        headers = self._get_headers()
+        
+        payload = {}
+        if types:
+            payload["types"] = types
+        
+        logger.info(f"[Square API] Listing catalog: types={types if types else 'all'}")
+        logger.debug(f"[Square API] Catalog request URL: {url}")
+        if payload:
+            logger.debug(f"[Square API] Catalog request payload: {json.dumps(payload, indent=2)}")
+        
+        # Log curl command for debugging (with masked authorization token)
+        auth_token = headers.get("Authorization", "").replace("Bearer ", "")
+        if auth_token:
+            masked_token = f"{auth_token[:6]}...{auth_token[-4:]}" if len(auth_token) > 10 else "***masked***"
+        else:
+            masked_token = "***no-token***"
+        
+        # Build curl command
+        curl_parts = [f"curl {url}"]
+        curl_parts.append("-X POST" if payload else "-X GET")
+        curl_parts.append(f"-H 'Square-Version: {headers.get('Square-Version', '')}'")
+        curl_parts.append(f"-H 'Authorization: Bearer {masked_token}'")
+        curl_parts.append(f"-H 'Content-Type: {headers.get('Content-Type', '')}'")
+        if payload:
+            payload_json = json.dumps(payload)
+            curl_parts.append(f"-d '{payload_json}'")
+        
+        curl_command = " \\\n  ".join(curl_parts)
+        logger.info("[Square API] Equivalent curl command (authorization token masked):")
+        logger.info(curl_command)
+        
+        try:
+            logger.info("[Square API] Sending request to Square Catalog API...")
+            if payload:
+                logger.info(f"[Square API] Complete catalog request body: {json.dumps(payload, indent=2)}")
+                response = requests.post(url, json=payload, headers=headers, timeout=30)
+            else:
+                response = requests.get(url, headers=headers, timeout=30)
+            logger.info(f"[Square API] Catalog response status: {response.status_code}")
+            response.raise_for_status()
+            result = response.json()
+            objects_count = len(result.get("objects", []))
+            logger.info(
+                f"[Square API] Catalog listing successful! Found {objects_count} catalog objects. Response keys: {list(result.keys()) if result else 'None'}"
+            )
+            logger.debug(f"[Square API] Full catalog response: {json.dumps(result, indent=2)}")
+            return result
+        except requests.exceptions.Timeout as e:
+            logger.error(f"[Square API] Catalog timeout error after 30s: {e}")
+            raise
+        except requests.exceptions.ConnectionError as e:
+            logger.error(f"[Square API] Catalog connection error (network issue): {e}")
+            raise
+        except requests.exceptions.HTTPError as e:
+            logger.error(f"[Square API] Catalog HTTP error: {e}")
+            if hasattr(e, "response") and e.response is not None:
+                logger.error(f"[Square API] Catalog error status code: {e.response.status_code}")
+                try:
+                    error_body = e.response.json()
+                    logger.error(f"[Square API] Catalog error response body: {json.dumps(error_body, indent=2)}")
+                except (ValueError, AttributeError):
+                    logger.error(f"[Square API] Catalog error response text: {e.response.text}")
+            raise
+        except requests.exceptions.RequestException as e:
+            logger.error(f"[Square API] Catalog request exception: {e}")
+            if hasattr(e, "response") and e.response is not None:
+                logger.error(f"[Square API] Catalog response text: {e.response.text}")
+            raise
+        except Exception as e:
+            logger.exception(f"[Square API] Catalog unexpected error: {e}")
             raise

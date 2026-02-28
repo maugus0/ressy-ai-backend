@@ -81,31 +81,109 @@ class POSService:
             currency = "USD"
         logger.info(f"[POS Sync] Using currency: {currency}")
 
+        # Check if we should use Square catalog (custom: false) or ad-hoc items (custom: true or not set)
+        # Get restaurant_id from order or pos_integration
+        restaurant_id = order.get("restaurant_id") if order else None
+        if not restaurant_id:
+            # Try to get from pos_integration if available
+            restaurant_id = pos_integration.get("restaurant_id")
+        
+        use_catalog = False
+        if restaurant_id:
+            restaurant = self.restaurant_repo.get_by_id(restaurant_id)
+            if restaurant:
+                pos_flags = restaurant.get("pos_integration_flags")
+                if isinstance(pos_flags, str):
+                    try:
+                        pos_flags = json.loads(pos_flags)
+                    except (json.JSONDecodeError, TypeError):
+                        pos_flags = {}
+                elif pos_flags is None:
+                    pos_flags = {}
+                
+                # Check if custom flag is explicitly set to false
+                # Default to True (use ad-hoc) if not specified
+                use_catalog = pos_flags.get("custom") is False
+                logger.info(
+                    f"[POS Sync] Restaurant {restaurant_id} pos_integration_flags: {pos_flags}, "
+                    f"use_catalog (custom=False): {use_catalog}"
+                )
+        
         line_items = []
         order_details = order_data.get("order_details", [])
-        logger.info(f"[POS Sync] Converting {len(order_details)} order items to Square line_items")
+        logger.info(
+            f"[POS Sync] Converting {len(order_details)} order items to Square line_items "
+            f"(use_catalog={use_catalog})"
+        )
+        
+        pos_integration_id = pos_integration.get("id")
+        
         for idx, item in enumerate(order_details):
-            # Get price from order_details (price at time of order) or fallback to menu
-            price = self._get_item_price(item, self.menu_repo)
-            price_source = (
-                "order_details" if item.get("price") is not None else ("menu" if item.get("item_id") else "fallback")
-            )
-            amount_cents = int(price * 100)  # Convert to cents for Square API
-            line_item = {
-                "quantity": str(item.get("quantity", 1)),
-                "item_type": "ITEM",
-                "name": item.get("name", "Unknown Item"),
-                "base_price_money": {
-                    "amount": amount_cents,
-                    "currency": currency,
-                },
-            }
-            if item.get("instructions"):
-                line_item["note"] = item.get("instructions")[:500]
-            line_items.append(line_item)
-            logger.info(
-                f"[POS Sync] Line item {idx+1}: {line_item['name']} x{line_item['quantity']} @ ${price:.2f} ({currency}) - Price source: {price_source}, Amount (cents): {amount_cents}"
-            )
+            menu_item_id = item.get("item_id")
+            quantity = str(item.get("quantity", 1))
+            item_name = item.get("name", "Unknown Item")
+            catalog_object_id = None
+            
+            # Try to use catalog if enabled and we have the necessary IDs
+            if use_catalog and menu_item_id and pos_integration_id:
+                # Use Square catalog: get catalog_object_id (variation_id) from menu_pos_mapping
+                catalog_object_id = self.menu_mapping_service.get_pos_menu_item_id(menu_item_id, pos_integration_id)
+                
+                if catalog_object_id:
+                    # Create line item using catalog_object_id (recommended approach)
+                    line_item = {
+                        "catalog_object_id": catalog_object_id,
+                        "quantity": quantity,
+                    }
+                    
+                    # Add modifiers if any (could be extended in future)
+                    # For now, instructions go as note
+                    if item.get("instructions"):
+                        # Note: Square catalog items can have modifiers, but we'll use note for instructions
+                        # In future, we could map instructions to Square modifiers
+                        logger.debug(
+                            f"[POS Sync] Item {item_name} has instructions, but using catalog_object_id. "
+                            f"Instructions: {item.get('instructions')}"
+                        )
+                    
+                    line_items.append(line_item)
+                    logger.info(
+                        f"[POS Sync] Line item {idx+1} (catalog): {item_name} x{quantity} "
+                        f"(catalog_object_id={catalog_object_id})"
+                    )
+                    continue  # Skip ad-hoc creation for this item
+            
+            # Use ad-hoc line items (custom: true, no mapping found, or catalog not enabled)
+            if not catalog_object_id:
+                # Get price from order_details (price at time of order) or fallback to menu
+                price = self._get_item_price(item, self.menu_repo)
+                price_source = (
+                    "order_details" if item.get("price") is not None else ("menu" if item.get("item_id") else "fallback")
+                )
+                amount_cents = int(price * 100)  # Convert to cents for Square API
+                line_item = {
+                    "quantity": quantity,
+                    "item_type": "ITEM",
+                    "name": item_name,
+                    "base_price_money": {
+                        "amount": amount_cents,
+                        "currency": currency,
+                    },
+                }
+                if item.get("instructions"):
+                    line_item["note"] = item.get("instructions")[:500]
+                line_items.append(line_item)
+                
+                if use_catalog and menu_item_id:
+                    logger.warning(
+                        f"[POS Sync] Line item {idx+1} (ad-hoc fallback): {item_name} x{quantity} "
+                        f"@ ${price:.2f} ({currency}) - No catalog mapping found for menu_item_id={menu_item_id}"
+                    )
+                else:
+                    logger.info(
+                        f"[POS Sync] Line item {idx+1} (ad-hoc): {line_item['name']} x{line_item['quantity']} "
+                        f"@ ${price:.2f} ({currency}) - Price source: {price_source}, Amount (cents): {amount_cents}"
+                    )
 
         # Build pickup_details with recipient information
         pickup_details = {}
