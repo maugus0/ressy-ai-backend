@@ -16,6 +16,8 @@ from app.utils.restaurant_hours import DAYS_OF_WEEK
 class RestaurantService:
     """Service layer for restaurant CRUD and lookups."""
 
+    E164_PHONE_PATTERN = re.compile(r"^\+[1-9]\d{1,14}$")
+
     def __init__(
         self,
         restaurant_repo: Optional[MySQLRestaurantRepository] = None,
@@ -42,8 +44,11 @@ class RestaurantService:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST, detail=f"{field_name} must be 20 characters or less"
             )
-        if not re.match(r"^[\d\s\-\+\(\)]+$", phone_number):
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid {field_name} format")
+        if not self.E164_PHONE_PATTERN.match(phone_number):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"{field_name} must be a valid E.164 phone number (e.g. +14155551234)",
+            )
 
     def _validate_json_field(self, field_name: str, value: Optional[Dict[str, Any]]) -> None:
         """Ensure JSON-typed fields are objects when provided."""
@@ -808,14 +813,13 @@ class RestaurantService:
     def set_all_restaurants_kill_switch(self, enabled: bool) -> Dict[str, Any]:
         """Bulk update kill switch for all restaurants."""
         try:
-            candidates = self.restaurant_repo.list_kill_switch_candidates()
+            targeted_count = self.restaurant_repo.count_restaurants()
         except Exception as exc:  # pragma: no cover - defensive logging for DB errors
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Failed to fetch restaurants for kill switch update: {exc}",
+                detail=f"Failed to fetch restaurant counts for kill switch update: {exc}",
             )
 
-        targeted_count = len(candidates)
         desired = bool(enabled)
 
         if targeted_count == 0:
@@ -826,16 +830,26 @@ class RestaurantService:
                 "updated_count": 0,
                 "skipped_count": 0,
                 "skipped": [],
+                "_changed_restaurants": [],
             }
 
         if not desired:
             try:
+                changed_rows = self.restaurant_repo.list_kill_switch_changed_restaurants(False)
                 updated_count = self.restaurant_repo.set_kill_switch_all(False)
             except Exception as exc:  # pragma: no cover - defensive logging for DB errors
                 raise HTTPException(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                     detail=f"Failed to bulk disable kill switch: {exc}",
                 )
+            changed_restaurants = [
+                {
+                    "restaurant_id": int(row["id"]),
+                    "restaurant_name": row.get("name"),
+                    "previous_enabled": self._normalize_feature_value(row.get("kill_switch_enabled"), default=False),
+                }
+                for row in changed_rows
+            ]
             return {
                 "enabled": False,
                 "targeted_count": targeted_count,
@@ -843,11 +857,19 @@ class RestaurantService:
                 "updated_count": updated_count,
                 "skipped_count": 0,
                 "skipped": [],
+                "_changed_restaurants": changed_restaurants,
             }
 
-        ready_ids: list[int] = []
         skipped: list[Dict[str, Any]] = []
-        for restaurant in candidates:
+        try:
+            invalid_rows = self.restaurant_repo.list_kill_switch_invalid_restaurants()
+        except Exception as exc:  # pragma: no cover - defensive logging for DB errors
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to fetch restaurants with invalid kill switch forwarding: {exc}",
+            )
+
+        for restaurant in invalid_rows:
             blockers = self._compute_kill_switch_blockers(
                 restaurant.get("forward_escalations"),
                 restaurant.get("escalation_phone_number"),
@@ -860,27 +882,48 @@ class RestaurantService:
                         "kill_switch_blockers": blockers,
                     }
                 )
-                continue
-            ready_ids.append(int(restaurant["id"]))
+
+        eligible_count = max(targeted_count - len(skipped), 0)
 
         updated_count = 0
-        if ready_ids:
+        changed_restaurants: list[Dict[str, Any]] = []
+        if eligible_count > 0:
             try:
-                updated_count = self.restaurant_repo.set_kill_switch_for_ids(ready_ids, True)
+                changed_rows = self.restaurant_repo.list_kill_switch_changed_restaurants(True, only_redirect_ready=True)
+                updated_count = self.restaurant_repo.set_kill_switch_all_redirect_ready(True)
             except Exception as exc:  # pragma: no cover - defensive logging for DB errors
                 raise HTTPException(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                     detail=f"Failed to bulk enable kill switch: {exc}",
                 )
+            changed_restaurants = [
+                {
+                    "restaurant_id": int(row["id"]),
+                    "restaurant_name": row.get("name"),
+                    "previous_enabled": self._normalize_feature_value(row.get("kill_switch_enabled"), default=False),
+                }
+                for row in changed_rows
+            ]
 
         return {
             "enabled": True,
             "targeted_count": targeted_count,
-            "eligible_count": len(ready_ids),
+            "eligible_count": eligible_count,
             "updated_count": updated_count,
             "skipped_count": len(skipped),
             "skipped": skipped,
+            "_changed_restaurants": changed_restaurants,
         }
+
+    def list_kill_switch_candidates(self) -> list[Dict[str, Any]]:
+        """Return restaurants with kill-switch readiness fields for operational workflows."""
+        try:
+            return self.restaurant_repo.list_kill_switch_candidates()
+        except Exception as exc:  # pragma: no cover - defensive logging for DB errors
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to fetch restaurants for kill switch workflows: {exc}",
+            )
 
     def delete_restaurant(self, restaurant_id: int) -> Dict[str, str]:
         """Delete a restaurant."""

@@ -106,3 +106,32 @@ def test_client_update_rejects_invalid_forwarding_when_kill_switch_enabled(clien
     detail = bad_update.json()["detail"]
     assert "kill switch is enabled" in detail["message"].lower()
     assert "forward_escalations_disabled" in detail["kill_switch_blockers"]
+
+
+def test_client_kill_switch_toggle_emits_event_on_state_change(client_with_overrides, monkeypatch):
+    client, _repo = client_with_overrides
+    captured = []
+
+    async def _mock_emit(**kwargs):
+        captured.append(kwargs)
+
+    monkeypatch.setattr("app.api.client_restaurant.emit_kill_switch_toggled", _mock_emit)
+
+    configure = client.put(
+        "/api/v1/client/restaurant",
+        json={
+            "forward_escalations": True,
+            "escalation_phone_number": "+15550009994",
+        },
+    )
+    assert configure.status_code == 200
+
+    enable = client.patch("/api/v1/client/restaurant/kill-switch", json={"enabled": True})
+    assert enable.status_code == 200
+    assert len(captured) == 1
+    event = captured[0]
+    assert event["restaurant_id"] == 1
+    assert event["enabled"] is True
+    assert event["previous_enabled"] is False
+    assert event["actor_type"] == "restaurant"
+    assert event["source"] == "client_dashboard"

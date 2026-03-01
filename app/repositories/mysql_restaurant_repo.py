@@ -3,7 +3,7 @@ MySQL Restaurant Repository for multitenant operations.
 """
 
 import json
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from app.repositories.mysql_base import MySQLBaseRepository
 
@@ -649,6 +649,78 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
             if "kill_switch_enabled" not in row:
                 row["kill_switch_enabled"] = False
         return results
+
+    def count_restaurants(self) -> int:
+        """Return total restaurant count."""
+        query = "SELECT COUNT(*) AS count FROM Restaurants"
+        rows = self._execute_query(query)
+        return int(rows[0].get("count", 0)) if rows else 0
+
+    def list_kill_switch_invalid_restaurants(self) -> List[Dict]:
+        """
+        List only restaurants that cannot safely use kill-switch redirect.
+        """
+        query = """
+            SELECT
+                id,
+                name,
+                forward_escalations,
+                escalation_phone_number
+            FROM Restaurants
+            WHERE forward_escalations <> 1
+               OR escalation_phone_number IS NULL
+               OR TRIM(escalation_phone_number) = ''
+            ORDER BY id ASC
+        """
+        results = self._execute_query(query)
+        for row in results:
+            if "forward_escalations" not in row:
+                row["forward_escalations"] = False
+            if "escalation_phone_number" not in row:
+                row["escalation_phone_number"] = None
+        return results
+
+    def list_kill_switch_changed_restaurants(self, enabled: bool, only_redirect_ready: bool = False) -> List[Dict]:
+        """
+        List restaurants whose kill-switch value would change for the requested update.
+        """
+        clauses = ["kill_switch_enabled <> %s"]
+        params: List[Any] = [enabled]
+        if only_redirect_ready:
+            clauses.append("forward_escalations = 1")
+            clauses.append("escalation_phone_number IS NOT NULL")
+            clauses.append("TRIM(escalation_phone_number) <> ''")
+        where_sql = " AND ".join(clauses)
+        query = f"""
+            SELECT
+                id,
+                name,
+                kill_switch_enabled
+            FROM Restaurants
+            WHERE {where_sql}
+            ORDER BY id ASC
+        """
+        results = self._execute_query(query, tuple(params))
+        for row in results:
+            if "kill_switch_enabled" not in row:
+                row["kill_switch_enabled"] = False
+        return results
+
+    def set_kill_switch_all_redirect_ready(self, enabled: bool) -> int:
+        """
+        Set kill_switch_enabled for all redirect-ready restaurants.
+        Returns affected row count.
+        """
+        query = """
+            UPDATE Restaurants
+            SET kill_switch_enabled = %s,
+                updated_at = NOW()
+            WHERE forward_escalations = 1
+              AND escalation_phone_number IS NOT NULL
+              AND TRIM(escalation_phone_number) <> ''
+              AND kill_switch_enabled <> %s
+        """
+        return self._execute_update(query, (enabled, enabled))
 
     def set_kill_switch_all(self, enabled: bool) -> int:
         """

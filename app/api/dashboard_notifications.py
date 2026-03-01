@@ -51,7 +51,7 @@ def _get_restaurant_id(current_user: dict) -> int:
 )
 async def list_notifications(
     is_read: bool | None = Query(None, description="Filter by read status"),
-    type: str | None = Query(None, description="Filter by type: order, reservation, escalation"),
+    type: str | None = Query(None, description="Filter by type: order, reservation, escalation, system"),
     limit: int = Query(50, ge=1, le=100, description="Page size"),
     offset: int = Query(0, ge=0, description="Offset"),
     current_user: dict = Depends(require_role(["admin", "client"])),
@@ -137,11 +137,11 @@ async def mark_notification_read(
 @router.patch(
     "/notifications/read-all",
     summary="Mark all as read (Dashboard)",
-    description="Mark all notifications as read for the restaurant. Optional type query param to scope to order, reservation, or escalation.",
+    description="Mark all notifications as read for the restaurant. Optional type query param to scope to order, reservation, escalation, or system.",
     response_model=MarkAllReadResponse,
 )
 async def mark_all_read(
-    type: str | None = Query(None, description="Optional: scope to type (order, reservation, escalation)"),
+    type: str | None = Query(None, description="Optional: scope to type (order, reservation, escalation, system)"),
     current_user: dict = Depends(require_role(["admin", "client"])),
     notification_service: NotificationPersistenceService = Depends(get_notification_service),
 ) -> MarkAllReadResponse:

@@ -423,6 +423,7 @@ class TestAdminNotificationsList:
         mock_svc.get_notifications.assert_called_once()
         call_kw = mock_svc.get_notifications.call_args[1]
         assert call_kw["restaurant_id"] is None
+        assert call_kw["exclude_bulk_system_kill_switch_toggled"] is True
 
     def test_list_notifications_filter_by_restaurant(self, admin_client):
         """Filter by specific restaurant_id."""
@@ -672,6 +673,36 @@ class TestNotificationTitleBuilder:
         )
         assert title == "Escalation — Kill Switch Redirected"
 
+    def test_system_kill_switch_toggled(self):
+        """System kill switch toggled title."""
+        enabled = NotificationPersistenceService.build_notification_title(
+            "system",
+            "kill_switch_toggled",
+            {"enabled": True},
+        )
+        disabled = NotificationPersistenceService.build_notification_title(
+            "system",
+            "kill_switch_toggled",
+            {"enabled": False},
+        )
+        assert enabled == "System — Kill Switch Enabled"
+        assert disabled == "System — Kill Switch Disabled"
+
+    def test_system_kill_switch_bulk_updated(self):
+        """System kill switch bulk title."""
+        enabled = NotificationPersistenceService.build_notification_title(
+            "system",
+            "kill_switch_bulk_updated",
+            {"enabled": True},
+        )
+        disabled = NotificationPersistenceService.build_notification_title(
+            "system",
+            "kill_switch_bulk_updated",
+            {"enabled": False},
+        )
+        assert enabled == "System — Kill Switch Bulk Enabled"
+        assert disabled == "System — Kill Switch Bulk Disabled"
+
 
 class TestNotificationMessageBuilder:
     """Tests for NotificationPersistenceService.build_notification_message"""
@@ -735,3 +766,76 @@ class TestNotificationMessageBuilder:
         assert "kill switch is enabled" in message
         assert "+1234567890" in message
         assert "dependency outage" in message
+
+    def test_system_kill_switch_toggled(self):
+        """System kill switch toggled message."""
+        message = NotificationPersistenceService.build_notification_message(
+            "system",
+            "kill_switch_toggled",
+            {"enabled": True, "actor_type": "admin", "actor_email": "ops@example.com"},
+        )
+        assert "enabled" in message
+        assert "ops@example.com" in message
+
+    def test_system_kill_switch_bulk_updated(self):
+        """System kill switch bulk message."""
+        message = NotificationPersistenceService.build_notification_message(
+            "system",
+            "kill_switch_bulk_updated",
+            {"enabled": False, "updated_count": 7, "targeted_count": 10, "skipped_count": 3, "actor_type": "admin"},
+        )
+        assert "disabled" in message
+        assert "7/10" in message
+        assert "skipped 3" in message
+
+
+class TestNotificationPersistenceValidation:
+    """Validation tests for NotificationPersistenceService.create_notification."""
+
+    def test_null_restaurant_id_rejected_for_non_system_type(self):
+        repo = MagicMock()
+        svc = NotificationPersistenceService(repo=repo)
+        row = svc.create_notification(
+            restaurant_id=None,
+            type="order",
+            subtype="new_order",
+            data={"order_id": 5},
+            entity_id=5,
+        )
+        assert row == {}
+        repo.create_notification.assert_not_called()
+
+    def test_null_restaurant_id_allowed_for_system_type(self):
+        repo = MagicMock()
+        repo.create_notification.return_value = {"id": 99, "restaurant_id": None, "type": "system"}
+        svc = NotificationPersistenceService(repo=repo)
+        row = svc.create_notification(
+            restaurant_id=None,
+            type="system",
+            subtype="kill_switch_bulk_updated",
+            data={"updated_count": 1},
+            entity_id=None,
+        )
+        assert row.get("id") == 99
+        repo.create_notification.assert_called_once()
+
+    def test_bulk_system_kill_switch_toggled_persists_rows(self):
+        repo = MagicMock()
+        repo.create_notifications_bulk.return_value = 2
+        svc = NotificationPersistenceService(repo=repo)
+
+        count = svc.create_system_kill_switch_toggled_bulk(
+            [
+                {"restaurant_id": 10, "data": {"enabled": True, "actor_type": "admin"}},
+                {"restaurant_id": 11, "data": {"enabled": False, "actor_type": "admin"}},
+            ]
+        )
+
+        assert count == 2
+        repo.create_notifications_bulk.assert_called_once()
+        rows = repo.create_notifications_bulk.call_args[0][0]
+        assert len(rows) == 2
+        assert rows[0]["restaurant_id"] == 10
+        assert rows[0]["type"] == "system"
+        assert rows[0]["subtype"] == "kill_switch_toggled"
+        assert rows[1]["restaurant_id"] == 11

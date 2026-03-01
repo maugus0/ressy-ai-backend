@@ -128,7 +128,7 @@ class SSEEventPayload(BaseModel):
     """Model describing the SSE event payload structure."""
 
     id: str = Field(..., description="Unique event identifier (UUID)")
-    event_type: str = Field(..., description="Event type: escalation, order, reservation, heartbeat")
+    event_type: str = Field(..., description="Event type: escalation, system, order, reservation, heartbeat")
     subtype: Optional[str] = Field(None, description="Event subtype (e.g., new_order, user_requested)")
     restaurant_id: Optional[int] = Field(None, description="Associated restaurant ID")
     timestamp: str = Field(..., description="ISO format timestamp")
@@ -206,6 +206,8 @@ You can authenticate in two ways:
 | `escalation` | `suspected_spam` | Call flagged as potential spam |
 | `escalation` | `sms_redirect_failed` | SMS redirect attempt failed |
 | `escalation` | `kill_switch_redirected` | Call was auto-redirected due to kill switch |
+| `system` | `kill_switch_toggled` | Kill switch was enabled or disabled for one restaurant |
+| `system` | `kill_switch_bulk_updated` | Bulk kill switch update summary for admin dashboard |
 | `order` | `new_order` | New order created |
 | `order` | `order_updated` | Order status or details changed |
 | `order` | `order_cancelled` | Order was cancelled |
@@ -241,6 +243,9 @@ eventSource.onmessage = (event) => {
   console.log('Received event:', data);
 
   switch(data.event_type) {
+    case 'system':
+      handleSystemEvent(data);
+      break;
     case 'order':
       handleOrderEvent(data);
       break;
@@ -468,7 +473,11 @@ errors occur during a call.
             "content": {
                 "application/json": {
                     "example": {
-                        "detail": "Invalid subtype 'unknown'. Must be one of: user_requested, internal_server_error, suspected_spam, sms_redirect_failed, kill_switch_redirected"
+                        "detail": (
+                            "Invalid subtype 'unknown'. Must be one of: user_requested, "
+                            "internal_server_error, suspected_spam, sms_redirect_failed, "
+                            "kill_switch_redirected"
+                        )
                     }
                 }
             },

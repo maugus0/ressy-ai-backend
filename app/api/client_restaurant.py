@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Any
 
-from fastapi import APIRouter, Body, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.api.restaurants import (
@@ -11,6 +11,7 @@ from app.api.restaurants import (
     get_restaurant_service,
 )
 from app.middleware.auth_middleware import get_current_restaurant_user
+from app.services.kill_switch_event_service import emit_kill_switch_toggled
 from app.utils.payload_validator import validate_payload
 
 
@@ -334,11 +335,29 @@ async def update_restaurant(
     },
 )
 async def set_kill_switch(
+    background_tasks: BackgroundTasks,
     payload: dict = Body(..., description="Kill-switch toggle payload"),
     service=Depends(get_restaurant_service),
     claims: dict = Depends(get_current_restaurant_user),
 ):
     restaurant_id = int(claims["restaurant_id"])
     data = validate_payload(ClientKillSwitchUpdateRequest, payload)
+    before = service.get_restaurant(restaurant_id)
     result = service.set_restaurant_kill_switch(restaurant_id, data.enabled)
+
+    previous_enabled = bool(before.get("kill_switch_enabled"))
+    current_enabled = bool(result.get("kill_switch_enabled"))
+    if previous_enabled != current_enabled:
+        background_tasks.add_task(
+            emit_kill_switch_toggled,
+            restaurant_id=restaurant_id,
+            restaurant_name=result.get("name"),
+            enabled=current_enabled,
+            previous_enabled=previous_enabled,
+            actor_type="restaurant",
+            actor_id=claims.get("sub"),
+            actor_email=claims.get("email"),
+            source="client_dashboard",
+        )
+
     return ClientRestaurantResponse(**result)

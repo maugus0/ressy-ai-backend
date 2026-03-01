@@ -78,9 +78,9 @@ def test_duplicate_name_rejected():
 
 def test_duplicate_twilio_rejected():
     service, _ = _build_service()
-    service.create_restaurant({"name": "First", "twilio_phone_number": "+1000"})
+    service.create_restaurant({"name": "First", "twilio_phone_number": "+10000000001"})
     with pytest.raises(HTTPException):
-        service.create_restaurant({"name": "Second", "twilio_phone_number": "+1000"})
+        service.create_restaurant({"name": "Second", "twilio_phone_number": "+10000000001"})
 
 
 def test_update_duplicate_name_rejected():
@@ -93,10 +93,24 @@ def test_update_duplicate_name_rejected():
 
 def test_update_duplicate_twilio_rejected():
     service, repo = _build_service()
-    service.create_restaurant({"name": "First", "twilio_phone_number": "+1000"})
-    second_id = service.create_restaurant({"name": "Second", "twilio_phone_number": "+2000"})["id"]
+    service.create_restaurant({"name": "First", "twilio_phone_number": "+10000000001"})
+    second_id = service.create_restaurant({"name": "Second", "twilio_phone_number": "+10000000002"})["id"]
     with pytest.raises(HTTPException):
-        service.update_restaurant(second_id, {"twilio_phone_number": "+1000"})
+        service.update_restaurant(second_id, {"twilio_phone_number": "+10000000001"})
+
+
+def test_create_restaurant_rejects_non_e164_escalation_number():
+    service, _ = _build_service()
+    with pytest.raises(HTTPException) as exc_info:
+        service.create_restaurant(
+            {
+                "name": "Escalation Format Test",
+                "forward_escalations": True,
+                "escalation_phone_number": "(415) 555-1234",
+            }
+        )
+    assert exc_info.value.status_code == 400
+    assert "E.164" in str(exc_info.value.detail)
 
 
 def test_create_restaurant_allows_feature_disable_without_forwarding():

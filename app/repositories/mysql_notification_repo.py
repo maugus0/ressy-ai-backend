@@ -17,7 +17,7 @@ class MySQLNotificationRepository(MySQLBaseRepository):
 
     def create_notification(
         self,
-        restaurant_id: int,
+        restaurant_id: Optional[int],
         type: str,
         subtype: str,
         title: str,
@@ -26,6 +26,9 @@ class MySQLNotificationRepository(MySQLBaseRepository):
         entity_id: Optional[int],
     ) -> Dict[str, Any]:
         """Insert a notification row and return the created row."""
+        if restaurant_id is None and (type or "").strip().lower() != "system":
+            raise ValueError("restaurant_id can be NULL only for system notifications")
+
         data_json = json.dumps(data, default=json_default) if data is not None else None
         query = """
             INSERT INTO Notifications (
@@ -49,6 +52,44 @@ class MySQLNotificationRepository(MySQLBaseRepository):
             raise RuntimeError("Failed to fetch created notification")
         return row
 
+    def create_notifications_bulk(self, notifications: List[Dict[str, Any]]) -> int:
+        """
+        Bulk insert notification rows. Returns number of inserted rows.
+        """
+        if not notifications:
+            return 0
+
+        query = """
+            INSERT INTO Notifications (
+                restaurant_id, type, subtype, title, message, data, entity_id,
+                is_read, created_at, updated_at
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, FALSE, NOW(), NOW())
+        """
+
+        params_list: List[Tuple[Any, ...]] = []
+        for row in notifications:
+            row_type = (row.get("type") or "").strip().lower()
+            restaurant_id = row.get("restaurant_id")
+            if restaurant_id is None and row_type != "system":
+                raise ValueError("restaurant_id can be NULL only for system notifications")
+
+            data_json = json.dumps(row.get("data"), default=json_default) if row.get("data") is not None else None
+            params_list.append(
+                (
+                    restaurant_id,
+                    row_type,
+                    row.get("subtype"),
+                    row.get("title"),
+                    row.get("message"),
+                    data_json,
+                    row.get("entity_id"),
+                )
+            )
+
+        self._execute_many(query, params_list)
+        logger.info("[MySQL] Bulk created notifications: count=%s", len(params_list))
+        return len(params_list)
+
     def get_notifications(
         self,
         restaurant_id: Optional[int] = None,
@@ -56,6 +97,7 @@ class MySQLNotificationRepository(MySQLBaseRepository):
         type: Optional[str] = None,
         limit: int = 50,
         offset: int = 0,
+        exclude_bulk_system_kill_switch_toggled: bool = False,
     ) -> Tuple[List[Dict[str, Any]], int]:
         """Select notifications with optional filters, ordered by created_at DESC. Returns (rows, total). When restaurant_id is None, returns across all restaurants (admin)."""
         where_clauses: List[str] = []
@@ -69,6 +111,10 @@ class MySQLNotificationRepository(MySQLBaseRepository):
         if type is not None:
             where_clauses.append("type = %s")
             params.append(type)
+        if exclude_bulk_system_kill_switch_toggled:
+            where_clauses.append(
+                "NOT (type = 'system' AND subtype = 'kill_switch_toggled' AND JSON_EXTRACT(data, '$.bulk') = true)"
+            )
         where_sql = " AND ".join(where_clauses) if where_clauses else "1=1"
 
         data_query = f"""

@@ -1,11 +1,16 @@
 from datetime import datetime
 from typing import Any
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.middleware.auth_middleware import get_current_admin_user
 from app.models.common_models import PaginationResponse
+from app.services.kill_switch_event_service import (
+    emit_kill_switch_bulk_summary,
+    emit_kill_switch_toggled,
+    emit_kill_switch_toggled_bulk_for_restaurants,
+)
 from app.services.restaurant_service import RestaurantService
 from app.utils.payload_validator import validate_payload
 
@@ -127,11 +132,13 @@ class CreateRestaurantRequest(BaseModel):
 
     name: str = Field(..., max_length=255, description="Restaurant name (required)")
     address: str | None = Field(None, description="Street address")
-    phone_number: str | None = Field(None, max_length=20, description="Public phone number")
-    twilio_phone_number: str | None = Field(None, max_length=20, description="Twilio phone number for routing calls")
+    phone_number: str | None = Field(None, max_length=20, description="Public phone number (E.164 format)")
+    twilio_phone_number: str | None = Field(
+        None, max_length=20, description="Twilio phone number for routing calls (E.164 format)"
+    )
     forward_escalations: bool | None = Field(False, description="Forward escalations to a live phone number")
     escalation_phone_number: str | None = Field(
-        None, max_length=20, description="Phone number to forward escalation calls"
+        None, max_length=20, description="Phone number to forward escalation calls (E.164 format)"
     )
     twilio_details: dict | None = Field(None, description="Twilio configuration JSON")
     deepgram_details: dict | None = Field(None, description="Deepgram configuration JSON")
@@ -183,11 +190,13 @@ class UpdateRestaurantRequest(BaseModel):
 
     name: str | None = Field(None, max_length=255, description="Restaurant name")
     address: str | None = Field(None, description="Street address")
-    phone_number: str | None = Field(None, max_length=20, description="Public phone number")
-    twilio_phone_number: str | None = Field(None, max_length=20, description="Twilio phone number for routing calls")
+    phone_number: str | None = Field(None, max_length=20, description="Public phone number (E.164 format)")
+    twilio_phone_number: str | None = Field(
+        None, max_length=20, description="Twilio phone number for routing calls (E.164 format)"
+    )
     forward_escalations: bool | None = Field(None, description="Forward escalations to a live phone number")
     escalation_phone_number: str | None = Field(
-        None, max_length=20, description="Phone number to forward escalation calls"
+        None, max_length=20, description="Phone number to forward escalation calls (E.164 format)"
     )
     twilio_details: dict | None = Field(None, description="Twilio configuration JSON")
     deepgram_details: dict | None = Field(None, description="Deepgram configuration JSON")
@@ -564,11 +573,31 @@ async def list_restaurants(
 )
 async def set_restaurant_kill_switch(
     restaurant_id: int,
+    background_tasks: BackgroundTasks,
     payload: dict = Body(..., description="Kill-switch toggle payload"),
     restaurant_service: RestaurantService = Depends(get_restaurant_service),
+    claims: dict = Depends(get_current_admin_user),
 ):
     data = validate_payload(KillSwitchUpdateRequest, payload)
-    return restaurant_service.set_restaurant_kill_switch(restaurant_id, data.enabled)
+    before = restaurant_service.get_restaurant(restaurant_id)
+    result = restaurant_service.set_restaurant_kill_switch(restaurant_id, data.enabled)
+
+    previous_enabled = bool(before.get("kill_switch_enabled"))
+    current_enabled = bool(result.get("kill_switch_enabled"))
+    if previous_enabled != current_enabled:
+        background_tasks.add_task(
+            emit_kill_switch_toggled,
+            restaurant_id=int(result["id"]),
+            restaurant_name=result.get("name"),
+            enabled=current_enabled,
+            previous_enabled=previous_enabled,
+            actor_type="admin",
+            actor_id=claims.get("sub"),
+            actor_email=claims.get("email"),
+            source="admin_dashboard",
+        )
+
+    return result
 
 
 @router.patch(
@@ -632,11 +661,43 @@ async def set_restaurant_kill_switch(
     },
 )
 async def set_all_restaurants_kill_switch(
+    background_tasks: BackgroundTasks,
     payload: dict = Body(..., description="Kill-switch bulk payload"),
     restaurant_service: RestaurantService = Depends(get_restaurant_service),
+    claims: dict = Depends(get_current_admin_user),
 ):
     data = validate_payload(KillSwitchUpdateRequest, payload)
-    return restaurant_service.set_all_restaurants_kill_switch(data.enabled)
+    result = restaurant_service.set_all_restaurants_kill_switch(data.enabled)
+    changed_restaurants = result.pop("_changed_restaurants", [])
+
+    if result.get("updated_count", 0) > 0:
+        if changed_restaurants:
+            background_tasks.add_task(
+                emit_kill_switch_toggled_bulk_for_restaurants,
+                changed_restaurants=changed_restaurants,
+                enabled=bool(data.enabled),
+                actor_type="admin",
+                actor_id=claims.get("sub"),
+                actor_email=claims.get("email"),
+                source="admin_dashboard",
+                include_admin_sse=False,
+            )
+
+    background_tasks.add_task(
+        emit_kill_switch_bulk_summary,
+        enabled=bool(result.get("enabled")),
+        targeted_count=int(result.get("targeted_count", 0)),
+        eligible_count=int(result.get("eligible_count", 0)),
+        updated_count=int(result.get("updated_count", 0)),
+        skipped_count=int(result.get("skipped_count", 0)),
+        skipped=result.get("skipped", []),
+        actor_type="admin",
+        actor_id=claims.get("sub"),
+        actor_email=claims.get("email"),
+        source="admin_dashboard",
+    )
+
+    return result
 
 
 @router.get(

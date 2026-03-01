@@ -15,14 +15,21 @@ from app.services.sse_service import (
     OrderEventSubtype,
     ReservationEventSubtype,
     SSEEventType,
+    SystemEventSubtype,
 )
 
 logger = logging.getLogger(__name__)
 
-VALID_TYPES = {SSEEventType.ORDER.value, SSEEventType.RESERVATION.value, SSEEventType.ESCALATION.value}
+VALID_TYPES = {
+    SSEEventType.ORDER.value,
+    SSEEventType.RESERVATION.value,
+    SSEEventType.ESCALATION.value,
+    SSEEventType.SYSTEM.value,
+}
 VALID_ORDER_SUBTYPES = {e.value for e in OrderEventSubtype}
 VALID_RESERVATION_SUBTYPES = {e.value for e in ReservationEventSubtype}
 VALID_ESCALATION_SUBTYPES = {e.value for e in EscalationEventSubtype}
+VALID_SYSTEM_SUBTYPES = {e.value for e in SystemEventSubtype}
 
 
 def _format_datetime(dt_str: Optional[str]) -> str:
@@ -103,6 +110,13 @@ class NotificationPersistenceService:
                 return "Escalation — SMS Redirect Failed"
             if subtype == "kill_switch_redirected":
                 return "Escalation — Kill Switch Redirected"
+        if type == "system":
+            if subtype == "kill_switch_toggled":
+                enabled = bool(data.get("enabled"))
+                return "System — Kill Switch Enabled" if enabled else "System — Kill Switch Disabled"
+            if subtype == "kill_switch_bulk_updated":
+                enabled = bool(data.get("enabled"))
+                return "System — Kill Switch Bulk Enabled" if enabled else "System — Kill Switch Bulk Disabled"
         return f"{type}/{subtype}"
 
     @staticmethod
@@ -177,11 +191,30 @@ class NotificationPersistenceService:
                 return (
                     f"Call was redirected to staff because kill switch is enabled. Caller: {caller}. {reason}".strip()
                 )
+        if type == "system":
+            if subtype == "kill_switch_toggled":
+                state = "enabled" if bool(data.get("enabled")) else "disabled"
+                actor_type = data.get("actor_type") or "system"
+                actor_email = data.get("actor_email")
+                actor_label = actor_email or actor_type
+                return f"Kill switch was {state} by {actor_label}."
+            if subtype == "kill_switch_bulk_updated":
+                state = "enabled" if bool(data.get("enabled")) else "disabled"
+                updated_count = int(data.get("updated_count") or 0)
+                targeted_count = int(data.get("targeted_count") or 0)
+                skipped_count = int(data.get("skipped_count") or 0)
+                actor_type = data.get("actor_type") or "system"
+                actor_email = data.get("actor_email")
+                actor_label = actor_email or actor_type
+                return (
+                    f"Bulk kill switch {state} by {actor_label}. "
+                    f"Updated {updated_count}/{targeted_count} restaurants; skipped {skipped_count}."
+                )
         return ""
 
     def create_notification(
         self,
-        restaurant_id: int,
+        restaurant_id: Optional[int],
         type: str,
         subtype: str,
         data: Optional[Dict[str, Any]] = None,
@@ -197,6 +230,9 @@ class NotificationPersistenceService:
             if type_lower not in VALID_TYPES:
                 logger.warning("[Notification] Invalid type=%s, skipping persistence", type)
                 return {}
+            if restaurant_id is None and type_lower != SSEEventType.SYSTEM.value:
+                logger.warning("[Notification] Null restaurant_id is only allowed for type=system; skipping")
+                return {}
             if type_lower == SSEEventType.ORDER.value and subtype_lower not in VALID_ORDER_SUBTYPES:
                 logger.warning("[Notification] Invalid order subtype=%s, skipping", subtype)
                 return {}
@@ -205,6 +241,9 @@ class NotificationPersistenceService:
                 return {}
             if type_lower == SSEEventType.ESCALATION.value and subtype_lower not in VALID_ESCALATION_SUBTYPES:
                 logger.warning("[Notification] Invalid escalation subtype=%s, skipping", subtype)
+                return {}
+            if type_lower == SSEEventType.SYSTEM.value and subtype_lower not in VALID_SYSTEM_SUBTYPES:
+                logger.warning("[Notification] Invalid system subtype=%s, skipping", subtype)
                 return {}
 
             title = self.build_notification_title(type_lower, subtype_lower, data)
@@ -229,6 +268,46 @@ class NotificationPersistenceService:
             logger.exception("[Notification] create_notification failed: %s", e)
             return {}
 
+    def create_system_kill_switch_toggled_bulk(self, events: List[Dict[str, Any]]) -> int:
+        """
+        Bulk create system/kill_switch_toggled notifications for restaurant-scoped dashboards.
+        """
+        try:
+            rows: List[Dict[str, Any]] = []
+            for event in events:
+                restaurant_id = event.get("restaurant_id")
+                if restaurant_id is None:
+                    logger.warning("[Notification] Missing restaurant_id in bulk kill-switch event; skipping row")
+                    continue
+                data = event.get("data") or {}
+                rows.append(
+                    {
+                        "restaurant_id": int(restaurant_id),
+                        "type": SSEEventType.SYSTEM.value,
+                        "subtype": SystemEventSubtype.KILL_SWITCH_TOGGLED.value,
+                        "title": self.build_notification_title(
+                            SSEEventType.SYSTEM.value,
+                            SystemEventSubtype.KILL_SWITCH_TOGGLED.value,
+                            data,
+                        ),
+                        "message": self.build_notification_message(
+                            SSEEventType.SYSTEM.value,
+                            SystemEventSubtype.KILL_SWITCH_TOGGLED.value,
+                            data,
+                        )
+                        or None,
+                        "data": data,
+                        "entity_id": event.get("entity_id"),
+                    }
+                )
+
+            if not rows:
+                return 0
+            return self._repo.create_notifications_bulk(rows)
+        except Exception as e:
+            logger.exception("[Notification] create_system_kill_switch_toggled_bulk failed: %s", e)
+            return 0
+
     def get_notifications(
         self,
         restaurant_id: Optional[int] = None,
@@ -236,6 +315,7 @@ class NotificationPersistenceService:
         type: Optional[str] = None,
         limit: int = 50,
         offset: int = 0,
+        exclude_bulk_system_kill_switch_toggled: bool = False,
     ) -> Tuple[List[Dict[str, Any]], int]:
         """List notifications with optional filters. Returns (rows, total). restaurant_id=None for admin (all restaurants)."""
         try:
@@ -245,6 +325,7 @@ class NotificationPersistenceService:
                 type=type,
                 limit=limit,
                 offset=offset,
+                exclude_bulk_system_kill_switch_toggled=exclude_bulk_system_kill_switch_toggled,
             )
         except Exception as e:
             logger.exception("[Notification] get_notifications failed: %s", e)

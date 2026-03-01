@@ -1,7 +1,7 @@
 import asyncio
 import urllib.parse
 from contextlib import asynccontextmanager
-from typing import Any, Optional
+from typing import Any, Dict, Optional
 from xml.sax.saxutils import escape
 
 from dotenv import load_dotenv
@@ -170,7 +170,7 @@ app = FastAPI(
         },
         {
             "name": "Server-Sent Events",
-            "description": "Real-time event streaming via Server-Sent Events (SSE). Subscribe to live updates for orders, reservations, and escalations. Supports escalation events (user_requested, internal_server_error, suspected_spam, sms_redirect_failed, kill_switch_redirected), order events (new_order, order_updated, order_cancelled), and reservation events (new_reservation, reservation_updated, reservation_cancelled).",
+            "description": "Real-time event streaming via Server-Sent Events (SSE). Subscribe to live updates for orders, reservations, escalations, and system events. Supports escalation events (user_requested, internal_server_error, suspected_spam, sms_redirect_failed, kill_switch_redirected), system events (kill_switch_toggled, kill_switch_bulk_updated), order events (new_order, order_updated, order_cancelled), and reservation events (new_reservation, reservation_updated, reservation_cancelled).",
         },
         {
             "name": "Voice Agent",
@@ -259,7 +259,7 @@ def _as_bool(value: Any) -> bool:
 
 async def _record_kill_switch_bypass(
     *,
-    restaurant: dict,
+    restaurant: Dict[str, Any],
     caller_phone: Optional[str],
     call_sid: Optional[str],
 ) -> None:
@@ -376,7 +376,7 @@ async def _record_kill_switch_bypass(
 
 async def _record_kill_switch_bypass_safe(
     *,
-    restaurant: dict,
+    restaurant: Dict[str, Any],
     caller_phone: Optional[str],
     call_sid: Optional[str],
 ) -> None:
