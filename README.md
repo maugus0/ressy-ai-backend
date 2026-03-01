@@ -744,7 +744,7 @@ The pipeline configuration is located at `.github/workflows/deploy.yml`. It auto
 
 ### Twilio Integration
 
-- `POST /voice` - Twilio webhook (returns TwiML `<Stream>`)
+- `POST /voice` - Twilio webhook (returns TwiML `<Stream>` or immediate `<Dial>` when restaurant kill switch is enabled and forwarding is configured)
 - `WS /twilio` - WebSocket endpoint for audio streaming
 
 ### REST APIs (prefix: `/api/v1`)
@@ -768,6 +768,8 @@ All endpoints are organized by tags in the Swagger documentation:
   - `GET /api/v1/restaurants/` - List restaurants with pagination, search, and credit-card filter
   - `GET /api/v1/restaurants/{id}` - Get restaurant details (includes integration JSON fields and agent capabilities)
   - `PUT /api/v1/restaurants/{id}` - Update restaurant (partial updates supported; includes agent capabilities)
+  - `PATCH /api/v1/restaurants/{id}/kill-switch` - Enable/disable kill switch for one restaurant
+  - `PATCH /api/v1/restaurants/kill-switch/all` - Bulk enable/disable kill switch for all restaurants (enable mode skips invalid configs and reports them)
   - `DELETE /api/v1/restaurants/{id}` - Delete restaurant
   - `GET /api/v1/restaurants/{id}/stats` - Aggregated stats (menus, FAQs, admins, calls, minute usage)
 
@@ -794,7 +796,7 @@ All endpoints are organized by tags in the Swagger documentation:
 - **Client CRM (scoped, `/api/v1/client/*`)** – restaurant_id is taken from the authenticated restaurant token (`claims["restaurant_id"]`), and user UUID is `claims["sub"]`. **Note**: Sensitive integration details (`twilio_details`, `deepgram_details`, `open_table_details`) are excluded from client endpoints for security:
   - FAQs: `GET/POST /api/v1/client/faqs`, `GET/PUT/DELETE /api/v1/client/faqs/{faq_id}`, `POST /api/v1/client/faqs/bulk`
   - Menus: `GET/POST /api/v1/client/menu`, `GET/PUT/DELETE /api/v1/client/menu/{menu_id}`, `PATCH /api/v1/client/menu/{menu_id}/availability`, `PATCH /api/v1/client/menu/{menu_id}/special`, `PATCH /api/v1/client/menu/bulk-availability`, `GET /api/v1/client/menu/categories`
-  - Restaurant self: `GET /api/v1/client/restaurant`, `PUT /api/v1/client/restaurant` (excludes sensitive integration fields; supports agent capabilities including SMS Redirect)
+  - Restaurant self: `GET /api/v1/client/restaurant`, `PUT /api/v1/client/restaurant`, `PATCH /api/v1/client/restaurant/kill-switch` (excludes sensitive integration fields; supports agent capabilities including SMS Redirect and kill switch)
   - Client users (manager role only except self reset): `GET/POST /api/v1/client/users`, `GET/PUT/DELETE /api/v1/client/users/{uuid}`, `POST /api/v1/client/users/{uuid}/reset-password`, `PUT /api/v1/client/users/{uuid}/role`, `POST /api/v1/client/users/bulk`, `POST /api/v1/client/me/reset-password` (self-service)
   - Analytics: `GET /api/v1/client/analytics` - Comprehensive restaurant analytics (calls, reservations, orders, menu, FAQs, customers, recent activity, today's schedule, pending orders), `GET /api/v1/client/analytics/calls` - Detailed call analytics, `GET /api/v1/client/analytics/reservations` - Reservation analytics, `GET /api/v1/client/analytics/orders` - Order analytics, `GET /api/v1/client/analytics/menu` - Menu analytics
 
@@ -893,7 +895,7 @@ All endpoints are organized by tags in the Swagger documentation:
 
 - **Server-Sent Events (SSE)** (`/api/v1/sse/*`) - Requires authentication (admin or client role), RBAC enforced:
   - `GET /api/v1/sse/events/stream` - Subscribe to real-time event stream (supports header or query param auth)
-  - `POST /api/v1/sse/events/escalation/{restaurant_id}` - Trigger escalation event (user_requested, internal_server_error, suspected_spam)
+  - `POST /api/v1/sse/events/escalation/{restaurant_id}` - Trigger escalation event (user_requested, internal_server_error, suspected_spam, sms_redirect_failed, kill_switch_redirected)
   - `GET /api/v1/sse/events/stats` - Get SSE connection statistics (admin only)
 
 ### API Documentation
@@ -934,6 +936,23 @@ Restaurant `features` control what the voice agent can do for callers. Configure
 - SMS Redirect for orders requires `orders_enabled=false`.
 - SMS Redirect for reservations requires `reservations_enabled=false`.
 - FAQs cannot be disabled.
+
+### Kill Switch Routing
+
+Restaurants support a voice-agent kill switch for dependency incidents.
+
+- Field: `kill_switch_enabled` (boolean, default `false`)
+- Computed response fields (Admin + Client restaurant payloads):
+  - `kill_switch_can_redirect`: `true` only when forwarding is safe (`forward_escalations=true` and `escalation_phone_number` set)
+  - `kill_switch_blockers`: blocking reasons such as `forward_escalations_disabled` and `escalation_phone_number_missing`
+- Runtime behavior:
+  - If kill switch is enabled and forwarding is configured, `POST /voice` bypasses the agent and immediately returns TwiML `<Dial>` to `escalation_phone_number`
+  - If kill switch is enabled but forwarding is misconfigured, `/voice` falls back to normal agent routing (`<Stream>`)
+- Persistence on bypassed calls:
+  - Call is created/finalized with status `agent_bypassed`
+  - Escalation is created and marked forwarded
+  - SSE escalation subtype `kill_switch_redirected` is emitted
+  - Persistent notification subtype `kill_switch_redirected` is created
 
 ### Password Policy
 
@@ -1169,7 +1188,7 @@ Migrations should be run in numerical order (001, 002, 003, etc.) as they have d
 
 ### Migration Files
 
-Run in numerical order (001, 002, … 032). Key migrations:
+Run in numerical order (001, 002, … 040). Key migrations:
 
 1. **001_create_permissions.sql** – Permissions table
 2. **002_create_crm_roles.sql** – Crm_roles (depends on Permissions)
@@ -1209,6 +1228,8 @@ Run in numerical order (001, 002, … 032). Key migrations:
 36. **036_recreate_notifications.sql** – Notifications table
 37. **037_add_sms_redirect_features.sql** – SMS Redirect fields on Restaurant_Features (orders/reservations redirect URL and message)
 38. **038_add_sms_redirect_entity_type.sql** – Add 'sms_redirect' to Notification_Logs entity_type ENUM
+39. **039_create_menu_customizations.sql** – Menu option groups/values tables
+40. **040_add_restaurant_kill_switch.sql** – Add `kill_switch_enabled` to Restaurants
 
 **Restaurant operating hours:** Per-day hours (031) support `open`, `close`, `is_closed`, and `is_24_hours` per day. When `is_24_hours` is true for a day, the restaurant is treated as open all day and open/close times are ignored. The voice agent (Deepgram function-calling in `app/agent_fc/`) uses shared utilities (`app.utils.restaurant_hours`: `is_restaurant_open_now`, `is_datetime_within_operating_hours`, `format_operating_window`), which already handle per-day and 24-hour logic—**no agent function code changes are required** for `is_24_hours`.
 

@@ -1,11 +1,16 @@
 from datetime import datetime
 from typing import Any
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.middleware.auth_middleware import get_current_admin_user
 from app.models.common_models import PaginationResponse
+from app.services.kill_switch_event_service import (
+    emit_kill_switch_bulk_summary,
+    emit_kill_switch_toggled,
+    emit_kill_switch_toggled_bulk_for_restaurants,
+)
 from app.services.restaurant_service import RestaurantService
 from app.utils.payload_validator import validate_payload
 
@@ -127,11 +132,13 @@ class CreateRestaurantRequest(BaseModel):
 
     name: str = Field(..., max_length=255, description="Restaurant name (required)")
     address: str | None = Field(None, description="Street address")
-    phone_number: str | None = Field(None, max_length=20, description="Public phone number")
-    twilio_phone_number: str | None = Field(None, max_length=20, description="Twilio phone number for routing calls")
+    phone_number: str | None = Field(None, max_length=20, description="Public phone number (E.164 format)")
+    twilio_phone_number: str | None = Field(
+        None, max_length=20, description="Twilio phone number for routing calls (E.164 format)"
+    )
     forward_escalations: bool | None = Field(False, description="Forward escalations to a live phone number")
     escalation_phone_number: str | None = Field(
-        None, max_length=20, description="Phone number to forward escalation calls"
+        None, max_length=20, description="Phone number to forward escalation calls (E.164 format)"
     )
     twilio_details: dict | None = Field(None, description="Twilio configuration JSON")
     deepgram_details: dict | None = Field(None, description="Deepgram configuration JSON")
@@ -183,11 +190,13 @@ class UpdateRestaurantRequest(BaseModel):
 
     name: str | None = Field(None, max_length=255, description="Restaurant name")
     address: str | None = Field(None, description="Street address")
-    phone_number: str | None = Field(None, max_length=20, description="Public phone number")
-    twilio_phone_number: str | None = Field(None, max_length=20, description="Twilio phone number for routing calls")
+    phone_number: str | None = Field(None, max_length=20, description="Public phone number (E.164 format)")
+    twilio_phone_number: str | None = Field(
+        None, max_length=20, description="Twilio phone number for routing calls (E.164 format)"
+    )
     forward_escalations: bool | None = Field(None, description="Forward escalations to a live phone number")
     escalation_phone_number: str | None = Field(
-        None, max_length=20, description="Phone number to forward escalation calls"
+        None, max_length=20, description="Phone number to forward escalation calls (E.164 format)"
     )
     twilio_details: dict | None = Field(None, description="Twilio configuration JSON")
     deepgram_details: dict | None = Field(None, description="Deepgram configuration JSON")
@@ -244,6 +253,9 @@ class RestaurantResponse(BaseModel):
     twilio_phone_number: str | None = None
     forward_escalations: bool | None = None
     escalation_phone_number: str | None = None
+    kill_switch_enabled: bool = False
+    kill_switch_can_redirect: bool = False
+    kill_switch_blockers: list[str] = Field(default_factory=list)
     twilio_details: dict | None = None
     deepgram_details: dict | None = None
     open_table_details: dict | None = None
@@ -285,6 +297,34 @@ class MessageResponse(BaseModel):
     """Generic message wrapper."""
 
     message: str
+    model_config = ConfigDict(extra="ignore")
+
+
+class KillSwitchUpdateRequest(BaseModel):
+    """Payload for kill-switch toggle operations."""
+
+    enabled: bool = Field(..., description="Enable or disable kill switch")
+    model_config = ConfigDict(extra="ignore")
+
+
+class KillSwitchSkippedRestaurant(BaseModel):
+    """Restaurant skipped during bulk kill-switch enable."""
+
+    restaurant_id: int
+    restaurant_name: str | None = None
+    kill_switch_blockers: list[str] = Field(default_factory=list)
+    model_config = ConfigDict(extra="ignore")
+
+
+class KillSwitchBulkResponse(BaseModel):
+    """Bulk kill-switch update result."""
+
+    enabled: bool
+    targeted_count: int
+    eligible_count: int
+    updated_count: int
+    skipped_count: int
+    skipped: list[KillSwitchSkippedRestaurant] = Field(default_factory=list)
     model_config = ConfigDict(extra="ignore")
 
 
@@ -477,6 +517,187 @@ async def list_restaurants(
         reservations_enabled=reservations_enabled,
         faqs_enabled=faqs_enabled,
     )
+
+
+@router.patch(
+    "/{restaurant_id}/kill-switch",
+    summary="Set Kill Switch",
+    description="Enable or disable the kill switch for a specific restaurant. Admin access only.",
+    response_model=RestaurantResponse,
+    response_description="Updated restaurant with kill-switch state.",
+    openapi_extra={
+        "requestBody": {
+            "required": True,
+            "content": {
+                "application/json": {
+                    "schema": KillSwitchUpdateRequest.model_json_schema(),
+                    "example": {"enabled": True},
+                }
+            },
+        },
+        "responses": {
+            200: {
+                "description": "Kill switch updated",
+                "content": {
+                    "application/json": {
+                        "example": {
+                            "id": 10,
+                            "name": "Ressy Test Kitchen",
+                            "forward_escalations": True,
+                            "escalation_phone_number": "+15550001111",
+                            "kill_switch_enabled": True,
+                            "kill_switch_can_redirect": True,
+                            "kill_switch_blockers": [],
+                        }
+                    }
+                },
+            },
+            400: {
+                "description": "Kill switch cannot be enabled because forwarding is misconfigured",
+                "content": {
+                    "application/json": {
+                        "example": {
+                            "detail": {
+                                "message": "Cannot enable kill switch until escalation forwarding is fully configured",
+                                "kill_switch_blockers": [
+                                    "forward_escalations_disabled",
+                                    "escalation_phone_number_missing",
+                                ],
+                            }
+                        }
+                    }
+                },
+            },
+        },
+    },
+)
+async def set_restaurant_kill_switch(
+    restaurant_id: int,
+    background_tasks: BackgroundTasks,
+    payload: dict = Body(..., description="Kill-switch toggle payload"),
+    restaurant_service: RestaurantService = Depends(get_restaurant_service),
+    claims: dict = Depends(get_current_admin_user),
+):
+    data = validate_payload(KillSwitchUpdateRequest, payload)
+    before = restaurant_service.get_restaurant(restaurant_id)
+    result = restaurant_service.set_restaurant_kill_switch(restaurant_id, data.enabled)
+
+    previous_enabled = bool(before.get("kill_switch_enabled"))
+    current_enabled = bool(result.get("kill_switch_enabled"))
+    if previous_enabled != current_enabled:
+        background_tasks.add_task(
+            emit_kill_switch_toggled,
+            restaurant_id=int(result["id"]),
+            restaurant_name=result.get("name"),
+            enabled=current_enabled,
+            previous_enabled=previous_enabled,
+            actor_type="admin",
+            actor_id=claims.get("sub"),
+            actor_email=claims.get("email"),
+            source="admin_dashboard",
+        )
+
+    return result
+
+
+@router.patch(
+    "/kill-switch/all",
+    summary="Set Kill Switch For All Restaurants",
+    description=(
+        "Bulk enable or disable kill switch for all restaurants. "
+        "When enabling, restaurants without forwarding readiness are skipped and reported."
+    ),
+    response_model=KillSwitchBulkResponse,
+    response_description="Bulk operation summary.",
+    openapi_extra={
+        "requestBody": {
+            "required": True,
+            "content": {
+                "application/json": {
+                    "schema": KillSwitchUpdateRequest.model_json_schema(),
+                    "example": {"enabled": True},
+                }
+            },
+        },
+        "responses": {
+            200: {
+                "description": "Bulk operation completed",
+                "content": {
+                    "application/json": {
+                        "examples": {
+                            "enable_with_skips": {
+                                "summary": "Enable for all, skip invalid restaurants",
+                                "value": {
+                                    "enabled": True,
+                                    "targeted_count": 3,
+                                    "eligible_count": 2,
+                                    "updated_count": 2,
+                                    "skipped_count": 1,
+                                    "skipped": [
+                                        {
+                                            "restaurant_id": 44,
+                                            "restaurant_name": "Downtown Kitchen",
+                                            "kill_switch_blockers": ["escalation_phone_number_missing"],
+                                        }
+                                    ],
+                                },
+                            },
+                            "disable_all": {
+                                "summary": "Disable for all restaurants",
+                                "value": {
+                                    "enabled": False,
+                                    "targeted_count": 3,
+                                    "eligible_count": 3,
+                                    "updated_count": 3,
+                                    "skipped_count": 0,
+                                    "skipped": [],
+                                },
+                            },
+                        }
+                    }
+                },
+            }
+        },
+    },
+)
+async def set_all_restaurants_kill_switch(
+    background_tasks: BackgroundTasks,
+    payload: dict = Body(..., description="Kill-switch bulk payload"),
+    restaurant_service: RestaurantService = Depends(get_restaurant_service),
+    claims: dict = Depends(get_current_admin_user),
+):
+    data = validate_payload(KillSwitchUpdateRequest, payload)
+    result = restaurant_service.set_all_restaurants_kill_switch(data.enabled)
+    changed_restaurants = result.pop("_changed_restaurants", [])
+
+    if result.get("updated_count", 0) > 0:
+        if changed_restaurants:
+            background_tasks.add_task(
+                emit_kill_switch_toggled_bulk_for_restaurants,
+                changed_restaurants=changed_restaurants,
+                enabled=bool(data.enabled),
+                actor_type="admin",
+                actor_id=claims.get("sub"),
+                actor_email=claims.get("email"),
+                source="admin_dashboard",
+                include_admin_sse=False,
+            )
+
+    background_tasks.add_task(
+        emit_kill_switch_bulk_summary,
+        enabled=bool(result.get("enabled")),
+        targeted_count=int(result.get("targeted_count", 0)),
+        eligible_count=int(result.get("eligible_count", 0)),
+        updated_count=int(result.get("updated_count", 0)),
+        skipped_count=int(result.get("skipped_count", 0)),
+        skipped=result.get("skipped", []),
+        actor_type="admin",
+        actor_id=claims.get("sub"),
+        actor_email=claims.get("email"),
+        source="admin_dashboard",
+    )
+
+    return result
 
 
 @router.get(

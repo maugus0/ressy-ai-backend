@@ -91,6 +91,27 @@ class CallService:
     def mark_escalated(self, call_id: str | int) -> bool:
         return self.update_call_status(call_id, "escalated")
 
+    def finalize_call_with_status(
+        self,
+        call_id: str | int,
+        status: str,
+        duration_seconds: int = 0,
+        cost: float = 0.0,
+    ) -> bool:
+        """Set final call fields and terminal status explicitly."""
+        normalized_id = self._safe_int(call_id)
+        if normalized_id is None:
+            return False
+        if not status:
+            return False
+        call_repo = self._get_call_repo()
+        return call_repo.finalize_call_with_status(
+            normalized_id,
+            status,
+            duration_seconds=duration_seconds,
+            cost=cost,
+        )
+
     def store_transcript_message(
         self, call_id: int, message_sequence: int, speaker: str, message: str, timestamp: str
     ) -> None:
