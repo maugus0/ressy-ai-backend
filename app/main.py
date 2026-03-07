@@ -40,6 +40,7 @@ from app.api.websocket import twilio_websocket_handler
 from app.repositories.db_pool import close_db_pool, get_db_pool
 from app.services.escalation_service import EscalationService
 from app.services.restaurant_service import RestaurantService
+from app.services.square_catalog_background_sync import SquareCatalogBackgroundSync
 from app.services.sse_service import SSEService
 from app.utils.encoding import install_utc_jsonable_encoder
 from app.utils.logging_config import get_logger, setup_logging
@@ -65,7 +66,23 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f"[Startup] Warning - Database pool initialization: {e}")
 
+    # Startup: Start Square catalog background sync scheduler
+    try:
+        square_sync = SquareCatalogBackgroundSync()
+        square_sync.start()
+        print("[Startup] Square catalog background sync scheduler started")
+    except Exception as e:
+        print(f"[Startup] Warning - Square catalog sync scheduler initialization: {e}")
+
     yield
+
+    # Shutdown: Stop Square catalog background sync scheduler
+    try:
+        square_sync = SquareCatalogBackgroundSync()
+        square_sync.stop()
+        print("[Shutdown] Square catalog background sync scheduler stopped")
+    except Exception as e:
+        print(f"[Shutdown] Warning - Square catalog sync scheduler cleanup: {e}")
 
     # Shutdown: cleanup SSE connections and heartbeat task
     sse_service = SSEService()

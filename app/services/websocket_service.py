@@ -4,7 +4,7 @@ import json
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import websockets
 from fastapi import WebSocket, WebSocketDisconnect
@@ -18,12 +18,16 @@ from app.agent_fc.router import FunctionCallRouter
 from app.agent_fc.transport import Transport
 from app.config import settings
 from app.repositories.mysql_user_repo import MySQLUserRepository
+from app.config import settings
+from app.integrations.square_client import SquareClient
+from app.repositories.mysql_pos_integration_repo import MySQLPOSIntegrationRepository
 from app.services.call_service import CallService
 from app.services.callmanager.call_filler import FillerManager
 from app.services.callmanager.call_latency import log_agent_audio_start_latency, log_assistant_text_latency
 from app.services.callmanager.call_state import StreamState
 from app.services.deepgram_service import DeepgramService
 from app.services.faq_service import FAQService
+from app.services.menu_pos_mapping_service import MenuPOSMappingService
 from app.services.menu_service import MenuService
 from app.services.reservation_service import ReservationService
 from app.services.restaurant_service import RestaurantService
@@ -60,6 +64,8 @@ class WebSocketService:
         self.menu_service = MenuService()
         self.faq_service = FAQService()
         self.reservation_service = ReservationService()
+        self.menu_mapping_service = MenuPOSMappingService()
+        self.pos_integration_repo = MySQLPOSIntegrationRepository()
         self._active_twilio: set[WebSocket] = set()
         self._active_deepgram: set[Any] = set()
         self._connections_lock = asyncio.Lock()
@@ -202,9 +208,74 @@ class WebSocketService:
             restaurant_id = int(restaurant_id)
         restaurant = restaurant_record or {}
 
-        # Get ALL menu items (both available and unavailable) to send to agent
-        # This allows agent to inform customers when items are unavailable instead of saying "trouble checking"
-        all_menu_items = self.menu_service.menu_repo.get_menus_by_restaurant(restaurant_id) if restaurant_id else []
+        # Check if we should use Square catalog (custom: false) or DB menu (custom: true or not set)
+        pos_flags = restaurant.get("pos_integration_flags")
+        if isinstance(pos_flags, str):
+            try:
+                pos_flags = json.loads(pos_flags)
+            except (json.JSONDecodeError, TypeError):
+                pos_flags = {}
+        elif pos_flags is None:
+            pos_flags = {}
+        
+        use_square_catalog = pos_flags.get("custom") is False and pos_flags.get("square") is True
+        
+        # Get menu items from Square catalog or DB
+        all_menu_items = []
+        if use_square_catalog and restaurant_id:
+            try:
+                # Get Square POS integration
+                square_integrations = self.pos_integration_repo.get_enabled_integrations(restaurant_id)
+                square_integration = next((pi for pi in square_integrations if pi.get("pos_type") == "SQUARE"), None)
+                
+                if square_integration:
+                    access_token = square_integration.get("credentials", {}).get("access_token")
+                    if not access_token:
+                        access_token = settings.SQUARE_ACCESS_TOKEN
+                    
+                    if access_token:
+                        # Fetch Square catalog and sync to menu_pos_mapping
+                        square_client = SquareClient(access_token)
+                        catalog_response = square_client.list_catalog(types=["ITEM", "MODIFIER_LIST"])
+                        
+                        # Sync catalog to menu_pos_mapping
+                        pos_integration_id = square_integration.get("id")
+                        sync_result = self.menu_mapping_service.sync_menu_to_square(
+                            restaurant_id, pos_integration_id, access_token
+                        )
+                        self.logger.info(
+                            f"[MenuContext] Square catalog sync: {sync_result.get('mappings_created', 0)} created, "
+                            f"{sync_result.get('mappings_updated', 0)} updated, "
+                            f"{len(sync_result.get('unmatched_items', []))} unmatched"
+                        )
+                        
+                        # Format Square catalog items to match menu structure
+                        all_menu_items = self._format_square_catalog_for_menu_context(catalog_response)
+                        self.logger.info(
+                            f"[MenuContext] Using Square catalog for restaurant_id={restaurant_id}: "
+                            f"{len(all_menu_items)} items from catalog"
+                        )
+                    else:
+                        self.logger.warning(
+                            f"[MenuContext] Square access token not found for restaurant_id={restaurant_id}, "
+                            "falling back to DB menu"
+                        )
+                        all_menu_items = self.menu_service.menu_repo.get_menus_by_restaurant(restaurant_id) if restaurant_id else []
+                else:
+                    self.logger.warning(
+                        f"[MenuContext] Square integration not found for restaurant_id={restaurant_id}, "
+                        "falling back to DB menu"
+                    )
+                    all_menu_items = self.menu_service.menu_repo.get_menus_by_restaurant(restaurant_id) if restaurant_id else []
+            except Exception as exc:
+                self.logger.exception(
+                    f"[MenuContext] Error fetching Square catalog for restaurant_id={restaurant_id}: {exc}, "
+                    "falling back to DB menu"
+                )
+                all_menu_items = self.menu_service.menu_repo.get_menus_by_restaurant(restaurant_id) if restaurant_id else []
+        else:
+            # Use DB menu (custom: true or not set, or square: false)
+            all_menu_items = self.menu_service.menu_repo.get_menus_by_restaurant(restaurant_id) if restaurant_id else []
 
         # Process items in a single pass: separate by availability and build category structures
         # This minimizes iterations for better performance
@@ -437,6 +508,139 @@ class WebSocketService:
                 is_open_now,
             )
         return context, restaurant_id, restaurant_name
+
+    def _format_square_catalog_for_menu_context(self, catalog_response: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """
+        Format Square catalog items to match the menu structure expected by the AI agent.
+        Includes items, variations, and modifiers.
+        
+        Returns a list of menu items in the format:
+        {
+            "id": variation_id (from Square),
+            "item_name": name,
+            "item_desc": description,
+            "price": price (from variation),
+            "category": category (extracted or "Uncategorized"),
+            "sub_category": None,
+            "is_available": True/False (based on sellable/stockable),
+            "is_special": False,
+            "variation_id": variation_id,
+            "item_id": parent_item_id,
+            "modifiers": [...],   # All modifier lists for this item
+        }
+        """
+        formatted_items = []
+        catalog_objects = catalog_response.get("objects", [])
+        
+        # Build a map of modifier lists by ID for quick lookup
+        modifier_lists_map = {}
+        for obj in catalog_objects:
+            if obj.get("type") == "MODIFIER_LIST" and not obj.get("is_deleted", False):
+                modifier_list_data = obj.get("modifier_list_data", {})
+                modifier_lists_map[obj.get("id")] = {
+                    "id": obj.get("id"),
+                    "name": modifier_list_data.get("name", ""),
+                    "modifier_type": modifier_list_data.get("modifier_type", "LIST"),
+                    "modifiers": modifier_list_data.get("modifiers", []),
+                    "text_required": modifier_list_data.get("text_required", False),
+                    "max_length": modifier_list_data.get("max_length"),
+                }
+        
+        # Process ITEM objects
+        for obj in catalog_objects:
+            if obj.get("type") == "ITEM" and not obj.get("is_deleted", False):
+                item_data = obj.get("item_data", {})
+                item_id = obj.get("id")
+                item_name = item_data.get("name", "")
+                item_description = item_data.get("description", "") or item_data.get("description_plaintext", "")
+                
+                # Extract category from item name or use default
+                # Square doesn't have explicit categories, so we'll use "Uncategorized" or try to infer
+                category = "Uncategorized"
+                
+                # Get modifier lists for this item
+                modifier_list_info = item_data.get("modifier_list_info", [])
+                modifiers = []
+                for mod_info in modifier_list_info:
+                    modifier_list_id = mod_info.get("modifier_list_id")
+                    if modifier_list_id in modifier_lists_map:
+                        mod_list = modifier_lists_map[modifier_list_id]
+                        modifiers.append({
+                            "name": mod_list.get("name", ""),
+                            "type": mod_list.get("modifier_type", "LIST"),
+                            "required": mod_info.get("min_selected_modifiers", 0) > 0,
+                            "options": [
+                                {
+                                    "name": mod.get("modifier_data", {}).get("name", ""),
+                                    "price": float(mod.get("modifier_data", {}).get("price_money", {}).get("amount", 0)) / 100.0,
+                                    "currency": mod.get("modifier_data", {}).get("price_money", {}).get("currency", "USD"),
+                                    "default": mod.get("modifier_data", {}).get("on_by_default", False),
+                                }
+                                for mod in mod_list.get("modifiers", [])
+                                if mod.get("type") == "MODIFIER" and not mod.get("is_deleted", False)
+                            ] if mod_list.get("modifier_type") == "LIST" else [],
+                            "text_required": mod_list.get("text_required", False),
+                            "max_length": mod_list.get("max_length"),
+                        })
+                
+                # Process variations
+                variations = item_data.get("variations", [])
+                for variation in variations:
+                    if variation.get("type") == "ITEM_VARIATION" and not variation.get("is_deleted", False):
+                        variation_data = variation.get("item_variation_data", {})
+                        variation_id = variation.get("id")
+                        variation_name = variation_data.get("name", "")
+                        price_money = variation_data.get("price_money", {})
+                        price_cents = price_money.get("amount", 0)
+                        price = float(price_cents) / 100.0
+                        currency = price_money.get("currency", "USD")
+                        sellable = variation_data.get("sellable", True)
+                        stockable = variation_data.get("stockable", True)
+                        
+                        # Use variation name if available, otherwise item name
+                        display_name = variation_name if variation_name else item_name
+                        # If both exist and are different, combine them
+                        if variation_name and item_name and variation_name != item_name:
+                            display_name = f"{item_name} - {variation_name}"
+                        
+                        # Create menu item entry for this variation
+                        formatted_item = {
+                            "id": variation_id,  # Use variation ID as the item ID
+                            "item_name": display_name,
+                            "item_desc": item_description,
+                            "price": price,
+                            "category": category,
+                            "sub_category": None,
+                            "is_available": sellable and stockable,  # Available if both sellable and stockable
+                            "is_special": False,
+                            "variation_id": variation_id,
+                            "item_id": item_id,  # Parent item ID
+                            "variation_name": variation_name,
+                            "currency": currency,
+                            "modifiers": modifiers,  # Include modifiers for this item
+                        }
+                        formatted_items.append(formatted_item)
+                
+                # If item has no variations, create a single entry
+                if not variations:
+                    formatted_item = {
+                        "id": item_id,
+                        "item_name": item_name,
+                        "item_desc": item_description,
+                        "price": 0.0,  # No price if no variations
+                        "category": category,
+                        "sub_category": None,
+                        "is_available": True,
+                        "is_special": False,
+                        "variation_id": None,
+                        "item_id": item_id,
+                        "variation_name": "",
+                        "currency": "USD",
+                        "modifiers": modifiers,
+                    }
+                    formatted_items.append(formatted_item)
+        
+        return formatted_items
 
     async def shutdown(self) -> None:
         """Close any remaining Twilio or Deepgram connections during app shutdown."""

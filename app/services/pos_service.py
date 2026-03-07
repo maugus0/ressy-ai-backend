@@ -306,6 +306,53 @@ class POSService:
             response = square_client.create_order(location_id, square_order_data, idempotency_key, currency)
             logger.info(f"[POS Sync] Successfully synced order {order_id} to Square POS. Response received.")
             logger.debug(f"[POS Sync] Square API response: {json.dumps(response, indent=2) if response else 'None'}")
+            
+            # Create payment after successful order creation
+            square_order_id = response.get("order", {}).get("id") if response.get("order") else None
+            if square_order_id:
+                # Get order total amount from database order
+                order_total_amount = order.get("total_amount") if order else None
+                if order_total_amount is None:
+                    # Fallback: calculate from order_data if total_amount not in order
+                    order_total_amount = sum(
+                        self._get_item_price(item, self.menu_repo) * item.get("quantity", 1)
+                        for item in order_data.get("order_details", [])
+                    )
+                
+                if order_total_amount and order_total_amount > 0:
+                    # Generate new idempotency key for payment
+                    payment_idempotency_key = f"{order_id}-payment-{uuid.uuid4().hex[:8]}"
+                    logger.info(
+                        f"[POS Sync] Creating payment for Square order {square_order_id}, amount: {order_total_amount} {currency}"
+                    )
+                    try:
+                        payment_response = square_client.create_payment(
+                            order_id=square_order_id,
+                            amount=order_total_amount,
+                            currency=currency,
+                            idempotency_key=payment_idempotency_key,
+                        )
+                        logger.info(
+                            f"[POS Sync] Successfully created payment for Square order {square_order_id}. Payment response received."
+                        )
+                        logger.debug(
+                            f"[POS Sync] Square payment API response: {json.dumps(payment_response, indent=2) if payment_response else 'None'}"
+                        )
+                    except Exception as payment_error:
+                        logger.error(
+                            f"[POS Sync] Failed to create payment for Square order {square_order_id}: {str(payment_error)}"
+                        )
+                        logger.exception(f"[POS Sync] Square payment API error details for order {order_id}:")
+                        # Don't raise - payment failure shouldn't fail the order creation
+                else:
+                    logger.warning(
+                        f"[POS Sync] Skipping payment creation for order {order_id}: total_amount is {order_total_amount}"
+                    )
+            else:
+                logger.warning(
+                    f"[POS Sync] Square order ID not found in response for order {order_id}, skipping payment creation"
+                )
+            
             return response
         except Exception as e:
             logger.error(f"[POS Sync] Failed to sync order {order_id} to Square POS: {str(e)}")

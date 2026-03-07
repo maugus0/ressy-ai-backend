@@ -109,7 +109,8 @@ class SquareClient:
         
         Args:
             types: Optional list of catalog object types to filter (e.g., ["ITEM", "MODIFIER_LIST"])
-                  If None, returns all types
+                  If None, returns all types. Note: Square's /v2/catalog/list endpoint doesn't support
+                  filtering by types in the request - it returns all catalog objects.
         
         Returns:
             The Square API catalog response with objects array
@@ -117,14 +118,12 @@ class SquareClient:
         url = f"{self.base_url}/v2/catalog/list"
         headers = self._get_headers()
         
-        payload = {}
-        if types:
-            payload["types"] = types
-        
-        logger.info(f"[Square API] Listing catalog: types={types if types else 'all'}")
+        logger.info(f"[Square API] Listing catalog: types={types if types else 'all (no filter)'}")
         logger.debug(f"[Square API] Catalog request URL: {url}")
-        if payload:
-            logger.debug(f"[Square API] Catalog request payload: {json.dumps(payload, indent=2)}")
+        logger.info(
+            "[Square API] Note: Square /v2/catalog/list returns all catalog objects. "
+            "Filtering by types will be done client-side if types parameter is provided."
+        )
         
         # Log curl command for debugging (with masked authorization token)
         auth_token = headers.get("Authorization", "").replace("Bearer ", "")
@@ -133,34 +132,36 @@ class SquareClient:
         else:
             masked_token = "***no-token***"
         
-        # Build curl command
-        curl_parts = [f"curl {url}"]
-        curl_parts.append("-X POST" if payload else "-X GET")
-        curl_parts.append(f"-H 'Square-Version: {headers.get('Square-Version', '')}'")
-        curl_parts.append(f"-H 'Authorization: Bearer {masked_token}'")
-        curl_parts.append(f"-H 'Content-Type: {headers.get('Content-Type', '')}'")
-        if payload:
-            payload_json = json.dumps(payload)
-            curl_parts.append(f"-d '{payload_json}'")
-        
-        curl_command = " \\\n  ".join(curl_parts)
+        curl_command = f"""curl {url} \\
+  -H 'Square-Version: {headers.get("Square-Version", "")}' \\
+  -H 'Authorization: Bearer {masked_token}' \\
+  -H 'Content-Type: {headers.get("Content-Type", "")}'"""
         logger.info("[Square API] Equivalent curl command (authorization token masked):")
         logger.info(curl_command)
         
         try:
-            logger.info("[Square API] Sending request to Square Catalog API...")
-            if payload:
-                logger.info(f"[Square API] Complete catalog request body: {json.dumps(payload, indent=2)}")
-                response = requests.post(url, json=payload, headers=headers, timeout=30)
-            else:
-                response = requests.get(url, headers=headers, timeout=30)
+            logger.info("[Square API] Sending GET request to Square Catalog List API...")
+            response = requests.get(url, headers=headers, timeout=30)
             logger.info(f"[Square API] Catalog response status: {response.status_code}")
             response.raise_for_status()
             result = response.json()
-            objects_count = len(result.get("objects", []))
-            logger.info(
-                f"[Square API] Catalog listing successful! Found {objects_count} catalog objects. Response keys: {list(result.keys()) if result else 'None'}"
-            )
+            all_objects = result.get("objects", [])
+            objects_count = len(all_objects)
+            
+            # Filter by types if specified (client-side filtering since API doesn't support it)
+            if types:
+                filtered_objects = [obj for obj in all_objects if obj.get("type") in types]
+                result["objects"] = filtered_objects
+                logger.info(
+                    f"[Square API] Catalog listing successful! Found {len(filtered_objects)} objects "
+                    f"(filtered from {objects_count} total) matching types: {types}"
+                )
+            else:
+                logger.info(
+                    f"[Square API] Catalog listing successful! Found {objects_count} catalog objects. "
+                    f"Response keys: {list(result.keys()) if result else 'None'}"
+                )
+            
             logger.debug(f"[Square API] Full catalog response: {json.dumps(result, indent=2)}")
             return result
         except requests.exceptions.Timeout as e:
@@ -187,3 +188,101 @@ class SquareClient:
         except Exception as e:
             logger.exception(f"[Square API] Catalog unexpected error: {e}")
             raise
+
+    def create_payment(
+        self, order_id: str, amount: float, currency: str, idempotency_key: str
+    ) -> Dict[str, Any]:
+        """
+        Create a cash payment for a Square order.
+        
+        Args:
+            order_id: The Square order ID from the create_order response
+            amount: The payment amount (in dollars, will be converted to cents)
+            currency: The currency code (e.g., "USD")
+            idempotency_key: Unique key for idempotency
+            
+        Returns:
+            The Square API payment response
+        """
+        url = f"{self.base_url}/v2/payments"
+        amount_cents = int(amount * 100)  # Convert to cents for Square API
+        
+        payload = {
+            "idempotency_key": idempotency_key,
+            "source_id": "CASH",
+            "order_id": order_id,
+            "amount_money": {
+                "amount": amount_cents,
+                "currency": currency,
+            },
+            "cash_details": {
+                "buyer_supplied_money": {
+                    "amount": amount_cents,
+                    "currency": currency,
+                }
+            },
+        }
+        headers = self._get_headers()
+        
+        logger.info(
+            f"[Square API] Creating payment: order_id={order_id}, amount={amount_cents} cents ({currency}), idempotency_key={idempotency_key}"
+        )
+        logger.debug(f"[Square API] Payment request URL: {url}")
+        logger.debug(f"[Square API] Payment request payload: {json.dumps(payload, indent=2)}")
+        
+        # Log curl command for debugging (with masked authorization token)
+        auth_token = headers.get("Authorization", "").replace("Bearer ", "")
+        if auth_token:
+            masked_token = f"{auth_token[:6]}...{auth_token[-4:]}" if len(auth_token) > 10 else "***masked***"
+        else:
+            masked_token = "***no-token***"
+        payload_json = json.dumps(payload)
+        curl_command = f"""curl {url} \\
+  -X POST \\
+  -H 'Square-Version: {headers.get("Square-Version", "")}' \\
+  -H 'Authorization: Bearer {masked_token}' \\
+  -H 'Content-Type: {headers.get("Content-Type", "")}' \\
+  -d '{payload_json}'"""
+        logger.info("[Square API] Equivalent curl command for payment (authorization token masked):")
+        logger.info(curl_command)
+        
+        try:
+            logger.info("[Square API] Sending POST request to Square Payments API...")
+            logger.info(f"[Square API] Complete payment request body: {json.dumps(payload, indent=2)}")
+            response = requests.post(url, json=payload, headers=headers, timeout=30)
+            logger.info(f"[Square API] Payment response status: {response.status_code}")
+            response.raise_for_status()
+            result = response.json()
+            logger.info(
+                f"[Square API] Payment creation successful! Response keys: {list(result.keys()) if result else 'None'}"
+            )
+            if result.get("payment"):
+                payment_id = result["payment"].get("id")
+                logger.info(f"[Square API] Square payment ID: {payment_id}")
+            logger.debug(f"[Square API] Full payment response: {json.dumps(result, indent=2)}")
+            return result
+        except requests.exceptions.Timeout as e:
+            logger.error(f"[Square API] Payment timeout error after 30s: {e}")
+            raise
+        except requests.exceptions.ConnectionError as e:
+            logger.error(f"[Square API] Payment connection error (network issue): {e}")
+            raise
+        except requests.exceptions.HTTPError as e:
+            logger.error(f"[Square API] Payment HTTP error: {e}")
+            if hasattr(e, "response") and e.response is not None:
+                logger.error(f"[Square API] Payment error status code: {e.response.status_code}")
+                try:
+                    error_body = e.response.json()
+                    logger.error(f"[Square API] Payment error response body: {json.dumps(error_body, indent=2)}")
+                except (ValueError, AttributeError):
+                    logger.error(f"[Square API] Payment error response text: {e.response.text}")
+            raise
+        except requests.exceptions.RequestException as e:
+            logger.error(f"[Square API] Payment request exception: {e}")
+            if hasattr(e, "response") and e.response is not None:
+                logger.error(f"[Square API] Payment response text: {e.response.text}")
+            raise
+        except Exception as e:
+            logger.exception(f"[Square API] Payment unexpected error: {e}")
+            raise
+

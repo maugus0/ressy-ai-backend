@@ -676,3 +676,19 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
         stats["total_minute_usage"] = round(total_seconds / 60, 2) if total_seconds else 0
 
         return stats
+
+    def get_all_restaurants(self) -> List[Dict]:
+        """
+        Get all restaurants (for background sync operations).
+        Returns a list of all restaurants with basic info.
+        """
+        query = """
+            SELECT
+                id,
+                name,
+                created_at,
+                updated_at
+            FROM Restaurants
+            ORDER BY id
+        """
+        return self._execute_query(query)

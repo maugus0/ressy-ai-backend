@@ -8,6 +8,7 @@ from app.middleware.auth_middleware import require_role
 from app.repositories.mysql_pos_integration_repo import MySQLPOSIntegrationRepository
 from app.services.menu_pos_mapping_service import MenuPOSMappingService
 from app.services.pos_retry_service import POSRetryService
+from app.services.square_menu_sync_service import SquareMenuSyncService
 from app.utils.logging_config import get_logger
 
 logger = get_logger(__name__)
@@ -32,6 +33,10 @@ def get_menu_mapping_service() -> MenuPOSMappingService:
 
 def get_pos_retry_service() -> POSRetryService:
     return POSRetryService()
+
+
+def get_square_menu_sync_service() -> SquareMenuSyncService:
+    return SquareMenuSyncService()
 
 
 def _check_restaurant_access(current_user: dict, restaurant_id: int):
@@ -186,4 +191,30 @@ async def process_pos_retries(
     retry_service: POSRetryService = Depends(get_pos_retry_service),
 ):
     result = retry_service.process_pending_retries()
+    return result
+
+
+class SyncSquareMenuRequest(BaseModel):
+    access_token: str = Field(..., description="Square API access token")
+    category: Optional[str] = Field(None, description="Optional category to assign to all items")
+
+
+@router.post(
+    "/restaurants/{restaurant_id}/pos-integrations/sync-square-menu",
+    summary="Sync Square catalog menu to our menu table",
+)
+async def sync_square_menu(
+    restaurant_id: int,
+    request: SyncSquareMenuRequest,
+    current_user: dict = Depends(require_role(["admin", "client"])),
+    sync_service: SquareMenuSyncService = Depends(get_square_menu_sync_service),
+):
+    """
+    Sync Square catalog menu items to our menu table.
+    This is useful when creating a restaurant and you want to populate the menu from Square.
+    """
+    _check_restaurant_access(current_user, restaurant_id)
+    result = sync_service.sync_square_menu_to_db(
+        restaurant_id, request.access_token, request.category
+    )
     return result
