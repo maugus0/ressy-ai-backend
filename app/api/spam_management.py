@@ -159,26 +159,40 @@ async def mark_user_as_spam(
     )
 
     # Check if threshold reached for global spam
-    # Use atomic check-and-update to prevent race conditions
+    # Re-fetch spam count after marking to get the latest count (prevents race conditions)
     spam_count = metadata_repo.get_spam_count_by_user(request.user_id)
+    
+    # Re-fetch user to get latest global spam status (prevents race conditions)
+    user = user_repo.get_user_by_id(request.user_id)
     is_global_spam = bool(user.get("is_spam", False))
 
     if spam_count >= settings.SPAM_GLOBAL_THRESHOLD and not is_global_spam:
         # Mark as global spam atomically (only updates if not already marked)
+        # This prevents race conditions - only one concurrent request will succeed
         affected = user_repo.mark_user_global_spam(
             request.user_id,
             reason=f"Marked as spam by {spam_count} restaurants (threshold: {settings.SPAM_GLOBAL_THRESHOLD})",
         )
         if affected > 0:
-            is_global_spam = True
+            # Successfully marked as global spam - re-fetch to confirm
+            user = user_repo.get_user_by_id(request.user_id)
+            is_global_spam = bool(user.get("is_spam", False))
             logger.info(
                 "User %s automatically marked as global spam (marked by %d restaurants)",
                 request.user_id,
                 spam_count,
             )
         else:
-            # Another request already marked this user as global spam
-            is_global_spam = True
+            # Another request already marked this user as global spam - re-fetch to get latest state
+            user = user_repo.get_user_by_id(request.user_id)
+            is_global_spam = bool(user.get("is_spam", False))
+            logger.debug(
+                "User %s was already marked as global spam by another concurrent request",
+                request.user_id,
+            )
+    
+    # Final re-fetch of spam count to ensure we return the latest count
+    spam_count = metadata_repo.get_spam_count_by_user(request.user_id)
 
     # Create notification (if notification service is available)
     try:
