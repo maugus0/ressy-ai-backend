@@ -142,6 +142,7 @@ async def _emit_escalation_sse_event(
     urgency: Literal["standard", "urgent"],
     call_sid: Optional[str] = None,
     call_id: Optional[int] = None,
+    escalation_id: Optional[int] = None,
 ) -> None:
     """Broadcast escalation to SSE subscribers and persist notification; keep failures from affecting the call flow."""
     try:
@@ -167,8 +168,11 @@ async def _emit_escalation_sse_event(
                 "caller_phone": caller_phone,
                 "reason": reason,
                 "urgency": urgency,
+                "escalation_id": escalation_id,
             },
-            entity_id=int(call_id) if call_id is not None else None,
+            entity_id=(
+                int(escalation_id) if escalation_id is not None else (int(call_id) if call_id is not None else None)
+            ),
         )
     except Exception as exc:  # noqa: BLE001 - defensive
         logger.warning("Escalation notification persistence failed call_sid=%s: %s", call_sid, exc)
@@ -237,8 +241,9 @@ async def escalate_to_human(**kwargs) -> AgentFunctionResult:
         escalation_phone_number = restaurant.get("escalation_phone_number")
 
     escalation_service = EscalationService()
+    escalation_id: Optional[int] = None
     try:
-        escalation_service.create_escalation(
+        created_escalation_id = escalation_service.create_escalation(
             {
                 "call_id": call_id,
                 "user_id": user_id,
@@ -251,6 +256,7 @@ async def escalate_to_human(**kwargs) -> AgentFunctionResult:
                 "status": "raised",
             }
         )
+        escalation_id = int(created_escalation_id) if created_escalation_id is not None else None
     except Exception as exc:  # noqa: BLE001 - defensive
         logger.warning("Failed to persist escalation call_sid=%s: %s", call_sid, exc)
 
@@ -277,6 +283,7 @@ async def escalate_to_human(**kwargs) -> AgentFunctionResult:
             urgency=args.urgency,
             call_sid=call_sid,
             call_id=call_id,
+            escalation_id=escalation_id,
         )
     )
     side_effects = [AgentSideEffect({"type": "InjectAgentMessage", "message": message})]
@@ -299,7 +306,7 @@ def _create_sms_redirect_escalation(
     redirect_type: str,
     reason: str,
     escalation_phone_number: Optional[str] = None,
-) -> None:
+) -> Optional[int]:
     """Create an escalation record for SMS redirect failures.
 
     This is required for the /redirect webhook to forward the call properly.
@@ -310,9 +317,10 @@ def _create_sms_redirect_escalation(
             the /redirect webhook will use this directly. If None, the webhook
             will look it up from the restaurant record.
     """
+    escalation_id: Optional[int] = None
     try:
         escalation_service = EscalationService()
-        escalation_service.create_escalation(
+        created_escalation_id = escalation_service.create_escalation(
             {
                 "call_id": call_id,
                 "user_id": user_id,
@@ -325,6 +333,7 @@ def _create_sms_redirect_escalation(
                 "status": "raised",
             }
         )
+        escalation_id = int(created_escalation_id) if created_escalation_id is not None else None
         logger.info(
             "Created escalation for SMS redirect failure: restaurant_id=%s reason=%s call_sid=%s",
             restaurant_id,
@@ -357,6 +366,7 @@ def _create_sms_redirect_escalation(
                     caller_phone=customer_phone or "",
                     redirect_type=redirect_type,
                     reason=reason,
+                    data={"escalation_id": escalation_id},
                 )
             )
         except Exception as exc:  # noqa: BLE001 - defensive
@@ -380,11 +390,15 @@ def _create_sms_redirect_escalation(
                     "redirect_type": redirect_type,
                     "reason": reason,
                     "urgency": "standard",
+                    "escalation_id": escalation_id,
                 },
-                entity_id=int(call_id) if call_id is not None else None,
+                entity_id=(
+                    int(escalation_id) if escalation_id is not None else (int(call_id) if call_id is not None else None)
+                ),
             )
         except Exception as exc:  # noqa: BLE001 - defensive
             logger.warning("SMS redirect escalation notification persistence failed call_sid=%s: %s", call_sid, exc)
+    return escalation_id
 
 
 def _handle_sms_redirect_error(

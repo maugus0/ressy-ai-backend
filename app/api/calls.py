@@ -71,7 +71,9 @@ async def get_admin_calls(
         examples={"sample": {"summary": "Example end", "value": "2024-03-31T23:59:59Z"}},
     ),
     status: str | None = Query(
-        None, description="Call status filter", examples={"sample": {"summary": "Status", "value": "completed"}}
+        None,
+        description="Call status filter (in_progress, completed, failed, escalated, agent_bypassed)",
+        examples={"sample": {"summary": "Status", "value": "agent_bypassed"}},
     ),
     duration_min: int | None = Query(
         None, ge=0, description="Minimum duration (seconds)", examples={"sample": {"summary": "Min", "value": 30}}

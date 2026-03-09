@@ -33,7 +33,7 @@ router = APIRouter(
 async def list_admin_notifications(
     restaurant_id: int | None = Query(None, description="Filter by restaurant ID"),
     is_read: bool | None = Query(None, description="Filter by read status"),
-    type: str | None = Query(None, description="Filter by type: order, reservation, escalation"),
+    type: str | None = Query(None, description="Filter by type: order, reservation, escalation, system"),
     limit: int = Query(50, ge=1, le=100, description="Page size"),
     offset: int = Query(0, ge=0, description="Offset"),
     notification_service: NotificationPersistenceService = Depends(get_notification_service),
@@ -44,6 +44,7 @@ async def list_admin_notifications(
         type=type,
         limit=limit,
         offset=offset,
+        exclude_bulk_system_kill_switch_toggled=True,
     )
     unread_count = notification_service.get_unread_count(restaurant_id) if restaurant_id else 0
     notifications = [NotificationResponse(**normalize_notification_row(r)) for r in rows]

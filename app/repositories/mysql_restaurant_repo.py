@@ -3,7 +3,7 @@ MySQL Restaurant Repository for multitenant operations.
 """
 
 import json
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from app.repositories.mysql_base import MySQLBaseRepository
 
@@ -29,6 +29,7 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
                     r.is_credit_card_required_for_reservation,
                     r.forward_escalations,
                     r.escalation_phone_number,
+                    r.kill_switch_enabled,
                     r.monday_open, r.monday_close, r.monday_closed,
                     r.tuesday_open, r.tuesday_close, r.tuesday_closed,
                     r.wednesday_open, r.wednesday_close, r.wednesday_closed,
@@ -58,6 +59,8 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
                     result["forward_escalations"] = False
                 if "escalation_phone_number" not in result:
                     result["escalation_phone_number"] = None
+                if "kill_switch_enabled" not in result:
+                    result["kill_switch_enabled"] = False
                 if "reservation_seating_capacity" not in result or result.get("reservation_seating_capacity") is None:
                     result["reservation_seating_capacity"] = 50
                 if "reservation_advance_days" not in result or result.get("reservation_advance_days") is None:
@@ -97,6 +100,7 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
                 result = results[0]
                 result["forward_escalations"] = False
                 result["escalation_phone_number"] = None
+                result["kill_switch_enabled"] = False
                 result["reservation_seating_capacity"] = 50
                 result["reservation_advance_days"] = 30
                 result["timezone"] = None
@@ -134,6 +138,7 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
                     r.is_credit_card_required_for_reservation,
                     r.forward_escalations,
                     r.escalation_phone_number,
+                    r.kill_switch_enabled,
                     r.monday_open, r.monday_close, r.monday_closed,
                     r.tuesday_open, r.tuesday_close, r.tuesday_closed,
                     r.wednesday_open, r.wednesday_close, r.wednesday_closed,
@@ -169,6 +174,8 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
                     result["forward_escalations"] = False
                 if "escalation_phone_number" not in result:
                     result["escalation_phone_number"] = None
+                if "kill_switch_enabled" not in result:
+                    result["kill_switch_enabled"] = False
                 if "reservation_seating_capacity" not in result or result.get("reservation_seating_capacity") is None:
                     result["reservation_seating_capacity"] = 50
                 if "reservation_advance_days" not in result or result.get("reservation_advance_days") is None:
@@ -218,6 +225,7 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
                 result = results[0]
                 result["forward_escalations"] = False
                 result["escalation_phone_number"] = None
+                result["kill_switch_enabled"] = False
                 result["reservation_seating_capacity"] = 50
                 result["reservation_advance_days"] = 30
                 result["timezone"] = None
@@ -253,6 +261,7 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
                     r.is_credit_card_required_for_reservation,
                     r.forward_escalations,
                     r.escalation_phone_number,
+                    r.kill_switch_enabled,
                     r.monday_open, r.monday_close, r.monday_closed,
                     r.tuesday_open, r.tuesday_close, r.tuesday_closed,
                     r.wednesday_open, r.wednesday_close, r.wednesday_closed,
@@ -282,6 +291,8 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
                     result["forward_escalations"] = False
                 if "escalation_phone_number" not in result:
                     result["escalation_phone_number"] = None
+                if "kill_switch_enabled" not in result:
+                    result["kill_switch_enabled"] = False
                 if "reservation_seating_capacity" not in result or result.get("reservation_seating_capacity") is None:
                     result["reservation_seating_capacity"] = 50
                 if "reservation_advance_days" not in result or result.get("reservation_advance_days") is None:
@@ -321,6 +332,7 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
                 result = results[0]
                 result["forward_escalations"] = False
                 result["escalation_phone_number"] = None
+                result["kill_switch_enabled"] = False
                 result["reservation_seating_capacity"] = 50
                 result["reservation_advance_days"] = 30
                 result["timezone"] = None
@@ -346,7 +358,7 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
                 name, address, phone_number, twilio_phone_number,
                 twilio_details, deepgram_details, open_table_details,
                 forward_minutes, backward_minutes, is_credit_card_required_for_reservation,
-                forward_escalations, escalation_phone_number,
+                forward_escalations, escalation_phone_number, kill_switch_enabled,
                 monday_open, monday_close, monday_closed,
                 tuesday_open, tuesday_close, tuesday_closed,
                 wednesday_open, wednesday_close, wednesday_closed,
@@ -358,7 +370,7 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
                 thursday_24_hours, friday_24_hours, saturday_24_hours, sunday_24_hours,
                 timezone, reservation_seating_capacity, reservation_advance_days,
                 created_at, updated_at
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
                       %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
                       %s, %s, %s, %s, %s, %s, %s,
                       %s, %s, %s, NOW(), NOW())
@@ -378,6 +390,7 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
                 data.get("is_credit_card_required_for_reservation", False),
                 data.get("forward_escalations", False),
                 data.get("escalation_phone_number"),
+                data.get("kill_switch_enabled", False),
                 data.get("monday_open"),
                 data.get("monday_close"),
                 data.get("monday_closed", False),
@@ -477,6 +490,7 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
                 r.is_credit_card_required_for_reservation,
                 r.forward_escalations,
                 r.escalation_phone_number,
+                r.kill_switch_enabled,
                 r.monday_open, r.monday_close, r.monday_closed,
                 r.tuesday_open, r.tuesday_close, r.tuesday_closed,
                 r.wednesday_open, r.wednesday_close, r.wednesday_closed,
@@ -571,6 +585,9 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
         if "escalation_phone_number" in data:
             update_fields.append("escalation_phone_number = %s")
             params.append(data["escalation_phone_number"])
+        if "kill_switch_enabled" in data:
+            update_fields.append("kill_switch_enabled = %s")
+            params.append(data["kill_switch_enabled"])
         # Handle per-day operating hours
         for day in ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]:
             if f"{day}_open" in data:
@@ -608,6 +625,133 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
         """
         affected = self._execute_update(query, tuple(params))
         return affected > 0
+
+    def list_kill_switch_candidates(self) -> List[Dict]:
+        """
+        List restaurants with fields required to evaluate kill-switch readiness.
+        """
+        query = """
+            SELECT
+                id,
+                name,
+                forward_escalations,
+                escalation_phone_number,
+                kill_switch_enabled
+            FROM Restaurants
+            ORDER BY id ASC
+        """
+        results = self._execute_query(query)
+        for row in results:
+            if "forward_escalations" not in row:
+                row["forward_escalations"] = False
+            if "escalation_phone_number" not in row:
+                row["escalation_phone_number"] = None
+            if "kill_switch_enabled" not in row:
+                row["kill_switch_enabled"] = False
+        return results
+
+    def count_restaurants(self) -> int:
+        """Return total restaurant count."""
+        query = "SELECT COUNT(*) AS count FROM Restaurants"
+        rows = self._execute_query(query)
+        return int(rows[0].get("count", 0)) if rows else 0
+
+    def list_kill_switch_invalid_restaurants(self) -> List[Dict]:
+        """
+        List only restaurants that cannot safely use kill-switch redirect.
+        """
+        query = """
+            SELECT
+                id,
+                name,
+                forward_escalations,
+                escalation_phone_number
+            FROM Restaurants
+            WHERE forward_escalations <> 1
+               OR escalation_phone_number IS NULL
+               OR TRIM(escalation_phone_number) = ''
+            ORDER BY id ASC
+        """
+        results = self._execute_query(query)
+        for row in results:
+            if "forward_escalations" not in row:
+                row["forward_escalations"] = False
+            if "escalation_phone_number" not in row:
+                row["escalation_phone_number"] = None
+        return results
+
+    def list_kill_switch_changed_restaurants(self, enabled: bool, only_redirect_ready: bool = False) -> List[Dict]:
+        """
+        List restaurants whose kill-switch value would change for the requested update.
+        """
+        clauses = ["kill_switch_enabled <> %s"]
+        params: List[Any] = [enabled]
+        if only_redirect_ready:
+            clauses.append("forward_escalations = 1")
+            clauses.append("escalation_phone_number IS NOT NULL")
+            clauses.append("TRIM(escalation_phone_number) <> ''")
+        where_sql = " AND ".join(clauses)
+        query = f"""
+            SELECT
+                id,
+                name,
+                kill_switch_enabled
+            FROM Restaurants
+            WHERE {where_sql}
+            ORDER BY id ASC
+        """
+        results = self._execute_query(query, tuple(params))
+        for row in results:
+            if "kill_switch_enabled" not in row:
+                row["kill_switch_enabled"] = False
+        return results
+
+    def set_kill_switch_all_redirect_ready(self, enabled: bool) -> int:
+        """
+        Set kill_switch_enabled for all redirect-ready restaurants.
+        Returns affected row count.
+        """
+        query = """
+            UPDATE Restaurants
+            SET kill_switch_enabled = %s,
+                updated_at = NOW()
+            WHERE forward_escalations = 1
+              AND escalation_phone_number IS NOT NULL
+              AND TRIM(escalation_phone_number) <> ''
+              AND kill_switch_enabled <> %s
+        """
+        return self._execute_update(query, (enabled, enabled))
+
+    def set_kill_switch_all(self, enabled: bool) -> int:
+        """
+        Set kill_switch_enabled for all restaurants.
+        Returns affected row count.
+        """
+        query = """
+            UPDATE Restaurants
+            SET kill_switch_enabled = %s,
+                updated_at = NOW()
+            WHERE kill_switch_enabled <> %s
+        """
+        return self._execute_update(query, (enabled, enabled))
+
+    def set_kill_switch_for_ids(self, restaurant_ids: List[int], enabled: bool) -> int:
+        """
+        Set kill_switch_enabled for a specific set of restaurant IDs.
+        Returns affected row count.
+        """
+        if not restaurant_ids:
+            return 0
+        placeholders = ", ".join(["%s"] * len(restaurant_ids))
+        query = f"""
+            UPDATE Restaurants
+            SET kill_switch_enabled = %s,
+                updated_at = NOW()
+            WHERE id IN ({placeholders})
+              AND kill_switch_enabled <> %s
+        """
+        params = [enabled, *restaurant_ids, enabled]
+        return self._execute_update(query, tuple(params))
 
     def delete(self, restaurant_id: int) -> bool:
         """

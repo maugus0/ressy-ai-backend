@@ -12,7 +12,10 @@ class CallResponse(BaseModel):
     end_time: Optional[str] = Field(None, description="Call end time in ISO format (null if call is ongoing)")
     duration_seconds: int = Field(..., description="Call duration in seconds")
     cost: float = Field(..., description="Cost of the call in USD")
-    status: str = Field(..., description="Call status (e.g., 'completed', 'in-progress', 'failed')")
+    status: str = Field(
+        ...,
+        description="Call status (e.g., 'in_progress', 'completed', 'failed', 'escalated', 'agent_bypassed')",
+    )
     twilio_stream_sid: str = Field(..., description="Twilio stream session ID")
     from_number: Optional[str] = Field(None, description="Phone number the call originated from")
     outcome: Optional[str] = Field(

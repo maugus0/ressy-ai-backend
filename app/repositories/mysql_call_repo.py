@@ -87,6 +87,31 @@ class MySQLCallRepository(MySQLBaseRepository):
         self.logger.info("[MySQL] Updated call status: call_id=%s, status=%s", call_id, status)
         return affected > 0
 
+    def finalize_call_with_status(
+        self, call_id: int, status: str, duration_seconds: int = 0, cost: float = 0.0
+    ) -> bool:
+        """
+        Finalize a call and set a specific terminal status.
+        """
+        query = """
+            UPDATE Calls
+            SET call_status = %s,
+                call_duration = %s,
+                cost = %s,
+                ended_at = NOW(),
+                updated_at = NOW()
+            WHERE id = %s
+        """
+        affected = self._execute_update(query, (status, duration_seconds, cost, call_id))
+        self.logger.info(
+            "[MySQL] Finalized call: call_id=%s status=%s duration=%ss cost=%s",
+            call_id,
+            status,
+            duration_seconds,
+            cost,
+        )
+        return affected > 0
+
     def update_deepgram_request_id(self, call_id: int, deepgram_request_id: str) -> None:
         """
         Store Deepgram request/session ID for an existing call.

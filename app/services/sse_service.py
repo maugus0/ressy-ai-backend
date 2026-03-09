@@ -2,7 +2,8 @@
 Server-Sent Events (SSE) Service for real-time event broadcasting.
 
 Supports the following event types:
-- Escalation: user_requested, internal_server_error, suspected_spam
+- Escalation: user_requested, internal_server_error, suspected_spam, sms_redirect_failed, kill_switch_redirected
+- System: kill_switch_toggled, kill_switch_bulk_updated
 - Order: new_order, order_updated, order_cancelled
 - Reservation: new_reservation, reservation_updated, reservation_cancelled
 """
@@ -54,6 +55,7 @@ class SSEEventType(str, Enum):
     """Main SSE event types."""
 
     ESCALATION = "escalation"
+    SYSTEM = "system"
     ORDER = "order"
     RESERVATION = "reservation"
     HEARTBEAT = "heartbeat"
@@ -66,6 +68,14 @@ class EscalationEventSubtype(str, Enum):
     INTERNAL_SERVER_ERROR = "internal_server_error"
     SUSPECTED_SPAM = "suspected_spam"
     SMS_REDIRECT_FAILED = "sms_redirect_failed"
+    KILL_SWITCH_REDIRECTED = "kill_switch_redirected"
+
+
+class SystemEventSubtype(str, Enum):
+    """Subtypes for system events."""
+
+    KILL_SWITCH_TOGGLED = "kill_switch_toggled"
+    KILL_SWITCH_BULK_UPDATED = "kill_switch_bulk_updated"
 
 
 class OrderEventSubtype(str, Enum):
@@ -267,15 +277,25 @@ class SSEService:
             if connection.connected:
                 await connection.send(event)
 
-    async def _broadcast_to_restaurant(self, restaurant_id: int, event: SSEEvent):
+    async def _broadcast_to_restaurant(self, restaurant_id: int, event: SSEEvent, include_admin: bool = True):
         """Broadcast event to connections for a specific restaurant."""
         # Get a consistent snapshot of connection IDs under the lock
         async with self._lock:
             connection_ids: Set[str] = set()
             if restaurant_id in self.restaurant_connections:
                 connection_ids.update(self.restaurant_connections[restaurant_id])
-            connection_ids.update(self.admin_connections)
+            if include_admin:
+                connection_ids.update(self.admin_connections)
         # Now iterate and send events outside the lock
+        for connection_id in connection_ids:
+            connection = self.connections.get(connection_id)
+            if connection and connection.connected:
+                await connection.send(event)
+
+    async def _broadcast_to_admin(self, event: SSEEvent):
+        """Broadcast event to admin connections only."""
+        async with self._lock:
+            connection_ids = set(self.admin_connections)
         for connection_id in connection_ids:
             connection = self.connections.get(connection_id)
             if connection and connection.connected:
@@ -287,6 +307,7 @@ class SSEService:
         subtype: Optional[str] = None,
         restaurant_id: Optional[int] = None,
         data: Optional[Dict[str, Any]] = None,
+        include_admin: bool = True,
     ) -> SSEEvent:
         """
         Emit an SSE event.
@@ -308,7 +329,7 @@ class SSEService:
         )
 
         if restaurant_id is not None:
-            await self._broadcast_to_restaurant(restaurant_id, event)
+            await self._broadcast_to_restaurant(restaurant_id, event, include_admin=include_admin)
         else:
             await self._broadcast_to_all(event)
 
@@ -461,6 +482,64 @@ class SSEService:
             restaurant_id=restaurant_id,
             data=event_data,
         )
+
+    async def emit_escalation_kill_switch_redirected(
+        self,
+        restaurant_id: int,
+        call_id: Optional[str] = None,
+        caller_phone: Optional[str] = None,
+        reason: Optional[str] = None,
+        data: Optional[Dict[str, Any]] = None,
+    ) -> SSEEvent:
+        """
+        Emit an escalation event when a call is redirected due to kill switch.
+        """
+        event_data = {
+            "call_id": call_id,
+            "caller_phone": caller_phone,
+            "reason": reason or "Call redirected due to restaurant kill switch",
+            **(data or {}),
+        }
+        return await self.emit_event(
+            event_type=SSEEventType.ESCALATION,
+            subtype=EscalationEventSubtype.KILL_SWITCH_REDIRECTED.value,
+            restaurant_id=restaurant_id,
+            data=event_data,
+        )
+
+    async def emit_system_kill_switch_toggled(
+        self,
+        restaurant_id: int,
+        data: Optional[Dict[str, Any]] = None,
+        include_admin: bool = True,
+    ) -> SSEEvent:
+        """
+        Emit a system event when kill switch configuration is toggled.
+        """
+        return await self.emit_event(
+            event_type=SSEEventType.SYSTEM,
+            subtype=SystemEventSubtype.KILL_SWITCH_TOGGLED.value,
+            restaurant_id=restaurant_id,
+            data=data or {},
+            include_admin=include_admin,
+        )
+
+    async def emit_system_kill_switch_bulk_updated_admin_only(
+        self,
+        data: Optional[Dict[str, Any]] = None,
+    ) -> SSEEvent:
+        """
+        Emit a system event for kill switch bulk updates to admins only.
+        """
+        event = SSEEvent(
+            event_type=SSEEventType.SYSTEM,
+            subtype=SystemEventSubtype.KILL_SWITCH_BULK_UPDATED.value,
+            restaurant_id=None,
+            data=data or {},
+        )
+        await self._broadcast_to_admin(event)
+        logger.info("[SSE] Admin-only event emitted: %s/%s", event.event_type.value, event.subtype)
+        return event
 
     # ---------- Order Event Methods ----------
 

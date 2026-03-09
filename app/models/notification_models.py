@@ -13,8 +13,8 @@ class NotificationResponse(BaseModel):
     """Single notification response."""
 
     id: int = Field(..., description="Notification ID")
-    restaurant_id: int = Field(..., description="Restaurant this notification belongs to")
-    type: str = Field(..., description="Event type: order, reservation, escalation")
+    restaurant_id: Optional[int] = Field(None, description="Restaurant this notification belongs to")
+    type: str = Field(..., description="Event type: order, reservation, escalation, system")
     subtype: str = Field(..., description="Event subtype")
     title: str = Field(..., description="Human-readable title")
     message: Optional[str] = Field(None, description="Human-readable message body")
