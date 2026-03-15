@@ -32,6 +32,7 @@ router = APIRouter(
     dependencies=[Depends(get_current_admin_user)],
 )
 
+OPTION_GROUP_CREATE_SCHEMA = MenuOptionGroupCreate.model_json_schema()
 OPTION_GROUP_UPDATE_SCHEMA = MenuOptionGroupUpdate.model_json_schema()
 OPTION_VALUE_CREATE_SCHEMA = MenuOptionValueCreate.model_json_schema()
 OPTION_VALUE_UPDATE_SCHEMA = MenuOptionValueUpdate.model_json_schema()
@@ -47,6 +48,7 @@ ITEM_OPTION_GROUP_ATTACH_SCHEMA = MenuItemOptionGroupAttach.model_json_schema()
         "requestBody": {
             "content": {
                 "application/json": {
+                    "schema": OPTION_GROUP_CREATE_SCHEMA,
                     "example": {
                         "name": "Spice Level",
                         "description": "Choose your heat level",

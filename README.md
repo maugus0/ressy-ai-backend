@@ -811,7 +811,7 @@ All endpoints are organized by tags in the Swagger documentation:
   - `PATCH /api/v1/admin/restaurants/{restaurant_id}/menu/bulk-availability` - Bulk update availability
   - `GET /api/v1/admin/restaurants/{restaurant_id}/menu/categories` - Get menu categories
 
-- **Menu Customization Option Groups** (`/api/v1/admin/*`) - Admin only:
+- **Menu Customization Option Groups** (`/api/v1/admin/*`, Swagger tag: **Menus**) - Admin only:
   - `POST /api/v1/admin/restaurants/{restaurant_id}/menu/option-groups` - Create option group (with inline values)
   - `GET /api/v1/admin/restaurants/{restaurant_id}/menu/option-groups` - List option groups
   - `GET /api/v1/admin/menu/option-groups/{group_id}` - Get option group by ID

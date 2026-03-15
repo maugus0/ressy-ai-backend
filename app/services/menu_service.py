@@ -1,4 +1,3 @@
-import logging
 from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import HTTPException, status
@@ -6,8 +5,9 @@ from mysql.connector.errors import IntegrityError
 
 from app.repositories.mysql_menu_repo import MySQLMenuRepository
 from app.repositories.mysql_restaurant_repo import MySQLRestaurantRepository
+from app.utils.logging_config import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class MenuService:
@@ -367,7 +367,6 @@ class MenuService:
         try:
             deleted = self.menu_repo.delete_by_id(menu_id)
         except IntegrityError:
-            logger.warning("Cannot delete menu item %s: referenced by existing orders", menu_id)
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail=(

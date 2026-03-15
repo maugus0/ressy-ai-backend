@@ -199,7 +199,8 @@ app.include_router(escalations.router)
 app.include_router(client_escalations.router)
 app.include_router(dashboard_notifications.router)
 app.include_router(admin_notifications.router)
-# Register menu_options before menus so /menu/option-groups and /restaurants/{id}/menu/option-groups match before /menu/{menu_id}
+# Register menu_options before menus so /restaurants/{restaurant_id}/menu/option-groups
+# and /menu/option-groups/{group_id} match before the more generic /menu/{menu_id}
 app.include_router(menu_options.router)
 app.include_router(menus.router)
 app.include_router(
@@ -217,7 +218,8 @@ app.include_router(sse.router, prefix="/api/v1/sse", tags=["Server-Sent Events"]
 app.include_router(admin_users.router, tags=["Admin Users"])
 app.include_router(client_users.router, tags=["Client Users"])
 app.include_router(client_faqs.router)
-# Register client_menu_options before client_menus so /menu/option-groups matches before /menu/{menu_id}
+# Register client_menu_options before client_menus so /menu/option-groups
+# and /menu/option-groups/{group_id} match before the more generic /menu/{menu_id}
 app.include_router(client_menu_options.router)
 app.include_router(client_menus.router)
 app.include_router(client_restaurant.router)
