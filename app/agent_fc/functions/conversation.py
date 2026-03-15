@@ -761,13 +761,14 @@ async def send_sms_redirect(**kwargs) -> AgentFunctionResult:
         escalation_mode = restaurant.get("escalation_mode", "always") if isinstance(restaurant, dict) else "always"
         try:
             can_transfer = escalation_mode != "open_hours_only" or is_restaurant_open_now(restaurant)
-        except Exception:
+        except Exception as exc:
+            logger.warning("Failed to determine open status for escalation sentence: %s", exc)
             can_transfer = escalation_mode != "open_hours_only"
 
         if can_transfer:
             escalation_sentence = (
                 "If you ever want to speak to a live representative, "
-                "just say 'escalate' or 'transfer' and I will transfer your call. "
+                "just say 'escalate' or 'transfer' and I'll connect you with the team. "
             )
         else:
             escalation_sentence = (
