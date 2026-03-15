@@ -49,7 +49,7 @@ BULK_AVAILABILITY_SCHEMA = BulkAvailabilityRequest.model_json_schema()
     "/menu",
     status_code=status.HTTP_201_CREATED,
     summary="Create Menu Item (Client)",
-    description="Create a new menu item for the authenticated restaurant.",
+    description="Create a new menu item for the authenticated restaurant. Restaurant ID is derived from the JWT token.",
     openapi_extra={
         "requestBody": {
             "required": True,
@@ -57,12 +57,13 @@ BULK_AVAILABILITY_SCHEMA = BulkAvailabilityRequest.model_json_schema()
                 "application/json": {
                     "schema": MENU_CREATE_SCHEMA,
                     "example": {
-                        "item_name": "Margherita Pizza",
-                        "price": 15.99,
-                        "category": "Pizza",
-                        "sub_category": "Classic",
-                        "item_desc": "Fresh mozzarella, tomato sauce, and basil",
-                        "avg_prep_time": 20,
+                        "item_name": "Hot Crunch",
+                        "price": 14.50,
+                        "category": "Chicken Sandwiches",
+                        "sub_category": "Dark Meat (Chicken Thigh)",
+                        "item_desc": "Chicken thigh, house mayo, cabbage slaw, pickles",
+                        "avg_prep_time": 10,
+                        "suggested_items": [1, 8],
                         "is_available": True,
                         "is_special": False,
                     },
@@ -71,23 +72,39 @@ BULK_AVAILABILITY_SCHEMA = BulkAvailabilityRequest.model_json_schema()
         },
         "responses": {
             201: {
-                "description": "Menu item created",
+                "description": "Menu item created successfully",
                 "content": {
                     "application/json": {
                         "example": {
-                            "id": 1,
-                            "restaurant_id": 10,
-                            "restaurant_name": "Ressy Test Kitchen",
-                            "item_name": "Margherita Pizza",
-                            "price": 15.99,
-                            "category": "Pizza",
-                            "sub_category": "Classic",
+                            "id": 5,
+                            "restaurant_id": 5,
+                            "restaurant_name": "Frying Pan",
+                            "category": "Chicken Sandwiches",
+                            "sub_category": "Dark Meat (Chicken Thigh)",
+                            "item_name": "Hot Crunch",
+                            "item_desc": "Chicken thigh, house mayo, cabbage slaw, pickles",
+                            "price": 14.50,
+                            "avg_prep_time": 10,
+                            "suggested_items": [1, 8],
                             "is_available": True,
                             "is_special": False,
+                            "created_at": "2026-03-15T12:00:00",
+                            "updated_at": "2026-03-15T12:00:00",
+                            "option_groups": None,
                         }
                     }
                 },
-            }
+            },
+            400: {
+                "description": "Validation error",
+                "content": {
+                    "application/json": {
+                        "example": {
+                            "detail": "A menu item with the name 'Hot Crunch' already exists in this restaurant"
+                        }
+                    }
+                },
+            },
         },
     },
     response_model=MenuItemResponse,
@@ -111,25 +128,47 @@ async def create_menu_item(
     openapi_extra={
         "responses": {
             200: {
-                "description": "Menu items retrieved",
+                "description": "Paginated menu items with metadata",
                 "content": {
                     "application/json": {
                         "example": {
                             "items": [
                                 {
-                                    "id": 1,
-                                    "restaurant_id": 10,
-                                    "restaurant_name": "Ressy Test Kitchen",
-                                    "item_name": "Margherita Pizza",
-                                    "price": 15.99,
-                                    "category": "Pizza",
-                                    "sub_category": "Classic",
+                                    "id": 5,
+                                    "restaurant_id": 5,
+                                    "restaurant_name": "Frying Pan",
+                                    "category": "Chicken Sandwiches",
+                                    "sub_category": "Dark Meat (Chicken Thigh)",
+                                    "item_name": "Hot Crunch",
+                                    "item_desc": "Chicken thigh, house mayo, cabbage slaw, pickles",
+                                    "price": 14.50,
+                                    "avg_prep_time": 10,
+                                    "suggested_items": None,
                                     "is_available": True,
                                     "is_special": False,
+                                    "created_at": "2026-03-15T12:00:00",
+                                    "updated_at": "2026-03-15T12:00:00",
                                     "option_groups": None,
-                                }
+                                },
+                                {
+                                    "id": 13,
+                                    "restaurant_id": 5,
+                                    "restaurant_name": "Frying Pan",
+                                    "category": "Fries",
+                                    "sub_category": None,
+                                    "item_name": "Waffle Fries",
+                                    "item_desc": "Served with house mayo and ketchup",
+                                    "price": 6.50,
+                                    "avg_prep_time": None,
+                                    "suggested_items": None,
+                                    "is_available": True,
+                                    "is_special": False,
+                                    "created_at": "2026-03-15T12:00:00",
+                                    "updated_at": "2026-03-15T12:00:00",
+                                    "option_groups": None,
+                                },
                             ],
-                            "pagination": {"page": 1, "limit": 50, "total": 1, "pages": 1},
+                            "pagination": {"page": 1, "limit": 50, "total": 14, "pages": 1},
                         }
                     }
                 },
@@ -174,13 +213,16 @@ async def list_menu_items(  # pylint: disable=too-many-arguments,too-many-positi
     openapi_extra={
         "responses": {
             200: {
-                "description": "Categories retrieved",
+                "description": "Categories with their sub-categories",
                 "content": {
                     "application/json": {
                         "example": {
                             "categories": {
-                                "Pizza": ["Classic", "Specialty"],
-                                "Drinks": ["Hot", "Cold"],
+                                "Chicken Sandwiches": [
+                                    "White Meat (Chicken Breast)",
+                                    "Dark Meat (Chicken Thigh)",
+                                ],
+                                "Fries": [],
                             }
                         }
                     }
@@ -205,52 +247,117 @@ async def get_menu_categories(
     openapi_extra={
         "responses": {
             200: {
-                "description": "Menu item retrieved",
+                "description": "Menu item with full customization option groups",
                 "content": {
                     "application/json": {
                         "example": {
-                            "id": 1,
-                            "restaurant_id": 10,
-                            "restaurant_name": "Ressy Test Kitchen",
-                            "item_name": "Margherita Pizza",
-                            "price": 15.99,
-                            "category": "Pizza",
-                            "sub_category": "Classic",
+                            "id": 5,
+                            "restaurant_id": 5,
+                            "restaurant_name": "Frying Pan",
+                            "category": "Chicken Sandwiches",
+                            "sub_category": "Dark Meat (Chicken Thigh)",
+                            "item_name": "Hot Crunch",
+                            "item_desc": "Chicken thigh, house mayo, cabbage slaw, pickles",
+                            "price": 14.50,
+                            "avg_prep_time": 10,
+                            "suggested_items": None,
                             "is_available": True,
                             "is_special": False,
+                            "created_at": "2026-03-15T12:00:00",
+                            "updated_at": "2026-03-15T12:00:00",
                             "option_groups": [
                                 {
-                                    "id": 12,
-                                    "restaurant_id": 10,
-                                    "name": "Toppings",
-                                    "description": "Choose your toppings",
-                                    "selection_type": "multiple",
+                                    "id": 1,
+                                    "restaurant_id": 5,
+                                    "name": "Spice Level",
+                                    "description": "Choose your heat level",
+                                    "selection_type": "single",
                                     "min_select": 0,
-                                    "max_select": 5,
-                                    "free_allowance": 2,
-                                    "allows_quantity": True,
-                                    "max_quantity_per_option": 2,
+                                    "max_select": 1,
+                                    "free_allowance": 0,
+                                    "free_allowance_strategy": "HIGHEST_PRICE_FIRST",
+                                    "allows_quantity": False,
+                                    "max_quantity_per_option": None,
                                     "prompt_style": "ASK_ALWAYS",
                                     "is_required": False,
                                     "is_available": True,
                                     "sort_order": 1,
                                     "values": [
                                         {
-                                            "id": 101,
-                                            "group_id": 12,
-                                            "name": "Pepperoni",
-                                            "price_delta": 1.5,
+                                            "id": 1,
+                                            "group_id": 1,
+                                            "name": "No Heat",
+                                            "price_delta": 0.0,
+                                            "is_default": True,
+                                            "is_available": True,
+                                            "sort_order": 0,
+                                        },
+                                        {
+                                            "id": 2,
+                                            "group_id": 1,
+                                            "name": "Mild Hot",
+                                            "price_delta": 0.0,
                                             "is_default": False,
                                             "is_available": True,
                                             "sort_order": 1,
-                                        }
+                                        },
+                                        {
+                                            "id": 5,
+                                            "group_id": 1,
+                                            "name": "911",
+                                            "price_delta": 0.50,
+                                            "is_default": False,
+                                            "is_available": True,
+                                            "sort_order": 4,
+                                        },
                                     ],
-                                }
+                                },
+                                {
+                                    "id": 2,
+                                    "restaurant_id": 5,
+                                    "name": "Sandwich Add-ons",
+                                    "description": "Add extra items to your sandwich",
+                                    "selection_type": "multiple",
+                                    "min_select": 0,
+                                    "max_select": None,
+                                    "free_allowance": 0,
+                                    "free_allowance_strategy": "HIGHEST_PRICE_FIRST",
+                                    "allows_quantity": False,
+                                    "max_quantity_per_option": None,
+                                    "prompt_style": "ASK_IF_MENTIONED",
+                                    "is_required": False,
+                                    "is_available": True,
+                                    "sort_order": 2,
+                                    "values": [
+                                        {
+                                            "id": 6,
+                                            "group_id": 2,
+                                            "name": "Egg",
+                                            "price_delta": 2.50,
+                                            "is_default": False,
+                                            "is_available": True,
+                                            "sort_order": 0,
+                                        },
+                                        {
+                                            "id": 7,
+                                            "group_id": 2,
+                                            "name": "Cheese",
+                                            "price_delta": 1.50,
+                                            "is_default": False,
+                                            "is_available": True,
+                                            "sort_order": 1,
+                                        },
+                                    ],
+                                },
                             ],
                         }
                     }
                 },
-            }
+            },
+            404: {
+                "description": "Menu item not found",
+                "content": {"application/json": {"example": {"detail": "Menu item not found"}}},
+            },
         }
     },
     response_model=MenuItemResponse,
@@ -275,25 +382,47 @@ async def get_menu_item(
             "content": {
                 "application/json": {
                     "schema": MENU_UPDATE_SCHEMA,
-                    "example": {"price": 17.99, "item_desc": "Updated description", "is_special": True},
+                    "example": {
+                        "price": 15.50,
+                        "item_desc": "Chicken thigh, house mayo, cabbage slaw, pickles — extra crispy",
+                        "is_special": True,
+                    },
                 }
             },
         },
         "responses": {
             200: {
-                "description": "Menu item updated",
+                "description": "Updated menu item with all fields",
                 "content": {
                     "application/json": {
                         "example": {
-                            "id": 1,
-                            "restaurant_id": 10,
-                            "item_name": "Margherita Pizza",
-                            "price": 17.99,
+                            "id": 5,
+                            "restaurant_id": 5,
+                            "restaurant_name": "Frying Pan",
+                            "category": "Chicken Sandwiches",
+                            "sub_category": "Dark Meat (Chicken Thigh)",
+                            "item_name": "Hot Crunch",
+                            "item_desc": "Chicken thigh, house mayo, cabbage slaw, pickles — extra crispy",
+                            "price": 15.50,
+                            "avg_prep_time": 10,
+                            "suggested_items": None,
+                            "is_available": True,
                             "is_special": True,
+                            "created_at": "2026-03-15T12:00:00",
+                            "updated_at": "2026-03-15T14:00:00",
+                            "option_groups": None,
                         }
                     }
                 },
-            }
+            },
+            400: {
+                "description": "Validation error",
+                "content": {"application/json": {"example": {"detail": "One or more suggested item IDs do not exist"}}},
+            },
+            404: {
+                "description": "Menu item not found",
+                "content": {"application/json": {"example": {"detail": "Menu item not found"}}},
+            },
         },
     },
     response_model=MenuItemResponse,
@@ -316,15 +445,32 @@ async def update_menu_item(
     "/menu/{menu_id}",
     status_code=status.HTTP_200_OK,
     summary="Delete Menu Item (Client)",
-    description="Delete a menu item for the authenticated restaurant.",
+    description=(
+        "Delete a menu item for the authenticated restaurant. "
+        "Returns 409 if the item is referenced by existing orders."
+    ),
     openapi_extra={
         "responses": {
             200: {
                 "description": "Menu item deleted",
                 "content": {
-                    "application/json": {"example": {"message": "Menu item deleted successfully", "menu_id": 1}}
+                    "application/json": {"example": {"message": "Menu item deleted successfully", "menu_id": 5}}
                 },
-            }
+            },
+            404: {
+                "description": "Menu item not found",
+                "content": {"application/json": {"example": {"detail": "Menu item not found"}}},
+            },
+            409: {
+                "description": "Menu item is referenced by existing orders and cannot be deleted",
+                "content": {
+                    "application/json": {
+                        "example": {
+                            "detail": "Cannot delete this menu item because it is referenced by existing orders. Consider marking it as unavailable instead."
+                        }
+                    }
+                },
+            },
         }
     },
     response_description="Deletion confirmation.",
@@ -355,14 +501,25 @@ async def delete_menu_item(
         },
         "responses": {
             200: {
-                "description": "Availability updated",
+                "description": "Menu item with updated availability",
                 "content": {
                     "application/json": {
                         "example": {
-                            "id": 1,
-                            "item_name": "Margherita Pizza",
+                            "id": 5,
+                            "restaurant_id": 5,
+                            "restaurant_name": "Frying Pan",
+                            "category": "Chicken Sandwiches",
+                            "sub_category": "Dark Meat (Chicken Thigh)",
+                            "item_name": "Hot Crunch",
+                            "item_desc": "Chicken thigh, house mayo, cabbage slaw, pickles",
+                            "price": 14.50,
+                            "avg_prep_time": 10,
+                            "suggested_items": None,
                             "is_available": False,
-                            "restaurant_id": 10,
+                            "is_special": False,
+                            "created_at": "2026-03-15T12:00:00",
+                            "updated_at": "2026-03-15T14:00:00",
+                            "option_groups": None,
                         }
                     }
                 },
@@ -399,14 +556,25 @@ async def toggle_availability(
         },
         "responses": {
             200: {
-                "description": "Special status updated",
+                "description": "Menu item with updated special status",
                 "content": {
                     "application/json": {
                         "example": {
-                            "id": 1,
-                            "item_name": "Margherita Pizza",
+                            "id": 5,
+                            "restaurant_id": 5,
+                            "restaurant_name": "Frying Pan",
+                            "category": "Chicken Sandwiches",
+                            "sub_category": "Dark Meat (Chicken Thigh)",
+                            "item_name": "Hot Crunch",
+                            "item_desc": "Chicken thigh, house mayo, cabbage slaw, pickles",
+                            "price": 14.50,
+                            "avg_prep_time": 10,
+                            "suggested_items": None,
+                            "is_available": True,
                             "is_special": True,
-                            "restaurant_id": 10,
+                            "created_at": "2026-03-15T12:00:00",
+                            "updated_at": "2026-03-15T14:00:00",
+                            "option_groups": None,
                         }
                     }
                 },
@@ -437,15 +605,23 @@ async def toggle_special(
             "content": {
                 "application/json": {
                     "schema": BULK_AVAILABILITY_SCHEMA,
-                    "example": {"menu_item_ids": [1, 2, 3], "is_available": False},
+                    "example": {"menu_item_ids": [1, 2, 3, 4, 5, 6, 7], "is_available": False},
                 }
             },
         },
         "responses": {
             200: {
-                "description": "Availability updated",
-                "content": {"application/json": {"example": {"updated_count": 3}}},
-            }
+                "description": "Number of items updated",
+                "content": {"application/json": {"example": {"updated_count": 7}}},
+            },
+            400: {
+                "description": "Validation error",
+                "content": {
+                    "application/json": {
+                        "example": {"detail": "One or more menu items do not belong to this restaurant"}
+                    }
+                },
+            },
         },
     },
     response_model=dict,

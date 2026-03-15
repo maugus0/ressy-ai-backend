@@ -1,7 +1,9 @@
 import os
+from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
+from mysql.connector.errors import IntegrityError
 
 os.environ.setdefault("ALLOW_DB_FAILURE", "true")
 os.environ.setdefault("USE_MOCK_DATA", "true")
@@ -85,3 +87,20 @@ def test_client_menu_bulk_availability(client_with_overrides):
     list_resp = client.get("/api/v1/client/menu", params={"is_available": False})
     assert list_resp.status_code == 200
     assert list_resp.json()["pagination"]["total"] == 2
+
+
+def test_client_menu_delete_fk_conflict_returns_409(client_with_overrides):
+    """DELETE returns 409 when the menu item is referenced by existing orders (FK constraint)."""
+    client, menu_repo, _ = client_with_overrides
+    create_resp = client.post(
+        "/api/v1/client/menu",
+        json={"item_name": "Burger", "price": 14.0, "category": "Mains"},
+    )
+    assert create_resp.status_code == 201
+    menu_id = create_resp.json()["id"]
+
+    with patch.object(menu_repo, "delete_by_id", side_effect=IntegrityError(msg="Cannot delete", errno=1451)):
+        del_resp = client.delete(f"/api/v1/client/menu/{menu_id}")
+
+    assert del_resp.status_code == 409
+    assert "referenced by existing orders" in del_resp.json()["detail"]

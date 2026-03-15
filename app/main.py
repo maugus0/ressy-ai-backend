@@ -199,8 +199,10 @@ app.include_router(escalations.router)
 app.include_router(client_escalations.router)
 app.include_router(dashboard_notifications.router)
 app.include_router(admin_notifications.router)
-app.include_router(menus.router)
+# Register menu_options before menus so /restaurants/{restaurant_id}/menu/option-groups
+# and /menu/option-groups/{group_id} match before the more generic /menu/{menu_id}
 app.include_router(menu_options.router)
+app.include_router(menus.router)
 app.include_router(
     restaurants.router
     # Note: restaurants router declares its own prefix/tags to keep Admin CRM docs localized.
@@ -216,8 +218,10 @@ app.include_router(sse.router, prefix="/api/v1/sse", tags=["Server-Sent Events"]
 app.include_router(admin_users.router, tags=["Admin Users"])
 app.include_router(client_users.router, tags=["Client Users"])
 app.include_router(client_faqs.router)
-app.include_router(client_menus.router)
+# Register client_menu_options before client_menus so /menu/option-groups
+# and /menu/option-groups/{group_id} match before the more generic /menu/{menu_id}
 app.include_router(client_menu_options.router)
+app.include_router(client_menus.router)
 app.include_router(client_restaurant.router)
 app.include_router(client_client_users.router)
 app.include_router(client_analytics.router, tags=["Client Analytics"])
