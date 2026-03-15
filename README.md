@@ -450,8 +450,14 @@ Connection pool behavior is controlled by optional environment variables (see [�
 #### Run database migrations
 
 ```bash
-# Using the migration script
+# Using the migration script (applies only pending migrations)
 python scripts/run_migrations.py
+
+# Preview migration state without applying changes
+python scripts/run_migrations.py --dry-run
+
+# One-time baseline for an existing environment through a known applied migration
+python scripts/run_migrations.py --baseline-through 039_create_menu_customizations.sql
 
 # Or manually using MySQL client
 mysql -u root -p ressy < migrations/001_create_permissions.sql
@@ -493,7 +499,7 @@ docker-compose down -v
 **What happens on startup:**
 1. MySQL container starts and waits for health check (exposed on port 3307 by default, configurable via `DOCKER_MYSQL_PORT`)
 2. Backend container waits for MySQL to be ready
-3. Database migrations run automatically (all SQL files in `migrations/`)
+3. Database migrations run automatically (pending migrations only; tracked in `Schema_Migrations`)
 4. Startup scripts run if enabled (sample data seeding: admin users, restaurant, menu items, FAQs)
 5. Application starts on port 5001
 
@@ -1202,11 +1208,17 @@ curl --location 'http://localhost:5001/api/v1/restaurants/1/stats' \
 
 ## 🗄️ Database Migrations
 
-Database migrations are located in the `migrations/` directory and should be run in numerical order:
+Database migrations are located in the `migrations/` directory and are tracked in the database via the `Schema_Migrations` ledger table. The runner applies only pending migrations in numerical order and fails if a previously applied migration file has been modified.
 
 ```bash
-# Run migrations using the script
+# Apply pending migrations
 python scripts/run_migrations.py
+
+# Preview applied/pending state
+python scripts/run_migrations.py --dry-run
+
+# One-time baseline for an existing environment
+python scripts/run_migrations.py --baseline-through 039_create_menu_customizations.sql
 
 # Or manually
 mysql -u root -p ressy < migrations/001_create_permissions.sql
@@ -1217,9 +1229,16 @@ mysql -u root -p ressy < migrations/001_create_permissions.sql
 
 Migrations should be run in numerical order (001, 002, 003, etc.) as they have dependencies on previous tables.
 
+### Migration Safety Rules
+
+- Migration files are append-only. Once merged and potentially applied in a real environment, they must not be edited.
+- The runner stores a checksum for each applied migration and fails fast on checksum mismatch.
+- Existing environments should be baselined through the last known applied migration before pending-only execution is enabled.
+- `--baseline-through` accepts the exact migration filename and marks migrations up to that file as applied without executing them.
+
 ### Migration Files
 
-Run in numerical order (001, 002, … 040). Key migrations:
+Run in numerical order (001, 002, … 041). Key migrations:
 
 1. **001_create_permissions.sql** – Permissions table
 2. **002_create_crm_roles.sql** – Crm_roles (depends on Permissions)
@@ -2231,11 +2250,15 @@ AWS_SECRET_ACCESS_KEY=your_secret_key
 # Make sure MySQL is running
 # Then run the migration script
 python3 scripts/run_migrations.py
+
+# Optional: preview migration state first
+python3 scripts/run_migrations.py --dry-run
 ```
 
 This script will:
 - Create the database if it doesn't exist
-- Run all migrations in order
+- Create the `Schema_Migrations` ledger table if needed
+- Run only pending migrations in order
 - Set up all required tables
 
 #### Option B: Manual MySQL Setup
@@ -2250,10 +2273,10 @@ CREATE DATABASE IF NOT EXISTS ressy;
 # 3. Exit MySQL
 exit;
 
-# 4. Run migrations (use script for all 032 files, or run each in order)
+# 4. Run migrations
 python3 scripts/run_migrations.py
 # Or manually: mysql -u root -p ressy < migrations/001_create_permissions.sql
-# ... then 002 through 032 (see migrations/ directory and Database Migrations section)
+# ... then continue in order (see migrations/ directory and Database Migrations section)
 ```
 
 ### Step 6: Verify Database Connection
