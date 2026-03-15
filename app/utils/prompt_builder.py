@@ -27,7 +27,9 @@ def _join_with_or(values: Iterable[str]) -> str:
     return f"{', '.join(items[:-1])}, or {items[-1]}"
 
 
-def _build_capabilities_block(template: Dict[str, Any], feature_flags: Dict[str, Any]) -> Dict[str, str]:
+def _build_capabilities_block(
+    template: Dict[str, Any], feature_flags: Dict[str, Any], sms_redirect_label: str = "SMS_REDIRECT"
+) -> Dict[str, str]:
     fields = template.get("fields", [])
     capabilities: Dict[str, str] = {}
     for field in fields:
@@ -35,14 +37,13 @@ def _build_capabilities_block(template: Dict[str, Any], feature_flags: Dict[str,
         label = field.get("label") or field_id
         enabled = feature_flags.get(field_id, True)
 
-        # Check for SMS redirect - show as "SMS_REDIRECT" instead of "NO"
         sms_redirect_key = f"{field_id}_sms_redirect"
         sms_redirect_enabled = feature_flags.get(sms_redirect_key, False)
 
         if enabled:
             capabilities[label] = "YES"
         elif sms_redirect_enabled:
-            capabilities[label] = "SMS_REDIRECT"
+            capabilities[label] = sms_redirect_label
         else:
             capabilities[label] = "NO"
     return capabilities
@@ -118,38 +119,30 @@ def build_prompt_from_template(template: Dict[str, Any], context: Dict[str, Any]
         agent_identity["primary_goals"] = base_goals
 
     capabilities_template = prompt_template.get("capabilities_block_template", {})
-    capabilities = _build_capabilities_block(capabilities_template, feature_flags)
+    sms_redirect_label = prompt_template.get("capabilities_sms_redirect_label", "SMS_REDIRECT")
+    capabilities = _build_capabilities_block(capabilities_template, feature_flags, sms_redirect_label)
 
     handoff_rules = list(prompt_template.get("handoff_rules_template", []))
     disabled_rules_template = prompt_template.get("disabled_feature_rules_template", {})
+    sms_redirect_rules_template = prompt_template.get("sms_redirect_rules_template", {})
     orders_sms_redirect = feature_flags.get("orders_sms_redirect", False)
     reservations_sms_redirect = feature_flags.get("reservations_sms_redirect", False)
 
-    # Handle orders: escalate if disabled AND no SMS redirect
     if not orders_enabled:
         if orders_sms_redirect:
-            # SMS redirect for orders - call function immediately, then speak naturally from the response
-            handoff_rules.append(
-                "ORDERING: When customer wants to order, IMMEDIATELY call send_sms_redirect(redirect_type='orders'). "
-                "Do NOT announce beforehand - just call the function directly. "
-                "After the function returns, speak naturally using the message_to_customer content. "
-                "You can then answer general questions about the restaurant."
-            )
+            rule = sms_redirect_rules_template.get("orders")
+            if rule:
+                handoff_rules.append(rule)
         else:
             disabled_rule = disabled_rules_template.get("orders")
             if disabled_rule:
                 handoff_rules.append(disabled_rule)
 
-    # Handle reservations: escalate if disabled AND no SMS redirect
     if not reservations_enabled:
         if reservations_sms_redirect:
-            # SMS redirect for reservations - call function immediately, then speak naturally from the response
-            handoff_rules.append(
-                "RESERVATIONS: When customer wants to book a table, IMMEDIATELY call send_sms_redirect(redirect_type='reservations'). "
-                "Do NOT announce beforehand - just call the function directly. "
-                "After the function returns, speak naturally using the message_to_customer content. "
-                "You can then answer general questions about the restaurant."
-            )
+            rule = sms_redirect_rules_template.get("reservations")
+            if rule:
+                handoff_rules.append(rule)
         else:
             disabled_rule = disabled_rules_template.get("reservations")
             if disabled_rule:
@@ -159,6 +152,19 @@ def build_prompt_from_template(template: Dict[str, Any], context: Dict[str, Any]
         disabled_rule = disabled_rules_template.get("faqs")
         if disabled_rule:
             handoff_rules.append(disabled_rule)
+
+    if orders_sms_redirect or reservations_sms_redirect:
+        transfer_reminder = prompt_template.get("sms_redirect_transfer_reminder")
+        if transfer_reminder:
+            handoff_rules.append(transfer_reminder)
+
+    restaurant_profile = context.get("restaurant_profile", {}) if isinstance(context, dict) else {}
+    escalation_mode = restaurant_profile.get("escalation_mode", "always")
+    is_open_now = restaurant_profile.get("is_open_now", True)
+    if escalation_mode == "open_hours_only" and not is_open_now:
+        closed_rule = prompt_template.get("escalation_closed_hours_rule")
+        if closed_rule:
+            handoff_rules.append(closed_rule)
 
     call_flow_base = deepcopy(prompt_template.get("call_flow_base", {}))
     intent_sentence = _build_intent_sentence(prompt_template, feature_flags)

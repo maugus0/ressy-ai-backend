@@ -33,6 +33,7 @@ class ClientRestaurantResponse(BaseModel):
     twilio_phone_number: str | None = None
     forward_escalations: bool | None = None
     escalation_phone_number: str | None = None
+    escalation_mode: str = "always"
     kill_switch_enabled: bool = False
     kill_switch_can_redirect: bool = False
     kill_switch_blockers: list[str] = Field(default_factory=list)
@@ -58,6 +59,10 @@ class ClientUpdateRestaurantRequest(BaseModel):
     forward_escalations: bool | None = Field(None, description="Forward escalations to a live phone number")
     escalation_phone_number: str | None = Field(
         None, max_length=20, description="Phone number to forward escalation calls"
+    )
+    escalation_mode: str | None = Field(
+        None,
+        description="When to allow transfer on escalate: 'always' or 'open_hours_only' (only during operating hours).",
     )
     forward_minutes: int | None = Field(None, ge=0, description="Forward booking window in minutes")
     backward_minutes: int | None = Field(None, ge=0, description="Backward booking window in minutes")

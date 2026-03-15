@@ -140,6 +140,10 @@ class CreateRestaurantRequest(BaseModel):
     escalation_phone_number: str | None = Field(
         None, max_length=20, description="Phone number to forward escalation calls (E.164 format)"
     )
+    escalation_mode: str | None = Field(
+        "always",
+        description="When to allow transfer on escalate: 'always' or 'open_hours_only'. Default: always.",
+    )
     twilio_details: dict | None = Field(None, description="Twilio configuration JSON")
     deepgram_details: dict | None = Field(None, description="Deepgram configuration JSON")
     open_table_details: dict | None = Field(None, description="OpenTable integration details JSON")
@@ -198,6 +202,10 @@ class UpdateRestaurantRequest(BaseModel):
     escalation_phone_number: str | None = Field(
         None, max_length=20, description="Phone number to forward escalation calls (E.164 format)"
     )
+    escalation_mode: str | None = Field(
+        None,
+        description="When to allow transfer on escalate: 'always' (any time) or 'open_hours_only' (only during operating hours).",
+    )
     twilio_details: dict | None = Field(None, description="Twilio configuration JSON")
     deepgram_details: dict | None = Field(None, description="Deepgram configuration JSON")
     open_table_details: dict | None = Field(None, description="OpenTable integration details JSON")
@@ -253,6 +261,7 @@ class RestaurantResponse(BaseModel):
     twilio_phone_number: str | None = None
     forward_escalations: bool | None = None
     escalation_phone_number: str | None = None
+    escalation_mode: str = "always"
     kill_switch_enabled: bool = False
     kill_switch_can_redirect: bool = False
     kill_switch_blockers: list[str] = Field(default_factory=list)

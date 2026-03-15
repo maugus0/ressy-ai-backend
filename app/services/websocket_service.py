@@ -400,6 +400,7 @@ class WebSocketService:
                 "today_hours": today_hours,
                 "is_open_now": is_open_now,
                 "prep_time_minutes": restaurant.get("prep_time_minutes", 20),
+                "escalation_mode": restaurant.get("escalation_mode", "always"),
             },
             "service_options": {
                 "dine_in": service_options.get("dine_in", True),
