@@ -237,3 +237,39 @@ class TestSMSRedirectValidation:
         }
         # Should not raise - SMS redirect is disabled
         RestaurantService.validate_sms_redirect_rules(features)
+
+
+class TestEscalationModeValidation:
+    """Tests for _validate_escalation_mode."""
+
+    def test_none_defaults_to_always(self):
+        assert RestaurantService._validate_escalation_mode(None) == "always"
+
+    def test_always_accepted(self):
+        assert RestaurantService._validate_escalation_mode("always") == "always"
+
+    def test_open_hours_only_accepted(self):
+        assert RestaurantService._validate_escalation_mode("open_hours_only") == "open_hours_only"
+
+    def test_whitespace_stripped(self):
+        assert RestaurantService._validate_escalation_mode("  open_hours_only  ") == "open_hours_only"
+
+    def test_case_insensitive(self):
+        assert RestaurantService._validate_escalation_mode("ALWAYS") == "always"
+        assert RestaurantService._validate_escalation_mode("Open_Hours_Only") == "open_hours_only"
+
+    def test_invalid_mode_rejected(self):
+        with pytest.raises(HTTPException) as exc_info:
+            RestaurantService._validate_escalation_mode("never")
+        assert exc_info.value.status_code == 400
+        assert "escalation_mode" in exc_info.value.detail
+
+    def test_create_restaurant_defaults_escalation_mode(self):
+        service, _ = _build_service()
+        restaurant = service.create_restaurant({"name": "No Escalation Mode"})
+        assert restaurant.get("escalation_mode", "always") == "always"
+
+    def test_create_restaurant_with_open_hours_only(self):
+        service, _ = _build_service()
+        restaurant = service.create_restaurant({"name": "Open Hours", "escalation_mode": "open_hours_only"})
+        assert restaurant.get("escalation_mode") == "open_hours_only"

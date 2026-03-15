@@ -31,6 +31,7 @@ class InMemoryRestaurantRepository:
             "forward_escalations": False,
             "escalation_phone_number": None,
             "kill_switch_enabled": False,
+            "escalation_mode": "always",
             "created_at": None,
             "updated_at": None,
         }
@@ -63,6 +64,7 @@ class InMemoryRestaurantRepository:
             "forward_escalations": data.get("forward_escalations", False),
             "escalation_phone_number": data.get("escalation_phone_number"),
             "kill_switch_enabled": data.get("kill_switch_enabled", False),
+            "escalation_mode": data.get("escalation_mode", "always"),
             "created_at": datetime.now(timezone.utc),
             "updated_at": datetime.now(timezone.utc),
         }

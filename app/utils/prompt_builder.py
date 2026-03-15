@@ -35,7 +35,7 @@ def _build_capabilities_block(template: Dict[str, Any], feature_flags: Dict[str,
         label = field.get("label") or field_id
         enabled = feature_flags.get(field_id, True)
 
-        # Check for SMS redirect - show as "SMS_REDIRECT" instead of "NO"
+        # Check for SMS redirect - show descriptive status instead of "NO"
         sms_redirect_key = f"{field_id}_sms_redirect"
         sms_redirect_enabled = feature_flags.get(sms_redirect_key, False)
 

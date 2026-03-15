@@ -253,20 +253,17 @@ async def escalate_to_human(**kwargs) -> AgentFunctionResult:
             return AgentFunctionResult(
                 content={
                     "status": "ESCALATION_BLOCKED_CLOSED",
-                    "message": (
-                        f"The restaurant is currently closed. The team is available during operating hours: {hours_label}. "
-                        "I'm happy to help with any questions about the menu, hours, or location in the meantime. "
-                        "Or you can call back during operating hours to be connected to the team."
-                    ),
+                    "hours": hours_label,
+                    "instruction": "Already spoken via injected message. Do NOT repeat or rephrase it.",
                 },
                 side_effects=[
                     AgentSideEffect(
                         {
                             "type": "InjectAgentMessage",
                             "message": (
-                                f"I'm sorry, the restaurant is currently closed so I can't transfer you to the team right now. "
+                                f"I'm sorry, the restaurant is currently closed so I can't transfer you right now. "
                                 f"They're available during {hours_label}. "
-                                f"But I'm still here and happy to help with any questions you might have!"
+                                f"But I'm still here — feel free to ask me anything!"
                             ),
                         }
                     ),
@@ -520,7 +517,7 @@ def _get_sms_redirect_message(
 
 Still on the call? Ressy (our AI assistant) knows everything about {restaurant_name} — menu items, ingredients, prices, hours, and more. Feel free to ask!
 
-If you'd prefer to speak with staff directly, just say "escalate" or "transfer" and Ressy will connect you right away.
+If you'd prefer to speak with staff directly, just say "escalate" or "transfer" and Ressy will try to connect you to a team member if someone is available.
 
 But Ressy might be a little sad to see you go — if you have any general questions, feel free to ask her!
 
@@ -756,16 +753,38 @@ async def send_sms_redirect(**kwargs) -> AgentFunctionResult:
         # We inject a brief acknowledgment ("Perfect!") to keep conversation flowing
         # immediately, then provide the full message in content for the agent to
         # speak naturally based on the function result.
+        #
+        # Tailor the escalation sentence based on whether transfer is actually
+        # possible right now (escalation_mode + open hours).
+        from app.utils.restaurant_hours import is_restaurant_open_now
+
+        escalation_mode = restaurant.get("escalation_mode", "always") if isinstance(restaurant, dict) else "always"
+        try:
+            can_transfer = escalation_mode != "open_hours_only" or is_restaurant_open_now(restaurant)
+        except Exception:
+            can_transfer = escalation_mode != "open_hours_only"
+
+        if can_transfer:
+            escalation_sentence = (
+                "If you ever want to speak to a live representative, "
+                "just say 'escalate' or 'transfer' and I will transfer your call. "
+            )
+        else:
+            escalation_sentence = (
+                "If you'd like to speak with the team, just say 'escalate' or 'transfer' "
+                "and I'll try to connect you when someone is available. "
+            )
+
         if args.redirect_type == "orders":
             message_to_customer = (
                 "I've just sent you a text with a link to place your order. "
-                "If you ever want to speak to a live representative, just say escalate and I will transfer your call. "
+                f"{escalation_sentence}"
                 "I'm still here — feel free to ask me anything about the restaurant."
             )
         else:  # reservations
             message_to_customer = (
                 "I've just sent you a text with a link to make your reservation. "
-                "If you ever want to speak to a live representative, just say escalate and I will transfer your call. "
+                f"{escalation_sentence}"
                 "I'm still here — feel free to ask me anything about the restaurant."
             )
 

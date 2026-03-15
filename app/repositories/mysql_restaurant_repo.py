@@ -378,7 +378,7 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
                 created_at, updated_at
             ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
                       %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                      %s, %s, %s, %s, %s, %s, %s,
+                      %s, %s, %s, %s, %s, %s, %s, %s,
                       %s, %s, %s, NOW(), NOW())
         """
         restaurant_id = self._execute_insert(
