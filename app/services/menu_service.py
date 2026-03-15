@@ -1,9 +1,13 @@
+import logging
 from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import HTTPException, status
+from mysql.connector.errors import IntegrityError
 
 from app.repositories.mysql_menu_repo import MySQLMenuRepository
 from app.repositories.mysql_restaurant_repo import MySQLRestaurantRepository
+
+logger = logging.getLogger(__name__)
 
 
 class MenuService:
@@ -354,15 +358,23 @@ class MenuService:
             Success message
 
         Raises:
-            HTTPException: 404 if menu item not found
+            HTTPException: 404 if menu item not found, 409 if referenced by orders
         """
-        # Check if item exists
         existing_item = self.menu_repo.get_by_id(menu_id)
         if not existing_item:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Menu item not found")
 
-        # Delete the item (also removes from suggested_items of other items)
-        deleted = self.menu_repo.delete_by_id(menu_id)
+        try:
+            deleted = self.menu_repo.delete_by_id(menu_id)
+        except IntegrityError:
+            logger.warning("Cannot delete menu item %s: referenced by existing orders", menu_id)
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "Cannot delete this menu item because it is referenced by existing orders. "
+                    "Consider marking it as unavailable instead."
+                ),
+            )
         if not deleted:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

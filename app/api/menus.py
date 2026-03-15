@@ -61,12 +61,13 @@ BULK_AVAILABILITY_SCHEMA = BulkAvailabilityRequest.model_json_schema()
                 "application/json": {
                     "schema": MENU_CREATE_SCHEMA,
                     "example": {
-                        "item_name": "Margherita Pizza",
-                        "price": 15.99,
-                        "category": "Pizza",
-                        "sub_category": "Classic",
-                        "item_desc": "Fresh mozzarella, tomato sauce, and basil",
-                        "avg_prep_time": 20,
+                        "item_name": "OG Hot Chicken",
+                        "price": 15.50,
+                        "category": "Chicken Sandwiches",
+                        "sub_category": "White Meat (Chicken Breast)",
+                        "item_desc": "Nashville st hot chicken breast with frying pan hot dust, spicy mayo, cabbage slaw, pickles",
+                        "avg_prep_time": 12,
+                        "suggested_items": [2, 3],
                         "is_available": True,
                         "is_special": False,
                     },
@@ -75,23 +76,43 @@ BULK_AVAILABILITY_SCHEMA = BulkAvailabilityRequest.model_json_schema()
         },
         "responses": {
             201: {
-                "description": "Menu item created",
+                "description": "Menu item created successfully",
                 "content": {
                     "application/json": {
                         "example": {
                             "id": 1,
-                            "restaurant_id": 10,
-                            "restaurant_name": "Ressy Test Kitchen",
-                            "item_name": "Margherita Pizza",
-                            "price": 15.99,
-                            "category": "Pizza",
-                            "sub_category": "Classic",
+                            "restaurant_id": 5,
+                            "restaurant_name": "Frying Pan",
+                            "category": "Chicken Sandwiches",
+                            "sub_category": "White Meat (Chicken Breast)",
+                            "item_name": "OG Hot Chicken",
+                            "item_desc": "Nashville st hot chicken breast with frying pan hot dust, spicy mayo, cabbage slaw, pickles",
+                            "price": 15.50,
+                            "avg_prep_time": 12,
+                            "suggested_items": [2, 3],
                             "is_available": True,
                             "is_special": False,
+                            "created_at": "2026-03-15T12:00:00",
+                            "updated_at": "2026-03-15T12:00:00",
+                            "option_groups": None,
                         }
                     }
                 },
-            }
+            },
+            400: {
+                "description": "Validation error (invalid price, duplicate name, invalid suggested items)",
+                "content": {
+                    "application/json": {
+                        "example": {
+                            "detail": "A menu item with the name 'OG Hot Chicken' already exists in this restaurant"
+                        }
+                    }
+                },
+            },
+            404: {
+                "description": "Restaurant not found",
+                "content": {"application/json": {"example": {"detail": "Restaurant not found"}}},
+            },
         },
     },
 )
@@ -138,25 +159,47 @@ async def create_menu_item(
     openapi_extra={
         "responses": {
             200: {
-                "description": "Menu items retrieved",
+                "description": "Paginated menu items with metadata",
                 "content": {
                     "application/json": {
                         "example": {
                             "items": [
                                 {
                                     "id": 1,
-                                    "restaurant_id": 10,
-                                    "restaurant_name": "Ressy Test Kitchen",
-                                    "item_name": "Margherita Pizza",
-                                    "price": 15.99,
-                                    "category": "Pizza",
-                                    "sub_category": "Classic",
+                                    "restaurant_id": 5,
+                                    "restaurant_name": "Frying Pan",
+                                    "category": "Chicken Sandwiches",
+                                    "sub_category": "White Meat (Chicken Breast)",
+                                    "item_name": "OG Hot Chicken",
+                                    "item_desc": "Nashville st hot chicken breast with frying pan hot dust, spicy mayo, cabbage slaw, pickles",
+                                    "price": 15.50,
+                                    "avg_prep_time": 12,
+                                    "suggested_items": [2, 3],
                                     "is_available": True,
                                     "is_special": False,
+                                    "created_at": "2026-03-15T12:00:00",
+                                    "updated_at": "2026-03-15T12:00:00",
                                     "option_groups": None,
-                                }
+                                },
+                                {
+                                    "id": 8,
+                                    "restaurant_id": 5,
+                                    "restaurant_name": "Frying Pan",
+                                    "category": "Fries",
+                                    "sub_category": None,
+                                    "item_name": "Dirty Chicken",
+                                    "item_desc": "Waffle fries, tenders with hot dust, marble cheese, green onion, slaw, pickles, sweet soy sauce, spicy mayo",
+                                    "price": 18.50,
+                                    "avg_prep_time": None,
+                                    "suggested_items": None,
+                                    "is_available": True,
+                                    "is_special": False,
+                                    "created_at": "2026-03-15T12:00:00",
+                                    "updated_at": "2026-03-15T12:00:00",
+                                    "option_groups": None,
+                                },
                             ],
-                            "pagination": {"page": 1, "limit": 50, "total": 1, "pages": 1},
+                            "pagination": {"page": 1, "limit": 50, "total": 14, "pages": 1},
                         }
                     }
                 },
@@ -222,54 +265,208 @@ async def list_menu_items(  # pylint: disable=too-many-arguments,too-many-positi
     openapi_extra={
         "responses": {
             200: {
-                "description": "Menu item retrieved",
+                "description": "Menu item with full customization option groups",
                 "content": {
                     "application/json": {
                         "example": {
                             "id": 1,
-                            "restaurant_id": 10,
-                            "restaurant_name": "Ressy Test Kitchen",
-                            "item_name": "Margherita Pizza",
-                            "price": 15.99,
-                            "category": "Pizza",
-                            "sub_category": "Classic",
-                            "item_desc": "Fresh mozzarella, tomato sauce, and basil",
-                            "avg_prep_time": 20,
+                            "restaurant_id": 5,
+                            "restaurant_name": "Frying Pan",
+                            "category": "Chicken Sandwiches",
+                            "sub_category": "White Meat (Chicken Breast)",
+                            "item_name": "OG Hot Chicken",
+                            "item_desc": "Nashville st hot chicken breast with frying pan hot dust, spicy mayo, cabbage slaw, pickles",
+                            "price": 15.50,
+                            "avg_prep_time": 12,
+                            "suggested_items": [2, 3],
                             "is_available": True,
                             "is_special": False,
+                            "created_at": "2026-03-15T12:00:00",
+                            "updated_at": "2026-03-15T12:00:00",
                             "option_groups": [
                                 {
-                                    "id": 12,
-                                    "restaurant_id": 10,
-                                    "name": "Toppings",
-                                    "description": "Choose your toppings",
-                                    "selection_type": "multiple",
+                                    "id": 1,
+                                    "restaurant_id": 5,
+                                    "name": "Spice Level",
+                                    "description": "Choose your heat level",
+                                    "selection_type": "single",
                                     "min_select": 0,
-                                    "max_select": 5,
-                                    "free_allowance": 2,
-                                    "allows_quantity": True,
-                                    "max_quantity_per_option": 2,
+                                    "max_select": 1,
+                                    "free_allowance": 0,
+                                    "free_allowance_strategy": "HIGHEST_PRICE_FIRST",
+                                    "allows_quantity": False,
+                                    "max_quantity_per_option": None,
                                     "prompt_style": "ASK_ALWAYS",
                                     "is_required": False,
                                     "is_available": True,
                                     "sort_order": 1,
                                     "values": [
                                         {
-                                            "id": 101,
-                                            "group_id": 12,
-                                            "name": "Pepperoni",
-                                            "price_delta": 1.5,
+                                            "id": 1,
+                                            "group_id": 1,
+                                            "name": "No Heat",
+                                            "price_delta": 0.0,
+                                            "is_default": True,
+                                            "is_available": True,
+                                            "sort_order": 0,
+                                        },
+                                        {
+                                            "id": 2,
+                                            "group_id": 1,
+                                            "name": "Mild Hot",
+                                            "price_delta": 0.0,
                                             "is_default": False,
                                             "is_available": True,
                                             "sort_order": 1,
-                                        }
+                                        },
+                                        {
+                                            "id": 3,
+                                            "group_id": 1,
+                                            "name": "Medium Hot",
+                                            "price_delta": 0.0,
+                                            "is_default": False,
+                                            "is_available": True,
+                                            "sort_order": 2,
+                                        },
+                                        {
+                                            "id": 4,
+                                            "group_id": 1,
+                                            "name": "Extra Hot",
+                                            "price_delta": 0.0,
+                                            "is_default": False,
+                                            "is_available": True,
+                                            "sort_order": 3,
+                                        },
+                                        {
+                                            "id": 5,
+                                            "group_id": 1,
+                                            "name": "911",
+                                            "price_delta": 0.50,
+                                            "is_default": False,
+                                            "is_available": True,
+                                            "sort_order": 4,
+                                        },
                                     ],
-                                }
+                                },
+                                {
+                                    "id": 2,
+                                    "restaurant_id": 5,
+                                    "name": "Sandwich Add-ons",
+                                    "description": "Add extra items to your sandwich",
+                                    "selection_type": "multiple",
+                                    "min_select": 0,
+                                    "max_select": None,
+                                    "free_allowance": 0,
+                                    "free_allowance_strategy": "HIGHEST_PRICE_FIRST",
+                                    "allows_quantity": False,
+                                    "max_quantity_per_option": None,
+                                    "prompt_style": "ASK_IF_MENTIONED",
+                                    "is_required": False,
+                                    "is_available": True,
+                                    "sort_order": 2,
+                                    "values": [
+                                        {
+                                            "id": 6,
+                                            "group_id": 2,
+                                            "name": "Egg",
+                                            "price_delta": 2.50,
+                                            "is_default": False,
+                                            "is_available": True,
+                                            "sort_order": 0,
+                                        },
+                                        {
+                                            "id": 7,
+                                            "group_id": 2,
+                                            "name": "Cheese",
+                                            "price_delta": 1.50,
+                                            "is_default": False,
+                                            "is_available": True,
+                                            "sort_order": 1,
+                                        },
+                                        {
+                                            "id": 8,
+                                            "group_id": 2,
+                                            "name": "Egg + Cheese",
+                                            "price_delta": 3.50,
+                                            "is_default": False,
+                                            "is_available": True,
+                                            "sort_order": 2,
+                                        },
+                                        {
+                                            "id": 9,
+                                            "group_id": 2,
+                                            "name": "Pickled Jalapeno",
+                                            "price_delta": 1.00,
+                                            "is_default": False,
+                                            "is_available": True,
+                                            "sort_order": 3,
+                                        },
+                                        {
+                                            "id": 10,
+                                            "group_id": 2,
+                                            "name": "Bacon (2 slices)",
+                                            "price_delta": 3.00,
+                                            "is_default": False,
+                                            "is_available": True,
+                                            "sort_order": 6,
+                                        },
+                                    ],
+                                },
+                                {
+                                    "id": 3,
+                                    "restaurant_id": 5,
+                                    "name": "Make It Combo",
+                                    "description": "Served with house mayo and ketchup",
+                                    "selection_type": "single",
+                                    "min_select": 0,
+                                    "max_select": 1,
+                                    "free_allowance": 0,
+                                    "free_allowance_strategy": "HIGHEST_PRICE_FIRST",
+                                    "allows_quantity": False,
+                                    "max_quantity_per_option": None,
+                                    "prompt_style": "ASK_ALWAYS",
+                                    "is_required": False,
+                                    "is_available": True,
+                                    "sort_order": 3,
+                                    "values": [
+                                        {
+                                            "id": 14,
+                                            "group_id": 3,
+                                            "name": "Waffle Fries",
+                                            "price_delta": 4.50,
+                                            "is_default": False,
+                                            "is_available": True,
+                                            "sort_order": 0,
+                                        },
+                                        {
+                                            "id": 15,
+                                            "group_id": 3,
+                                            "name": "Yam Fries",
+                                            "price_delta": 5.50,
+                                            "is_default": False,
+                                            "is_available": True,
+                                            "sort_order": 1,
+                                        },
+                                        {
+                                            "id": 16,
+                                            "group_id": 3,
+                                            "name": "Fries + Pop (Waffle Fries)",
+                                            "price_delta": 6.00,
+                                            "is_default": False,
+                                            "is_available": True,
+                                            "sort_order": 2,
+                                        },
+                                    ],
+                                },
                             ],
                         }
                     }
                 },
-            }
+            },
+            404: {
+                "description": "Menu item not found",
+                "content": {"application/json": {"example": {"detail": "Menu item not found"}}},
+            },
         }
     },
 )
@@ -306,8 +503,8 @@ async def get_menu_item(
                 "application/json": {
                     "schema": MENU_UPDATE_SCHEMA,
                     "example": {
-                        "price": 17.99,
-                        "item_desc": "Updated description",
+                        "price": 16.50,
+                        "item_desc": "Nashville st hot chicken breast with frying pan hot dust, spicy mayo, cabbage slaw, pickles — now with extra crunch",
                         "is_special": True,
                     },
                 }
@@ -315,25 +512,37 @@ async def get_menu_item(
         },
         "responses": {
             200: {
-                "description": "Menu item updated",
+                "description": "Updated menu item with all fields",
                 "content": {
                     "application/json": {
                         "example": {
                             "id": 1,
-                            "restaurant_id": 10,
-                            "restaurant_name": "Ressy Test Kitchen",
-                            "item_name": "Margherita Pizza",
-                            "price": 17.99,
-                            "category": "Pizza",
-                            "sub_category": "Classic",
-                            "item_desc": "Updated description",
-                            "avg_prep_time": 20,
+                            "restaurant_id": 5,
+                            "restaurant_name": "Frying Pan",
+                            "category": "Chicken Sandwiches",
+                            "sub_category": "White Meat (Chicken Breast)",
+                            "item_name": "OG Hot Chicken",
+                            "item_desc": "Nashville st hot chicken breast with frying pan hot dust, spicy mayo, cabbage slaw, pickles — now with extra crunch",
+                            "price": 16.50,
+                            "avg_prep_time": 12,
+                            "suggested_items": [2, 3],
                             "is_available": True,
                             "is_special": True,
+                            "created_at": "2026-03-15T12:00:00",
+                            "updated_at": "2026-03-15T13:30:00",
+                            "option_groups": None,
                         }
                     }
                 },
-            }
+            },
+            400: {
+                "description": "Validation error",
+                "content": {"application/json": {"example": {"detail": "One or more suggested item IDs do not exist"}}},
+            },
+            404: {
+                "description": "Menu item not found",
+                "content": {"application/json": {"example": {"detail": "Menu item not found"}}},
+            },
         },
     },
 )
@@ -377,7 +586,34 @@ async def update_menu_item(
     "/menu/{menu_id}",
     status_code=status.HTTP_200_OK,
     summary="Delete Menu Item",
-    description="Delete a menu item and remove it from suggested items of other items. Requires admin authentication.",
+    description=(
+        "Delete a menu item and remove it from suggested items of other items. "
+        "Returns 409 if the item is referenced by existing orders. Requires admin authentication."
+    ),
+    openapi_extra={
+        "responses": {
+            200: {
+                "description": "Menu item deleted",
+                "content": {
+                    "application/json": {"example": {"message": "Menu item deleted successfully", "menu_id": 1}}
+                },
+            },
+            404: {
+                "description": "Menu item not found",
+                "content": {"application/json": {"example": {"detail": "Menu item not found"}}},
+            },
+            409: {
+                "description": "Menu item is referenced by existing orders and cannot be deleted",
+                "content": {
+                    "application/json": {
+                        "example": {
+                            "detail": "Cannot delete this menu item because it is referenced by existing orders. Consider marking it as unavailable instead."
+                        }
+                    }
+                },
+            },
+        }
+    },
 )
 async def delete_menu_item(
     menu_id: int,
@@ -386,7 +622,8 @@ async def delete_menu_item(
     """
     Delete a menu item from the database.
 
-    This will also remove the item from the suggested_items array of any other menu items.
+    This will also remove the item from the suggested_items array of any other menu items
+    and detach any option group mappings.
 
     **Authentication**: Requires valid admin JWT token.
 
@@ -398,6 +635,7 @@ async def delete_menu_item(
     **Errors**:
     - 401: Unauthorized (invalid or missing JWT token)
     - 404: Menu item not found
+    - 409: Item is referenced by existing orders (foreign key constraint)
     """
     menu_service.delete_menu_item(menu_id)
     return {"message": "Menu item deleted successfully", "menu_id": menu_id}
@@ -416,7 +654,33 @@ async def delete_menu_item(
                     "example": {"is_available": False},
                 }
             },
-        }
+        },
+        "responses": {
+            200: {
+                "description": "Menu item with updated availability",
+                "content": {
+                    "application/json": {
+                        "example": {
+                            "id": 1,
+                            "restaurant_id": 5,
+                            "restaurant_name": "Frying Pan",
+                            "category": "Chicken Sandwiches",
+                            "sub_category": "White Meat (Chicken Breast)",
+                            "item_name": "OG Hot Chicken",
+                            "item_desc": "Nashville st hot chicken breast with frying pan hot dust, spicy mayo, cabbage slaw, pickles",
+                            "price": 15.50,
+                            "avg_prep_time": 12,
+                            "suggested_items": [2, 3],
+                            "is_available": False,
+                            "is_special": False,
+                            "created_at": "2026-03-15T12:00:00",
+                            "updated_at": "2026-03-15T14:00:00",
+                            "option_groups": None,
+                        }
+                    }
+                },
+            },
+        },
     },
 )
 async def toggle_availability(
@@ -459,7 +723,33 @@ async def toggle_availability(
                     "example": {"is_special": True},
                 }
             },
-        }
+        },
+        "responses": {
+            200: {
+                "description": "Menu item with updated special status",
+                "content": {
+                    "application/json": {
+                        "example": {
+                            "id": 4,
+                            "restaurant_id": 5,
+                            "restaurant_name": "Frying Pan",
+                            "category": "Chicken Sandwiches",
+                            "sub_category": "White Meat (Chicken Breast)",
+                            "item_name": "Waffle Sando",
+                            "item_desc": "Nashville st hot chicken breast with frying pan hot dust, marble cheese, powdered sugar, house-made maple butter syrup",
+                            "price": 17.00,
+                            "avg_prep_time": None,
+                            "suggested_items": None,
+                            "is_available": True,
+                            "is_special": True,
+                            "created_at": "2026-03-15T12:00:00",
+                            "updated_at": "2026-03-15T14:00:00",
+                            "option_groups": None,
+                        }
+                    }
+                },
+            },
+        },
     },
 )
 async def toggle_special(
@@ -500,12 +790,26 @@ async def toggle_special(
                 "application/json": {
                     "schema": BULK_AVAILABILITY_SCHEMA,
                     "example": {
-                        "menu_item_ids": [1, 2, 3, 4],
+                        "menu_item_ids": [1, 2, 3, 4, 5, 6, 7],
                         "is_available": False,
                     },
                 }
             },
-        }
+        },
+        "responses": {
+            200: {
+                "description": "Number of items updated",
+                "content": {"application/json": {"example": {"updated_count": 7}}},
+            },
+            400: {
+                "description": "Validation error (items don't belong to restaurant, empty array, or IDs don't exist)",
+                "content": {
+                    "application/json": {
+                        "example": {"detail": "One or more menu items do not belong to this restaurant"}
+                    }
+                },
+            },
+        },
     },
 )
 async def bulk_update_availability(
@@ -540,9 +844,27 @@ async def bulk_update_availability(
 @router.get(
     "/restaurants/{restaurant_id}/menu/categories",
     summary="Get Menu Categories",
-    description=(
-        "Retrieve all distinct categories and sub-categories for a restaurant's menu. " "Requires admin authentication."
-    ),
+    description="Retrieve all distinct categories and sub-categories for a restaurant's menu. Requires admin authentication.",
+    openapi_extra={
+        "responses": {
+            200: {
+                "description": "Categories with their sub-categories",
+                "content": {
+                    "application/json": {
+                        "example": {
+                            "categories": {
+                                "Chicken Sandwiches": [
+                                    "White Meat (Chicken Breast)",
+                                    "Dark Meat (Chicken Thigh)",
+                                ],
+                                "Fries": [],
+                            }
+                        }
+                    }
+                },
+            },
+        }
+    },
 )
 async def get_menu_categories(
     restaurant_id: int,
@@ -557,17 +879,6 @@ async def get_menu_categories(
     - `restaurant_id`: ID of the restaurant
 
     **Returns**: Dictionary with categories as keys and arrays of sub-categories as values
-
-    **Example Response**:
-    ```json
-    {
-      "categories": {
-        "Appetizers": ["Vegetarian", "Seafood"],
-        "Entrees": ["Chicken", "Beef", "Vegetarian"],
-        "Desserts": []
-      }
-    }
-    ```
 
     **Errors**:
     - 401: Unauthorized (invalid or missing JWT token)

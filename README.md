@@ -53,12 +53,14 @@ ressy-ai-backend/
 │   │   ├── client_client_users.py  # Client CRM user management (manager-scoped)
 │   │   ├── client_faqs.py     # Client CRM FAQ endpoints
 │   │   ├── client_menus.py    # Client CRM menu endpoints
+│   │   ├── client_menu_options.py  # Client CRM menu option group/value endpoints
 │   │   ├── client_restaurant.py  # Client CRM restaurant endpoints (self-scoped)
 │   │   ├── dashboard_orders.py  # Dashboard order management (RBAC)
 │   │   ├── dashboard_reservations.py  # Dashboard reservation management (RBAC)
 │   │   ├── dashboard_users.py  # Dashboard user management (RBAC)
 │   │   ├── faqs.py            # FAQ management endpoints (Admin CRM)
 │   │   ├── menus.py           # Menu endpoints (Admin CRM)
+│   │   ├── menu_options.py    # Menu option group/value endpoints (Admin CRM)
 │   │   ├── opentable.py       # OpenTable integration endpoints
 │   │   ├── order_history.py   # Order history endpoints
 │   │   ├── orders.py          # Order endpoints
@@ -80,42 +82,58 @@ ressy-ai-backend/
 │   │   ├── call_models.py     # Call and transcript models
 │   │   ├── common_models.py   # Common response models (pagination, etc.)
 │   │   ├── menu_models.py     # Menu item models
+│   │   ├── menu_option_models.py  # Menu option group/value models
 │   │   └── user_models.py     # User models
 │   ├── repositories/          # Data access layer
+│   │   ├── db_pool.py        # Connection pool
+│   │   ├── mysql_activity_history_repo.py
 │   │   ├── mysql_auth_repo.py
 │   │   ├── mysql_base.py     # Base MySQL repository
 │   │   ├── mysql_call_repo.py
+│   │   ├── mysql_escalation_repo.py
 │   │   ├── mysql_faq_repo.py
+│   │   ├── mysql_menu_item_option_repo.py
+│   │   ├── mysql_menu_option_repo.py
 │   │   ├── mysql_menu_repo.py
+│   │   ├── mysql_notification_log_repo.py
+│   │   ├── mysql_notification_repo.py
 │   │   ├── mysql_opentable_log_repo.py
+│   │   ├── mysql_order_item_repo.py
 │   │   ├── mysql_order_repo.py
 │   │   ├── mysql_reservation_repo.py
-│   │   ├── mysql_ressy_admin_repo.py
 │   │   ├── mysql_restaurant_admin_repo.py
+│   │   ├── mysql_restaurant_features_repo.py
 │   │   ├── mysql_restaurant_repo.py
-│   │   ├── mysql_transcript_repo.py
+│   │   ├── mysql_ressy_admin_repo.py
+│   │   ├── mysql_user_restaurant_metadata_repo.py
 │   │   └── mysql_user_repo.py
 │   ├── services/              # Business logic services
 │   │   ├── callmanager/       # Call management utilities
 │   │   │   ├── call_filler.py
 │   │   │   ├── call_latency.py
 │   │   │   └── call_state.py
+│   │   ├── activity_history_service.py
 │   │   ├── admin_user_common.py
 │   │   ├── auth_service.py
 │   │   ├── call_service.py
 │   │   ├── client_analytics_service.py
 │   │   ├── dashboard_order_service.py
 │   │   ├── deepgram_service.py
+│   │   ├── escalation_service.py
 │   │   ├── faq_service.py
+│   │   ├── kill_switch_event_service.py
+│   │   ├── menu_option_service.py
 │   │   ├── menu_service.py
-│   │   ├── opentable_service.py
+│   │   ├── notification_persistence_service.py
+│   │   ├── notification_service.py
+│   │   ├── order_customization_service.py
 │   │   ├── order_service.py
+│   │   ├── opentable_service.py
 │   │   ├── reservation_service.py
 │   │   ├── ressy_admin_service.py
-│   │   ├── restaurant_service.py
 │   │   ├── restaurant_admin_service.py
+│   │   ├── restaurant_service.py
 │   │   ├── sse_service.py
-│   │   ├── transcript_service.py
 │   │   ├── twilio_service.py
 │   │   ├── user_service.py
 │   │   └── websocket_service.py
@@ -785,17 +803,30 @@ All endpoints are organized by tags in the Swagger documentation:
 - **Menus** (`/api/v1/admin/*`) - Admin only:
   - `POST /api/v1/admin/restaurants/{restaurant_id}/menu` - Create menu item
   - `GET /api/v1/admin/restaurants/{restaurant_id}/menu` - List menu items (paginated, with filters)
-  - `GET /api/v1/admin/menu/{menu_id}` - Get menu item by ID
+  - `GET /api/v1/admin/menu/{menu_id}` - Get menu item by ID (includes attached option groups)
   - `PUT /api/v1/admin/menu/{menu_id}` - Update menu item
-  - `DELETE /api/v1/admin/menu/{menu_id}` - Delete menu item
+  - `DELETE /api/v1/admin/menu/{menu_id}` - Delete menu item (409 if referenced by orders)
   - `PATCH /api/v1/admin/menu/{menu_id}/availability` - Toggle item availability
   - `PATCH /api/v1/admin/menu/{menu_id}/special` - Toggle special status
   - `PATCH /api/v1/admin/restaurants/{restaurant_id}/menu/bulk-availability` - Bulk update availability
   - `GET /api/v1/admin/restaurants/{restaurant_id}/menu/categories` - Get menu categories
 
+- **Menu Customization Option Groups** (`/api/v1/admin/*`) - Admin only:
+  - `POST /api/v1/admin/restaurants/{restaurant_id}/menu/option-groups` - Create option group (with inline values)
+  - `GET /api/v1/admin/restaurants/{restaurant_id}/menu/option-groups` - List option groups
+  - `GET /api/v1/admin/menu/option-groups/{group_id}` - Get option group by ID
+  - `PUT /api/v1/admin/menu/option-groups/{group_id}` - Update option group
+  - `DELETE /api/v1/admin/menu/option-groups/{group_id}` - Delete option group
+  - `POST /api/v1/admin/menu/option-groups/{group_id}/values` - Create option value
+  - `PUT /api/v1/admin/menu/option-values/{value_id}` - Update option value
+  - `DELETE /api/v1/admin/menu/option-values/{value_id}` - Delete option value
+  - `POST /api/v1/admin/menu/{menu_id}/option-groups` - Attach option group to menu item (with per-item overrides)
+  - `DELETE /api/v1/admin/menu/{menu_id}/option-groups/{group_id}` - Detach option group from menu item
+
 - **Client CRM (scoped, `/api/v1/client/*`)** – restaurant_id is taken from the authenticated restaurant token (`claims["restaurant_id"]`), and user UUID is `claims["sub"]`. **Note**: Sensitive integration details (`twilio_details`, `deepgram_details`, `open_table_details`) are excluded from client endpoints for security:
   - FAQs: `GET/POST /api/v1/client/faqs`, `GET/PUT/DELETE /api/v1/client/faqs/{faq_id}`, `POST /api/v1/client/faqs/bulk`
   - Menus: `GET/POST /api/v1/client/menu`, `GET/PUT/DELETE /api/v1/client/menu/{menu_id}`, `PATCH /api/v1/client/menu/{menu_id}/availability`, `PATCH /api/v1/client/menu/{menu_id}/special`, `PATCH /api/v1/client/menu/bulk-availability`, `GET /api/v1/client/menu/categories`
+  - Menu Options: `GET/POST /api/v1/client/menu/option-groups`, `GET/PUT/DELETE /api/v1/client/menu/option-groups/{group_id}`, `POST /api/v1/client/menu/option-groups/{group_id}/values`, `PUT/DELETE /api/v1/client/menu/option-values/{value_id}`, `POST /api/v1/client/menu/{menu_id}/option-groups`, `DELETE /api/v1/client/menu/{menu_id}/option-groups/{group_id}`
   - Restaurant self: `GET /api/v1/client/restaurant`, `PUT /api/v1/client/restaurant`, `PATCH /api/v1/client/restaurant/kill-switch` (excludes sensitive integration fields; supports agent capabilities including SMS Redirect and kill switch)
   - Client users (manager role only except self reset): `GET/POST /api/v1/client/users`, `GET/PUT/DELETE /api/v1/client/users/{uuid}`, `POST /api/v1/client/users/{uuid}/reset-password`, `PUT /api/v1/client/users/{uuid}/role`, `POST /api/v1/client/users/bulk`, `POST /api/v1/client/me/reset-password` (self-service)
   - Analytics: `GET /api/v1/client/analytics` - Comprehensive restaurant analytics (calls, reservations, orders, menu, FAQs, customers, recent activity, today's schedule, pending orders), `GET /api/v1/client/analytics/calls` - Detailed call analytics, `GET /api/v1/client/analytics/reservations` - Reservation analytics, `GET /api/v1/client/analytics/orders` - Order analytics, `GET /api/v1/client/analytics/menu` - Menu analytics
@@ -1228,8 +1259,9 @@ Run in numerical order (001, 002, … 040). Key migrations:
 36. **036_recreate_notifications.sql** – Notifications table
 37. **037_add_sms_redirect_features.sql** – SMS Redirect fields on Restaurant_Features (orders/reservations redirect URL and message)
 38. **038_add_sms_redirect_entity_type.sql** – Add 'sms_redirect' to Notification_Logs entity_type ENUM
-39. **039_create_menu_customizations.sql** – Menu option groups/values tables
+39. **039_create_menu_customizations.sql** – Menu_Option_Groups, Menu_Option_Values, and Menu_Item_Option_Groups tables for menu customization
 40. **040_add_restaurant_kill_switch.sql** – Add `kill_switch_enabled` to Restaurants
+41. **041_allow_null_restaurant_id_for_system_notifications.sql** – Allow NULL restaurant_id for system-wide notifications
 
 **Restaurant operating hours:** Per-day hours (031) support `open`, `close`, `is_closed`, and `is_24_hours` per day. When `is_24_hours` is true for a day, the restaurant is treated as open all day and open/close times are ignored. The voice agent (Deepgram function-calling in `app/agent_fc/`) uses shared utilities (`app.utils.restaurant_hours`: `is_restaurant_open_now`, `is_datetime_within_operating_hours`, `format_operating_window`), which already handle per-day and 24-hour logic—**no agent function code changes are required** for `is_24_hours`.
 
@@ -1240,6 +1272,9 @@ Run in numerical order (001, 002, … 040). Key migrations:
 - **Users**: Customer information
 - **Restaurants**: Restaurant details and integrations
 - **Menus**: Menu items for restaurants
+- **Menu_Option_Groups**: Reusable customization option groups (e.g. "Spice Level", "Add-ons") per restaurant
+- **Menu_Option_Values**: Selectable values within an option group (e.g. "Mild Hot", "Extra Cheese") with price deltas
+- **Menu_Item_Option_Groups**: Many-to-many mapping of option groups to menu items, with per-item overrides for min/max selection, free allowance, quantity rules, and required status
 - **Orders**: Order information
 - **Order_Details**: Individual items in orders
 
