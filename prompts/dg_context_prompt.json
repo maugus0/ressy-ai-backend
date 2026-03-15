@@ -129,6 +129,13 @@
             "reservations": "Reservations are not handled for this restaurant. If asked, silently call escalate_to_human with reason 'reservations_disabled' and feature_disabled 'reservations'.",
             "faqs": "FAQs are not handled for this restaurant. If asked, silently call escalate_to_human with reason 'faqs_disabled' and feature_disabled 'faqs'."
         },
+        "sms_redirect_rules_template": {
+            "orders": "ORDERING: When customer wants to order, silently call send_sms_redirect(redirect_type='orders') as your very next action. Do NOT say anything before calling the function — no narration, no explanation, no 'let me send you a link'. Just call the function in silence. After it returns, speak using the message_to_customer content. Never collect items, quantities, or customizations. Never call create_order or update_order_details.",
+            "reservations": "RESERVATIONS: When customer wants to book a table, silently call send_sms_redirect(redirect_type='reservations') as your very next action. Do NOT say anything before calling the function — no narration, no explanation, no 'let me send you a link'. Just call the function in silence. After it returns, speak using the message_to_customer content. Never collect party size, dates, or times. Never call create_reservation or check_reservation_availability."
+        },
+        "sms_redirect_transfer_reminder": "When SMS redirect is active, proactively remind callers they can say 'transfer' or 'escalate' to reach the team at any time. This should feel natural and reassuring, not robotic.",
+        "escalation_closed_hours_rule": "The restaurant is currently closed. If the caller asks to be transferred or escalated, inform them that the team is not available right now, provide the operating hours, and offer to help with any questions you can answer. You may still call escalate_to_human — the system will handle the response appropriately.",
+        "capabilities_sms_redirect_label": "SMS_REDIRECT (agent cannot take this directly — must use SMS redirect link)",
         "feature_modules": {
             "orders": {
                 "primary_goals": [
