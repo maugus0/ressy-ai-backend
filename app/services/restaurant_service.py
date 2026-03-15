@@ -149,6 +149,8 @@ class RestaurantService:
                 raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid timezone")
         return cleaned
 
+    VALID_ESCALATION_MODES = ("always", "open_hours_only")
+
     @staticmethod
     def _validate_escalation_forwarding(forward_escalations: bool, escalation_phone_number: Optional[str]) -> None:
         if forward_escalations and not escalation_phone_number:
@@ -156,6 +158,18 @@ class RestaurantService:
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="escalation_phone_number is required when forward_escalations is enabled",
             )
+
+    @classmethod
+    def _validate_escalation_mode(cls, mode: Optional[str]) -> str:
+        if mode is None:
+            return "always"
+        cleaned = str(mode).strip().lower()
+        if cleaned not in cls.VALID_ESCALATION_MODES:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"escalation_mode must be one of: {', '.join(cls.VALID_ESCALATION_MODES)}",
+            )
+        return cleaned
 
     @staticmethod
     def _normalize_feature_value(value: Any, default: bool = True) -> bool:
@@ -364,6 +378,8 @@ class RestaurantService:
                 restaurant["kill_switch_enabled"] = False
         else:
             restaurant["kill_switch_enabled"] = False
+        if "escalation_mode" not in restaurant or restaurant.get("escalation_mode") is None:
+            restaurant["escalation_mode"] = "always"
         features_source = restaurant.get("features")
         if features_source is None and restaurant.get("id") is not None:
             try:
@@ -545,6 +561,7 @@ class RestaurantService:
         self._validate_phone_number(data.get("twilio_phone_number"), "twilio_phone_number")
         self._validate_phone_number(data.get("escalation_phone_number"), "escalation_phone_number")
         self._validate_escalation_forwarding(bool(data.get("forward_escalations")), data.get("escalation_phone_number"))
+        escalation_mode = self._validate_escalation_mode(data.get("escalation_mode"))
         self._validate_json_field("twilio_details", data.get("twilio_details"))
         self._validate_json_field("deepgram_details", data.get("deepgram_details"))
         self._validate_json_field("open_table_details", data.get("open_table_details"))
@@ -581,6 +598,7 @@ class RestaurantService:
             "forward_escalations": data.get("forward_escalations", False),
             "escalation_phone_number": data.get("escalation_phone_number"),
             "kill_switch_enabled": data.get("kill_switch_enabled", False),
+            "escalation_mode": escalation_mode,
             "timezone": timezone_value,
             "reservation_seating_capacity": data.get("reservation_seating_capacity", 50),
             "reservation_advance_days": data.get("reservation_advance_days", 30),
@@ -723,6 +741,9 @@ class RestaurantService:
             del data["operating_hours"]
         if "timezone" in data:
             data["timezone"] = self._normalize_timezone(data.get("timezone"))
+
+        if "escalation_mode" in data:
+            data["escalation_mode"] = self._validate_escalation_mode(data.get("escalation_mode"))
 
         forward_escalations = bool(data.get("forward_escalations", current.get("forward_escalations", False)))
         escalation_phone_number = data.get("escalation_phone_number", current.get("escalation_phone_number"))

@@ -30,6 +30,7 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
                     r.forward_escalations,
                     r.escalation_phone_number,
                     r.kill_switch_enabled,
+                    r.escalation_mode,
                     r.monday_open, r.monday_close, r.monday_closed,
                     r.tuesday_open, r.tuesday_close, r.tuesday_closed,
                     r.wednesday_open, r.wednesday_close, r.wednesday_closed,
@@ -101,6 +102,7 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
                 result["forward_escalations"] = False
                 result["escalation_phone_number"] = None
                 result["kill_switch_enabled"] = False
+                result["escalation_mode"] = "always"
                 result["reservation_seating_capacity"] = 50
                 result["reservation_advance_days"] = 30
                 result["timezone"] = None
@@ -139,6 +141,7 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
                     r.forward_escalations,
                     r.escalation_phone_number,
                     r.kill_switch_enabled,
+                    r.escalation_mode,
                     r.monday_open, r.monday_close, r.monday_closed,
                     r.tuesday_open, r.tuesday_close, r.tuesday_closed,
                     r.wednesday_open, r.wednesday_close, r.wednesday_closed,
@@ -226,6 +229,7 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
                 result["forward_escalations"] = False
                 result["escalation_phone_number"] = None
                 result["kill_switch_enabled"] = False
+                result["escalation_mode"] = "always"
                 result["reservation_seating_capacity"] = 50
                 result["reservation_advance_days"] = 30
                 result["timezone"] = None
@@ -262,6 +266,7 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
                     r.forward_escalations,
                     r.escalation_phone_number,
                     r.kill_switch_enabled,
+                    r.escalation_mode,
                     r.monday_open, r.monday_close, r.monday_closed,
                     r.tuesday_open, r.tuesday_close, r.tuesday_closed,
                     r.wednesday_open, r.wednesday_close, r.wednesday_closed,
@@ -333,6 +338,7 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
                 result["forward_escalations"] = False
                 result["escalation_phone_number"] = None
                 result["kill_switch_enabled"] = False
+                result["escalation_mode"] = "always"
                 result["reservation_seating_capacity"] = 50
                 result["reservation_advance_days"] = 30
                 result["timezone"] = None
@@ -358,7 +364,7 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
                 name, address, phone_number, twilio_phone_number,
                 twilio_details, deepgram_details, open_table_details,
                 forward_minutes, backward_minutes, is_credit_card_required_for_reservation,
-                forward_escalations, escalation_phone_number, kill_switch_enabled,
+                forward_escalations, escalation_phone_number, kill_switch_enabled, escalation_mode,
                 monday_open, monday_close, monday_closed,
                 tuesday_open, tuesday_close, tuesday_closed,
                 wednesday_open, wednesday_close, wednesday_closed,
@@ -370,8 +376,8 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
                 thursday_24_hours, friday_24_hours, saturday_24_hours, sunday_24_hours,
                 timezone, reservation_seating_capacity, reservation_advance_days,
                 created_at, updated_at
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                      %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                      %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
                       %s, %s, %s, %s, %s, %s, %s,
                       %s, %s, %s, NOW(), NOW())
         """
@@ -391,6 +397,7 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
                 data.get("forward_escalations", False),
                 data.get("escalation_phone_number"),
                 data.get("kill_switch_enabled", False),
+                data.get("escalation_mode", "always"),
                 data.get("monday_open"),
                 data.get("monday_close"),
                 data.get("monday_closed", False),
@@ -491,6 +498,7 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
                 r.forward_escalations,
                 r.escalation_phone_number,
                 r.kill_switch_enabled,
+                r.escalation_mode,
                 r.monday_open, r.monday_close, r.monday_closed,
                 r.tuesday_open, r.tuesday_close, r.tuesday_closed,
                 r.wednesday_open, r.wednesday_close, r.wednesday_closed,
@@ -588,6 +596,9 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
         if "kill_switch_enabled" in data:
             update_fields.append("kill_switch_enabled = %s")
             params.append(data["kill_switch_enabled"])
+        if "escalation_mode" in data:
+            update_fields.append("escalation_mode = %s")
+            params.append(data["escalation_mode"])
         # Handle per-day operating hours
         for day in ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]:
             if f"{day}_open" in data:

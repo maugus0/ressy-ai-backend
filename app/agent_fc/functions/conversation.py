@@ -240,6 +240,39 @@ async def escalate_to_human(**kwargs) -> AgentFunctionResult:
             forward_escalations = False
         escalation_phone_number = restaurant.get("escalation_phone_number")
 
+    # Check escalation_mode: if "open_hours_only" and restaurant is closed, block transfer
+    escalation_mode = "always"
+    if restaurant:
+        escalation_mode = restaurant.get("escalation_mode", "always")
+
+    if escalation_mode == "open_hours_only" and restaurant:
+        from app.utils.restaurant_hours import format_operating_window, is_restaurant_open_now
+
+        if not is_restaurant_open_now(restaurant):
+            hours_label = format_operating_window(restaurant)
+            return AgentFunctionResult(
+                content={
+                    "status": "ESCALATION_BLOCKED_CLOSED",
+                    "message": (
+                        f"The restaurant is currently closed. The team is available during operating hours: {hours_label}. "
+                        "I'm happy to help with any questions about the menu, hours, or location in the meantime. "
+                        "Or you can call back during operating hours to be connected to the team."
+                    ),
+                },
+                side_effects=[
+                    AgentSideEffect(
+                        {
+                            "type": "InjectAgentMessage",
+                            "message": (
+                                f"I'm sorry, the restaurant is currently closed so I can't transfer you to the team right now. "
+                                f"They're available during {hours_label}. "
+                                f"But I'm still here and happy to help with any questions you might have!"
+                            ),
+                        }
+                    ),
+                ],
+            )
+
     escalation_service = EscalationService()
     escalation_id: Optional[int] = None
     try:
@@ -464,18 +497,10 @@ def _get_sms_redirect_message(
     custom_message: Optional[str],
     restaurant_name: str,
 ) -> str:
-    """Build the SMS message with a consistent format.
+    """Build the SMS message body.
 
-    SMS Format:
-    ```
-    Hello.
-    {redirect_message}
-
-    {redirect_url}
-
-    Yours sincerely,
-    {restaurant_name} via RessyAI
-    ```
+    Includes the redirect link, a note that Ressy can still help on the call,
+    and instructions on how to escalate to staff.
 
     If custom_message is provided, it's used as the redirect message.
     Otherwise, the default message for the redirect type is used.
@@ -488,11 +513,16 @@ def _get_sms_redirect_message(
             DEFAULT_ORDERS_REDIRECT_MESSAGE if redirect_type == "orders" else DEFAULT_RESERVATIONS_REDIRECT_MESSAGE
         )
 
-    # Build the SMS with consistent format
-    sms = f"""Hello.
+    sms = f"""Hello from {restaurant_name}.
 {redirect_message}
 
 {redirect_url}
+
+Still on the call? Ressy (our AI assistant) knows everything about {restaurant_name} — menu items, ingredients, prices, hours, and more. Feel free to ask!
+
+If you'd prefer to speak with staff directly, just say "escalate" or "transfer" and Ressy will connect you right away.
+
+But Ressy might be a little sad to see you go — if you have any general questions, feel free to ask her!
 
 Yours sincerely,
 {restaurant_name} via RessyAI"""
@@ -729,16 +759,14 @@ async def send_sms_redirect(**kwargs) -> AgentFunctionResult:
         if args.redirect_type == "orders":
             message_to_customer = (
                 "I've just sent you a text with a link to place your order. "
-                "But I'm still here on the call if you have any questions! "
-                "Feel free to ask me about our menu items, ingredients, prices, "
-                "or anything else about the restaurant - I'm happy to help."
+                "If you ever want to speak to a live representative, just say escalate and I will transfer your call. "
+                "I'm still here — feel free to ask me anything about the restaurant."
             )
         else:  # reservations
             message_to_customer = (
                 "I've just sent you a text with a link to make your reservation. "
-                "But I'm still here if you need anything! "
-                "You can ask me about our hours, location, menu, "
-                "or any other details about the restaurant."
+                "If you ever want to speak to a live representative, just say escalate and I will transfer your call. "
+                "I'm still here — feel free to ask me anything about the restaurant."
             )
 
         return AgentFunctionResult(
@@ -746,7 +774,9 @@ async def send_sms_redirect(**kwargs) -> AgentFunctionResult:
                 "status": "success",
                 "message_to_customer": message_to_customer,
             },
-            side_effects=[AgentSideEffect({"type": "InjectAgentMessage", "message": "Perfect!"})],
+            side_effects=[
+                AgentSideEffect({"type": "InjectAgentMessage", "message": "Perfect!"}),
+            ],
         )
 
     except SMSSendError as sms_err:

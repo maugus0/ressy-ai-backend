@@ -42,7 +42,7 @@ def _build_capabilities_block(template: Dict[str, Any], feature_flags: Dict[str,
         if enabled:
             capabilities[label] = "YES"
         elif sms_redirect_enabled:
-            capabilities[label] = "SMS_REDIRECT"
+            capabilities[label] = "SMS_REDIRECT (agent cannot take this directly — must use SMS redirect link)"
         else:
             capabilities[label] = "NO"
     return capabilities
@@ -128,12 +128,12 @@ def build_prompt_from_template(template: Dict[str, Any], context: Dict[str, Any]
     # Handle orders: escalate if disabled AND no SMS redirect
     if not orders_enabled:
         if orders_sms_redirect:
-            # SMS redirect for orders - call function immediately, then speak naturally from the response
             handoff_rules.append(
-                "ORDERING: When customer wants to order, IMMEDIATELY call send_sms_redirect(redirect_type='orders'). "
-                "Do NOT announce beforehand - just call the function directly. "
-                "After the function returns, speak naturally using the message_to_customer content. "
-                "You can then answer general questions about the restaurant."
+                "ORDERING: When customer wants to order, silently call send_sms_redirect(redirect_type='orders') "
+                "as your very next action. Do NOT say anything before calling the function — no narration, "
+                "no explanation, no 'let me send you a link'. Just call the function in silence. "
+                "After it returns, speak using the message_to_customer content. "
+                "Never collect items, quantities, or customizations. Never call create_order or update_order_details."
             )
         else:
             disabled_rule = disabled_rules_template.get("orders")
@@ -143,12 +143,12 @@ def build_prompt_from_template(template: Dict[str, Any], context: Dict[str, Any]
     # Handle reservations: escalate if disabled AND no SMS redirect
     if not reservations_enabled:
         if reservations_sms_redirect:
-            # SMS redirect for reservations - call function immediately, then speak naturally from the response
             handoff_rules.append(
-                "RESERVATIONS: When customer wants to book a table, IMMEDIATELY call send_sms_redirect(redirect_type='reservations'). "
-                "Do NOT announce beforehand - just call the function directly. "
-                "After the function returns, speak naturally using the message_to_customer content. "
-                "You can then answer general questions about the restaurant."
+                "RESERVATIONS: When customer wants to book a table, silently call send_sms_redirect(redirect_type='reservations') "
+                "as your very next action. Do NOT say anything before calling the function — no narration, "
+                "no explanation, no 'let me send you a link'. Just call the function in silence. "
+                "After it returns, speak using the message_to_customer content. "
+                "Never collect party size, dates, or times. Never call create_reservation or check_reservation_availability."
             )
         else:
             disabled_rule = disabled_rules_template.get("reservations")
@@ -159,6 +159,25 @@ def build_prompt_from_template(template: Dict[str, Any], context: Dict[str, Any]
         disabled_rule = disabled_rules_template.get("faqs")
         if disabled_rule:
             handoff_rules.append(disabled_rule)
+
+    # When any SMS redirect is active, remind the agent to mention transfer option
+    if orders_sms_redirect or reservations_sms_redirect:
+        handoff_rules.append(
+            "When SMS redirect is active, proactively remind callers they can say 'transfer' or 'escalate' "
+            "to reach the team at any time. This should feel natural and reassuring, not robotic."
+        )
+
+    # Escalation mode awareness
+    restaurant_profile = context.get("restaurant_profile", {}) if isinstance(context, dict) else {}
+    escalation_mode = restaurant_profile.get("escalation_mode", "always")
+    is_open_now = restaurant_profile.get("is_open_now", True)
+    if escalation_mode == "open_hours_only" and not is_open_now:
+        handoff_rules.append(
+            "The restaurant is currently closed. If the caller asks to be transferred or escalated, "
+            "inform them that the team is not available right now, provide the operating hours, "
+            "and offer to help with any questions you can answer. You may still call escalate_to_human — "
+            "the system will handle the response appropriately."
+        )
 
     call_flow_base = deepcopy(prompt_template.get("call_flow_base", {}))
     intent_sentence = _build_intent_sentence(prompt_template, feature_flags)

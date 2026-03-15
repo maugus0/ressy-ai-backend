@@ -189,11 +189,10 @@ def get_function_definitions(feature_flags: Optional[Dict[str, Any]] = None) -> 
                 name="send_sms_redirect",
                 description=(
                     "Send SMS with ordering/reservation link to caller. "
-                    "Call IMMEDIATELY when customer wants to order (redirect_type='orders') or "
-                    "book a table (redirect_type='reservations'). "
-                    "Do NOT announce beforehand - just call the function directly. "
-                    "After calling, speak naturally using the returned message_to_customer content. "
-                    "Restaurant and phone number are automatic from context - only specify redirect_type."
+                    "Call SILENTLY as your very first action when customer wants to order or book — "
+                    "do NOT speak or narrate before calling. No 'let me send you a link' or similar. "
+                    "After it returns, speak naturally using the returned message_to_customer content. "
+                    "Restaurant and phone number are automatic from context — only specify redirect_type."
                 ),
                 schema=sms_redirect_schema,
             )
