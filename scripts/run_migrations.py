@@ -2,14 +2,14 @@
 Script to run MySQL migrations with ledger-based tracking.
 """
 
-from __future__ import annotations
-
 import argparse
 import hashlib
 import os
+import re
 import sys
 import time
 from pathlib import Path
+from typing import Dict, List, Optional
 
 import mysql.connector
 from dotenv import load_dotenv
@@ -27,13 +27,17 @@ logger = get_logger(__name__)
 load_dotenv()
 
 SCHEMA_MIGRATIONS_TABLE = "Schema_Migrations"
+MIGRATION_FILENAME_PATTERN = re.compile(r"^\d+_.+\.sql$")
+DB_IDENTIFIER_PATTERN = re.compile(r"^[A-Za-z0-9_]+$")
+MIGRATION_LOCK_NAME = "ressy_schema_migrations"
+RECOVERABLE_SCHEMA_ERROR_CODES = {1050, 1060, 1061, 1091}
 
 
 class MigrationError(RuntimeError):
     """Raised when migration execution should stop."""
 
 
-def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     """Parse CLI arguments."""
     parser = argparse.ArgumentParser(description="Run tracked MySQL migrations.")
     parser.add_argument(
@@ -66,13 +70,21 @@ def get_connection():
         raise
 
 
+def validate_database_name(db_name: str) -> str:
+    """Validate database identifier before interpolating it into SQL."""
+    if not DB_IDENTIFIER_PATTERN.match(db_name):
+        raise MigrationError("Invalid database name. Only letters, numbers, and underscores are allowed.")
+    return db_name
+
+
 def create_database(connection, db_name: str) -> None:
     """Create database if it doesn't exist."""
     cursor = None
     try:
+        validated_db_name = validate_database_name(db_name)
         cursor = connection.cursor()
-        cursor.execute(f"CREATE DATABASE IF NOT EXISTS {db_name}")
-        logger.info("Database '%s' ready", db_name)
+        cursor.execute(f"CREATE DATABASE IF NOT EXISTS `{validated_db_name}`")
+        logger.info("Database '%s' ready", validated_db_name)
     except Error as exc:
         logger.error("Error creating database: %s", exc)
         raise
@@ -105,9 +117,42 @@ def ensure_schema_migrations_table(connection) -> None:
             cursor.close()
 
 
-def get_migration_files(migrations_dir: Path) -> list[Path]:
+def acquire_migration_lock(connection, timeout_seconds: int = 30) -> None:
+    """Acquire a MySQL advisory lock for migration planning/execution."""
+    cursor = None
+    try:
+        cursor = connection.cursor()
+        cursor.execute("SELECT GET_LOCK(%s, %s)", (MIGRATION_LOCK_NAME, timeout_seconds))
+        row = cursor.fetchone()
+        lock_acquired = int(row[0]) if row and row[0] is not None else 0
+        if lock_acquired != 1:
+            raise MigrationError("Could not acquire migration lock. Another migration process may be running.")
+    except Error as exc:
+        logger.error("Failed to acquire migration lock: %s", exc)
+        raise
+    finally:
+        if cursor:
+            cursor.close()
+
+
+def release_migration_lock(connection) -> None:
+    """Release the MySQL advisory lock if held."""
+    cursor = None
+    try:
+        cursor = connection.cursor()
+        cursor.execute("SELECT RELEASE_LOCK(%s)", (MIGRATION_LOCK_NAME,))
+    except Error as exc:
+        logger.warning("Failed to release migration lock: %s", exc)
+    finally:
+        if cursor:
+            cursor.close()
+
+
+def get_migration_files(migrations_dir: Path) -> List[Path]:
     """Return migration files sorted by filename."""
-    return sorted([file_path for file_path in migrations_dir.glob("*.sql") if file_path.name.startswith("0")])
+    return sorted(
+        [file_path for file_path in migrations_dir.glob("*.sql") if MIGRATION_FILENAME_PATTERN.match(file_path.name)]
+    )
 
 
 def calculate_checksum(file_path: Path) -> str:
@@ -115,7 +160,7 @@ def calculate_checksum(file_path: Path) -> str:
     return hashlib.sha256(file_path.read_bytes()).hexdigest()
 
 
-def get_applied_migrations(connection) -> dict[str, str]:
+def get_applied_migrations(connection) -> Dict[str, str]:
     """Return applied migration filenames mapped to their recorded checksums."""
     query = f"SELECT filename, checksum FROM {SCHEMA_MIGRATIONS_TABLE} ORDER BY filename ASC"
     cursor = None
@@ -132,7 +177,7 @@ def get_applied_migrations(connection) -> dict[str, str]:
             cursor.close()
 
 
-def record_applied_migration(connection, filename: str, checksum: str, execution_time_ms: int | None) -> None:
+def record_applied_migration(connection, filename: str, checksum: str, execution_time_ms: Optional[int]) -> None:
     """Insert a migration ledger row."""
     query = f"""
         INSERT INTO {SCHEMA_MIGRATIONS_TABLE} (filename, checksum, execution_time_ms)
@@ -151,9 +196,9 @@ def record_applied_migration(connection, filename: str, checksum: str, execution
             cursor.close()
 
 
-def split_sql_statements(sql_content: str) -> list[str]:
+def split_sql_statements(sql_content: str) -> List[str]:
     """Remove simple SQL comments and split by semicolon."""
-    lines: list[str] = []
+    lines: List[str] = []
     for line in sql_content.split("\n"):
         stripped = line.strip()
         if stripped.startswith("--"):
@@ -163,6 +208,16 @@ def split_sql_statements(sql_content: str) -> list[str]:
         lines.append(line)
     cleaned_content = "\n".join(lines)
     return [statement.strip() for statement in cleaned_content.split(";") if statement.strip()]
+
+
+def is_recoverable_schema_error(exc: Error) -> bool:
+    """Return True only for known schema-replay errors that are safe to skip."""
+    err_code = getattr(exc, "errno", None)
+    if err_code in RECOVERABLE_SCHEMA_ERROR_CODES:
+        return True
+
+    error_msg = str(exc).lower()
+    return "check that column/key exists" in error_msg
 
 
 def run_migration_file(connection, file_path: Path) -> int:
@@ -177,19 +232,11 @@ def run_migration_file(connection, file_path: Path) -> int:
                 cursor.execute(statement)
                 connection.commit()
             except Error as exc:
-                error_msg = str(exc).lower()
-                err_code = getattr(exc, "errno", None)
                 try:
                     connection.rollback()
                 except Exception:  # pragma: no cover - defensive
                     pass
-                skip_warning = (
-                    "already exists" in error_msg
-                    or "duplicate" in error_msg
-                    or err_code == 1091
-                    or "check that column/key exists" in error_msg
-                )
-                if skip_warning:
+                if is_recoverable_schema_error(exc):
                     logger.warning(
                         "Recoverable migration warning in %s: %s",
                         file_path.name,
@@ -211,11 +258,11 @@ def run_migration_file(connection, file_path: Path) -> int:
             cursor.close()
 
 
-def classify_migrations(migration_files: list[Path], applied_migrations: dict[str, str]) -> dict[str, list[str]]:
+def classify_migrations(migration_files: List[Path], applied_migrations: Dict[str, str]) -> Dict[str, List[str]]:
     """Classify migrations into applied, pending, and checksum mismatches."""
-    applied: list[str] = []
-    pending: list[str] = []
-    mismatched: list[str] = []
+    applied: List[str] = []
+    pending: List[str] = []
+    mismatched: List[str] = []
     for file_path in migration_files:
         checksum = calculate_checksum(file_path)
         recorded_checksum = applied_migrations.get(file_path.name)
@@ -229,7 +276,7 @@ def classify_migrations(migration_files: list[Path], applied_migrations: dict[st
     return {"applied": applied, "pending": pending, "mismatched": mismatched}
 
 
-def resolve_baseline_target(migration_files: list[Path], target_filename: str) -> int:
+def resolve_baseline_target(migration_files: List[Path], target_filename: str) -> int:
     """Resolve the exact migration index for baseline-through."""
     for index, file_path in enumerate(migration_files):
         if file_path.name == target_filename:
@@ -237,7 +284,7 @@ def resolve_baseline_target(migration_files: list[Path], target_filename: str) -
     raise MigrationError(f"Baseline target '{target_filename}' not found in migrations directory")
 
 
-def log_migration_plan(plan: dict[str, list[str]]) -> None:
+def log_migration_plan(plan: Dict[str, List[str]]) -> None:
     """Log the current migration plan."""
     logger.info("Applied migrations: %s", len(plan["applied"]))
     for filename in plan["applied"]:
@@ -253,7 +300,7 @@ def log_migration_plan(plan: dict[str, list[str]]) -> None:
 
 
 def baseline_through(
-    connection, migration_files: list[Path], applied_migrations: dict[str, str], target_filename: str
+    connection, migration_files: List[Path], applied_migrations: Dict[str, str], target_filename: str
 ) -> None:
     """Mark migrations up to and including target_filename as applied without executing them."""
     cutoff_index = resolve_baseline_target(migration_files, target_filename)
@@ -271,7 +318,7 @@ def baseline_through(
         logger.info("Baselined migration: %s", file_path.name)
 
 
-def apply_pending_migrations(connection, migration_files: list[Path], applied_migrations: dict[str, str]) -> None:
+def apply_pending_migrations(connection, migration_files: List[Path], applied_migrations: Dict[str, str]) -> None:
     """Apply only pending migrations, failing on checksum drift."""
     for file_path in migration_files:
         checksum = calculate_checksum(file_path)
@@ -289,18 +336,20 @@ def apply_pending_migrations(connection, migration_files: list[Path], applied_mi
         record_applied_migration(connection, file_path.name, checksum, execution_time_ms)
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(argv: Optional[List[str]] = None) -> int:
     """Run tracked migrations or operator modes."""
     args = parse_args(argv)
     db_name = os.getenv("DB_NAME", os.getenv("MYSQL_DATABASE", "ressy"))
     migrations_dir = ROOT_DIR / "migrations"
     logger.info("Starting migrations for database: %s", db_name)
 
-    connection = get_connection()
+    connection = None
     try:
+        connection = get_connection()
         create_database(connection, db_name)
         connection.database = db_name
         ensure_schema_migrations_table(connection)
+        acquire_migration_lock(connection)
 
         migration_files = get_migration_files(migrations_dir)
         logger.info("Found %s migration files", len(migration_files))
@@ -329,7 +378,8 @@ def main(argv: list[str] | None = None) -> int:
         logger.error("Migration error: %s", exc)
         return 1
     finally:
-        if connection.is_connected():
+        if connection is not None and connection.is_connected():
+            release_migration_lock(connection)
             connection.close()
             logger.info("Database connection closed")
 
