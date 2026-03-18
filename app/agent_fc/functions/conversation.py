@@ -496,8 +496,7 @@ def _get_sms_redirect_message(
 ) -> str:
     """Build the SMS message body.
 
-    Includes the redirect link, a note that Ressy can still help on the call,
-    and instructions on how to escalate to staff.
+    Includes the redirect link and a concise escalation reminder.
 
     If custom_message is provided, it's used as the redirect message.
     Otherwise, the default message for the redirect type is used.
@@ -515,11 +514,7 @@ def _get_sms_redirect_message(
 
 {redirect_url}
 
-Still on the call? Ressy (our AI assistant) knows everything about {restaurant_name} — menu items, ingredients, prices, hours, and more. Feel free to ask!
-
-If you'd prefer to speak with staff directly, just say "escalate" or "transfer" and Ressy will try to connect you to a team member if someone is available.
-
-But Ressy might be a little sad to see you go — if you have any general questions, feel free to ask her!
+Still on the call? Say "escalate" or "transfer" anytime to speak with staff although Ressy will be sad to see you go!
 
 Yours sincerely,
 {restaurant_name} via RessyAI"""
