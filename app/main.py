@@ -41,12 +41,34 @@ from app.api import (
     sse,
     testing,
 )
+from app.api.v2 import (
+    businesses,
+    catalogue,
+    bookings,
+    business_faqs,
+    client_catalogue,
+    client_business,
+    client_business_faqs,
+    client_catalogue_options,
+    dashboard_business_orders,
+    dashboard_bookings,
+    client_business_analytics,
+    business_calls,
+    client_business_calls,
+    business_escalations,
+    client_business_escalations,
+    dashboard_business_notifications,
+    admin_business_notifications,
+    dashboard_business_users,
+    business_activity_history,
+)
 from app.api.websocket import twilio_websocket_handler
 from app.repositories.db_pool import close_db_pool, get_db_pool
 from app.services.call_service import CallService
 from app.services.escalation_service import EscalationService
 from app.services.notification_persistence_service import NotificationPersistenceService
 from app.services.restaurant_service import RestaurantService
+from app.services.business_service import BusinessService
 from app.services.sse_service import SSEService
 from app.services.user_service import UserService
 from app.utils.encoding import install_utc_jsonable_encoder
@@ -221,6 +243,27 @@ app.include_router(client_menu_options.router)
 app.include_router(client_restaurant.router)
 app.include_router(client_client_users.router)
 app.include_router(client_analytics.router, tags=["Client Analytics"])
+
+# V2 API Routes for Businesses
+app.include_router(businesses.router)
+app.include_router(catalogue.router)
+app.include_router(bookings.router)
+app.include_router(business_faqs.router)
+app.include_router(client_catalogue.router)
+app.include_router(client_business.router)
+app.include_router(client_business_faqs.router)
+app.include_router(client_catalogue_options.router)
+app.include_router(dashboard_business_orders.router)
+app.include_router(dashboard_bookings.router)
+app.include_router(client_business_analytics.router)
+app.include_router(business_calls.router)
+app.include_router(client_business_calls.router)
+app.include_router(business_escalations.router)
+app.include_router(client_business_escalations.router)
+app.include_router(dashboard_business_notifications.router)
+app.include_router(admin_business_notifications.router)
+app.include_router(dashboard_business_users.router)
+app.include_router(business_activity_history.router)
 
 # Testing routes (keep last)
 app.include_router(testing.router)
@@ -443,28 +486,40 @@ async def voice(request: Request):
         )
 
         restaurant = {}
+        business = {}
+        entity_type = "restaurant"
         if to_number:
             try:
                 restaurant = RestaurantService().get_restaurant_by_twilio(to_number) or {}
+                if not restaurant:
+                    business = BusinessService().get_business_by_twilio(to_number) or {}
+                    if business:
+                        entity_type = "business"
             except Exception as exc:  # noqa: BLE001 - defensive
                 logger.warning("Kill-switch check failed for to=%s call_sid=%s: %s", to_number, call_sid, exc)
                 restaurant = {}
+                business = {}
 
-        if restaurant and _as_bool(restaurant.get("kill_switch_enabled")):
-            forward_escalations = _as_bool(restaurant.get("forward_escalations"))
-            escalation_phone = str(restaurant.get("escalation_phone_number") or "").strip()
+        entity = restaurant if entity_type == "restaurant" else business
+        if entity and _as_bool(entity.get("kill_switch_enabled")):
+            forward_escalations = _as_bool(entity.get("forward_escalations"))
+            escalation_phone = str(entity.get("escalation_phone_number") or "").strip()
             if forward_escalations and escalation_phone:
+                entity_id = entity.get("id")
                 logger.warning(
-                    "Kill switch active for restaurant_id=%s call_sid=%s. Redirecting call to escalation number.",
-                    restaurant.get("id"),
+                    "Kill switch active for %s_id=%s call_sid=%s. Redirecting call to escalation number.",
+                    entity_type,
+                    entity_id,
                     call_sid,
                 )
-                background_tasks.add_task(
-                    _record_kill_switch_bypass_safe,
-                    restaurant=restaurant,
-                    caller_phone=from_number,
-                    call_sid=call_sid,
-                )
+                if entity_type == "restaurant":
+                    background_tasks.add_task(
+                        _record_kill_switch_bypass_safe,
+                        restaurant=restaurant,
+                        caller_phone=from_number,
+                        call_sid=call_sid,
+                    )
+                # TODO: Add business kill switch bypass recording
                 dial_number = escape(escalation_phone)
                 caller_id = escape(str(to_number))
                 xml = f"""
@@ -476,9 +531,10 @@ async def voice(request: Request):
                 """
                 return Response(content=xml.strip(), media_type="application/xml", background=background_tasks)
             logger.warning(
-                "Kill switch active but forwarding misconfigured for restaurant_id=%s call_sid=%s. "
+                "Kill switch active but forwarding misconfigured for %s_id=%s call_sid=%s. "
                 "Falling back to agent routing.",
-                restaurant.get("id"),
+                entity_type,
+                entity.get("id"),
                 call_sid,
             )
 
@@ -552,15 +608,16 @@ async def redirect(request: Request):
             logger.warning("Redirect webhook no restaurant matched to=%s call_sid=%s", twilio_to, call_sid)
             return Response(content="<Response><Hangup/></Response>", media_type="application/xml")
 
-        restaurant_id = str(restaurant.get("id"))
-        escalation = escalation_service.get_latest_by_call_sid_and_restaurant(call_sid, restaurant_id)
+        entity = restaurant if entity_type == "restaurant" else business
+        entity_id = str(entity.get("id"))
+        escalation = escalation_service.get_latest_by_call_sid_and_restaurant(call_sid, entity_id)
         if not escalation:
-            logger.info("No escalation found for call_sid=%s restaurant_id=%s", call_sid, restaurant_id)
+            logger.info("No escalation found for call_sid=%s %s_id=%s", call_sid, entity_type, entity_id)
             return Response(content="<Response><Hangup/></Response>", media_type="application/xml")
         escalation_id = escalation.get("id")
 
-        forward_escalations = restaurant.get("forward_escalations")
-        escalation_phone = restaurant.get("escalation_phone_number")
+        forward_escalations = entity.get("forward_escalations")
+        escalation_phone = entity.get("escalation_phone_number")
         if forward_escalations and escalation_phone:
             logger.info(
                 "Call escalation requested and forwarding is enabled. Forwarding call to %s [call_sid: %s]",

@@ -31,6 +31,16 @@ def context_restaurant_id(context: Mapping[str, Any]) -> Optional[int]:
         return None
 
 
+def context_business_id(context: Mapping[str, Any]) -> Optional[int]:
+    raw = context.get("business_id")
+    if raw is None:
+        return None
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return None
+
+
 def context_customer_contact(context: Mapping[str, Any]) -> Optional[str]:
     value = context.get("customer_contact") or context.get("caller_phone")
     if value is None:

@@ -53,6 +53,13 @@ def get_current_restaurant_user(credentials: HTTPAuthorizationCredentials = Depe
     return claims
 
 
+def get_current_business_user(credentials: HTTPAuthorizationCredentials = Depends(security)) -> dict:
+    claims = _validate_access_token(credentials.credentials if credentials else None, [jwt_util.client_audience])
+    if claims.get("user_type") != "business":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Business access required")
+    return claims
+
+
 def require_role(roles: List[str]):
     def role_checker(
         request: Request,

@@ -12,6 +12,7 @@ from fastapi import WebSocket, WebSocketDisconnect
 
 from app.agent_fc.config import get_settings as get_fc_settings
 from app.agent_fc.functions import conversation, menu, orders, reservations
+from app.agent_fc.functions import catalogue as catalogue_functions, business_orders, bookings
 from app.agent_fc.functions.function_context import NoArgs
 from app.agent_fc.models import AgentFrame
 from app.agent_fc.registry import FunctionRegistry
@@ -29,6 +30,10 @@ from app.services.faq_service import FAQService
 from app.services.menu_service import MenuService
 from app.services.reservation_service import ReservationService
 from app.services.restaurant_service import RestaurantService
+from app.services.business_service import BusinessService
+from app.services.catalogue_service import CatalogueService
+from app.services.booking_service import BookingService
+from app.services.business_faq_service import BusinessFAQService
 from app.utils import prompt_loader
 from app.utils.logging_config import get_logger
 from app.utils.restaurant_hours import (
@@ -38,6 +43,10 @@ from app.utils.restaurant_hours import (
     is_restaurant_open_now,
     resolve_restaurant_timezone,
 )
+from app.utils.business_hours import (
+    is_business_open_now,
+    resolve_business_timezone,
+)
 from app.utils.timezone import isoformat_z
 
 
@@ -45,8 +54,12 @@ from app.utils.timezone import isoformat_z
 class CallResources:
     context_payload: Dict[str, Any]
     restaurant_id: Optional[str]
+    business_id: Optional[str]
+    entity_type: str  # "restaurant" or "business"
     restaurant_phone: Optional[str]
+    business_phone: Optional[str]
     restaurant_name: Optional[str]
+    business_name: Optional[str]
     deepgram_key_terms: Optional[Any]
     think_prompt: str
 
@@ -58,9 +71,13 @@ class WebSocketService:
         self.call_service = CallService()
         self.user_repo = MySQLUserRepository()
         self.restaurant_service = RestaurantService()
+        self.business_service = BusinessService()
         self.menu_service = MenuService()
+        self.catalogue_service = CatalogueService()
         self.faq_service = FAQService()
+        self.business_faq_service = BusinessFAQService()
         self.reservation_service = ReservationService()
+        self.booking_service = BookingService()
         self._active_twilio: set[WebSocket] = set()
         self._active_deepgram: set[Any] = set()
         self._connections_lock = asyncio.Lock()
@@ -244,6 +261,7 @@ class WebSocketService:
                 "category": item.get("category"),
                 "sub_category": item.get("sub_category"),
                 "has_customizations": has_customizations,
+                "metadata": item.get("metadata"),  # Include metadata for business-specific info (e.g., location for real estate)
             }
 
             # Check availability (handle both boolean and int 0/1 from MySQL)
@@ -460,6 +478,263 @@ class WebSocketService:
             )
         return context, restaurant_id, restaurant_name
 
+    def _build_business_context(
+        self, caller_phone: Optional[str] = None, business_record: Optional[Dict[str, Any]] = None
+    ) -> tuple[Dict[str, Any], Optional[str], Optional[str]]:
+        """Build context for business calls (similar to restaurant context)."""
+        business_phone_fwd = (
+            (
+                business_record.get("escalation_phone_number")
+                if (
+                    self._normalize_boolean(business_record.get("forward_escalations"))
+                    and business_record.get("escalation_phone_number")
+                )
+                else business_record.get("phone_number")
+            )
+            if business_record
+            else None
+        )
+        business_id = business_record.get("id") if business_record else None
+        if isinstance(business_id, str) and business_id.isdigit():
+            business_id = int(business_id)
+        business = business_record or {}
+
+        # Get ALL catalogue items (both available and unavailable) to send to agent
+        all_catalogue_items = self.catalogue_service.catalogue_repo.get_catalogues_by_restaurant(business_id) if business_id else []
+        item_ids = [item.get("id") for item in all_catalogue_items if item.get("id") is not None]
+        option_group_flags: Dict[int, bool] = {}
+        if item_ids:
+            try:
+                option_group_flags = self.catalogue_service.catalogue_repo.get_catalogue_items_with_option_groups(item_ids)
+            except Exception as exc:
+                self.logger.warning("Failed to load catalogue option flags business_id=%s: %s", business_id, exc)
+
+        # Process items in a single pass: separate by availability and build category structures
+        available_items: list[dict[str, Any]] = []
+        unavailable_items: list[dict[str, Any]] = []
+        specials: list[dict[str, Any]] = []
+        menu_by_category: Dict[str, list[dict[str, Any]]] = {}
+        unavailable_by_category: Dict[str, list[dict[str, Any]]] = {}
+        seen_item_ids = set()
+
+        for item in all_catalogue_items:
+            item_id = item.get("id")
+            item_name = item.get("item_name")
+            if not item_name:
+                continue
+
+            if item_id in seen_item_ids:
+                self.logger.warning("Duplicate item_id=%s found in catalogue items, skipping", item_id)
+                continue
+            seen_item_ids.add(item_id)
+
+            has_customizations = option_group_flags.get(item_id, False)
+            item_dict = {
+                "item_id": item_id,
+                "name": item_name,
+                "description": item.get("item_desc"),
+                "price": float(item.get("price", 0)) if item.get("price") is not None else 0.0,
+                "category": item.get("category"),
+                "sub_category": item.get("sub_category"),
+                "has_customizations": has_customizations,
+                "metadata": item.get("metadata"),  # Include metadata for business-specific info (e.g., location for real estate)
+            }
+
+            is_available_bool = self._normalize_boolean(item.get("is_available"))
+            is_special_bool = self._normalize_boolean(item.get("is_special"))
+
+            if is_special_bool:
+                specials.append(item_dict)
+
+            category = item.get("category") or "Uncategorized"
+            item_summary = {
+                "item_id": item_id,
+                "name": item_name,
+                "price": item_dict["price"],
+                "is_special": is_special_bool,
+                "has_customizations": has_customizations,
+            }
+
+            if is_available_bool:
+                available_items.append(item_dict)
+                if category not in menu_by_category:
+                    menu_by_category[category] = []
+                menu_by_category[category].append(item_summary)
+            else:
+                unavailable_items.append(item_dict)
+                if category not in unavailable_by_category:
+                    unavailable_by_category[category] = []
+                unavailable_by_category[category].append(item_summary)
+
+        # Load FAQs
+        faqs = []
+        if business_id:
+            try:
+                raw_faqs = self.business_faq_service.list_faqs(business_id)
+                faqs = self._summarize_faqs(raw_faqs)
+            except Exception as exc:
+                self.logger.warning("Failed to load FAQs for business_id=%s: %s", business_id, exc)
+                faqs = []
+
+        business_name = business.get("name")
+
+        service_options = business.get("service_options") or {}
+        if not isinstance(service_options, dict):
+            service_options = {}
+
+        raw_features = business.get("features") if isinstance(business.get("features"), dict) else {}
+        orders_enabled = (
+            self._normalize_boolean(raw_features.get("orders_enabled")) if "orders_enabled" in raw_features else True
+        )
+        reservations_enabled = (
+            self._normalize_boolean(raw_features.get("reservations_enabled"))
+            if "reservations_enabled" in raw_features
+            else True
+        )
+        faqs_enabled = (
+            self._normalize_boolean(raw_features.get("faqs_enabled")) if "faqs_enabled" in raw_features else True
+        )
+
+        orders_sms_redirect = raw_features.get("orders_sms_redirect") or {}
+        reservations_sms_redirect = raw_features.get("reservations_sms_redirect") or {}
+        orders_sms_redirect_enabled = self._normalize_boolean(orders_sms_redirect.get("enabled"))
+        reservations_sms_redirect_enabled = self._normalize_boolean(reservations_sms_redirect.get("enabled"))
+
+        # Use business_hours utilities
+        business_tz, timezone_label = resolve_business_timezone(business)
+        now_utc = datetime.now(timezone.utc)
+        now_local = now_utc.astimezone(business_tz)
+        is_open_now = is_business_open_now(business, now_utc=now_utc)
+        nearest_booking_slot: Optional[Dict[str, Any]] = None
+        if reservations_enabled:
+            # Similar logic for bookings
+            nearest_booking_slot = self._get_nearest_reservation_slot(
+                restaurant_id=business_id,  # Reuse same method signature
+                restaurant=business,
+                now_utc=now_utc,
+                restaurant_tz=business_tz,
+                reservations_enabled=reservations_enabled,
+                forward_minutes=business.get("forward_minutes"),
+            )
+
+        today_day_name = now_local.strftime("%A").lower()
+        today_hours = {
+            "day": today_day_name,
+            "hours": format_operating_window(business, today_day_name),
+        }
+
+        weekly_hours = []
+        current_bucket = None
+        for day in DAYS_OF_WEEK:
+            hours_label = format_operating_window(business, day)
+            if current_bucket and current_bucket["hours"] == hours_label:
+                current_bucket["days"].append(day)
+            else:
+                current_bucket = {"days": [day], "hours": hours_label}
+                weekly_hours.append(current_bucket)
+
+        all_items_by_category: Dict[str, Dict[str, list[dict[str, Any]]]] = {}
+        specials_by_category: Dict[str, list[dict[str, Any]]] = {}
+
+        for special in specials:
+            category = special.get("category") or "Uncategorized"
+            if category not in specials_by_category:
+                specials_by_category[category] = []
+            specials_by_category[category].append({
+                "item_id": special.get("item_id"),
+                "name": special.get("name"),
+                "price": special.get("price"),
+                "has_customizations": special.get("has_customizations", False),
+            })
+
+        special_item_ids = {s.get("item_id") for s in specials if s.get("item_id") is not None}
+        all_categories = (
+            set(menu_by_category.keys()) | set(unavailable_by_category.keys()) | set(specials_by_category.keys())
+        )
+
+        for category in all_categories:
+            available_items_cat = [
+                item for item in menu_by_category.get(category, []) if item.get("item_id") not in special_item_ids
+            ]
+            unavailable_items_cat = [
+                item for item in unavailable_by_category.get(category, [])
+                if item.get("item_id") not in special_item_ids
+            ]
+            all_items_by_category[category] = {
+                "available": available_items_cat,
+                "unavailable": unavailable_items_cat,
+                "specials": specials_by_category.get(category, []),
+            }
+
+        context = {
+            "business_profile": {
+                "id": business_id,
+                "name": business_name,
+                "address": business.get("address"),
+                "phone": business_phone_fwd,
+                "phone_spoken": self._format_phone_spoken(business_phone_fwd),
+                "weekly_hours": weekly_hours,
+                "today_hours": today_hours,
+                "is_open_now": is_open_now,
+            },
+            "service_options": {
+                "dine_in": service_options.get("dine_in", True),
+                "takeout": service_options.get("takeout", True),
+                "delivery": service_options.get("delivery", False),
+                "reservations": service_options.get("reservations", True),
+            },
+            "agent_capabilities": {
+                "orders": {
+                    "enabled": orders_enabled,
+                    "sms_redirect": {
+                        "enabled": orders_sms_redirect_enabled,
+                        "url": orders_sms_redirect.get("redirect_url"),
+                    },
+                },
+                "reservations": {
+                    "enabled": reservations_enabled,
+                    "sms_redirect": {
+                        "enabled": reservations_sms_redirect_enabled,
+                        "url": reservations_sms_redirect.get("redirect_url"),
+                    },
+                },
+                "faqs": {"enabled": faqs_enabled},
+            },
+            "menu_by_category": all_items_by_category,
+            "faqs": faqs,
+            "current_time": {
+                "utc_iso": isoformat_z(now_utc),
+                "local_iso": now_local.isoformat(),
+                "local_date": now_local.date().isoformat(),
+                "timezone": timezone_label,
+                "display_time": now_local.strftime("%I:%M %p").lstrip("0"),
+                "display_date": now_local.strftime("%A, %B %d, %Y"),
+                "day_of_week": now_local.strftime("%A").lower(),
+            },
+        }
+        if reservations_enabled and nearest_booking_slot:
+            context["reservation_availability"] = {
+                "nearest_slot": nearest_booking_slot,
+            }
+        if caller_phone:
+            context["caller_profile"] = {
+                "caller_phone": caller_phone,
+                "caller_phone_spoken": self._format_phone_spoken(caller_phone),
+                "source": "inbound_call",
+            }
+
+        if business_id:
+            self.logger.info(
+                "[CatalogueContext] Loaded for business_id=%s: %d available, %d unavailable, %d specials, %d FAQs, business-open: %s",
+                business_id,
+                len(available_items),
+                len(unavailable_items),
+                len(specials),
+                len(faqs),
+                is_open_now,
+            )
+        return context, business_id, business_name
+
     async def shutdown(self) -> None:
         """Close any remaining Twilio or Deepgram connections during app shutdown."""
         async with self._connections_lock:
@@ -672,22 +947,50 @@ class WebSocketService:
         restaurant_phone: Optional[str],
         caller_phone: Optional[str],
         restaurant_record: Optional[Dict[str, Any]] = None,
+        business_record: Optional[Dict[str, Any]] = None,
+        entity_type: str = "restaurant",
         deepgram_key_terms: Optional[Any] = None,
     ) -> CallResources:
-        context_payload, restaurant_id, restaurant_name = await asyncio.to_thread(
-            self._build_restaurant_context,
-            caller_phone,
-            restaurant_record,
-        )
-        think_prompt = prompt_loader.load_think_prompt(context_payload)
-        return CallResources(
-            context_payload=context_payload,
-            restaurant_id=restaurant_id,
-            restaurant_phone=restaurant_phone,
-            restaurant_name=restaurant_name,
-            deepgram_key_terms=deepgram_key_terms,
-            think_prompt=think_prompt,
-        )
+        if entity_type == "business" and business_record:
+            context_payload, business_id, business_name = await asyncio.to_thread(
+                self._build_business_context,
+                caller_phone,
+                business_record,
+            )
+            # Get business_type from business_record to load appropriate prompt
+            business_type = business_record.get("business_type") if isinstance(business_record, dict) else None
+            think_prompt = prompt_loader.load_think_prompt(context_payload, business_type=business_type)
+            return CallResources(
+                context_payload=context_payload,
+                restaurant_id=None,
+                business_id=business_id,
+                entity_type=entity_type,
+                restaurant_phone=None,
+                business_phone=restaurant_phone,
+                restaurant_name=None,
+                business_name=business_name,
+                deepgram_key_terms=deepgram_key_terms,
+                think_prompt=think_prompt,
+            )
+        else:
+            context_payload, restaurant_id, restaurant_name = await asyncio.to_thread(
+                self._build_restaurant_context,
+                caller_phone,
+                restaurant_record,
+            )
+            think_prompt = prompt_loader.load_think_prompt(context_payload)
+            return CallResources(
+                context_payload=context_payload,
+                restaurant_id=restaurant_id,
+                business_id=None,
+                entity_type=entity_type,
+                restaurant_phone=restaurant_phone,
+                business_phone=None,
+                restaurant_name=restaurant_name,
+                business_name=None,
+                deepgram_key_terms=deepgram_key_terms,
+                think_prompt=think_prompt,
+            )
 
     def _resolve_user_id(self, caller_phone: Optional[str], provided_user_id: Optional[str]) -> str:
         """
@@ -724,7 +1027,7 @@ class WebSocketService:
         return "0"
 
     def _build_function_router(
-        self, sts_ws, feature_flags: Optional[Dict[str, Any]] = None
+        self, sts_ws, feature_flags: Optional[Dict[str, Any]] = None, entity_type: str = "restaurant"
     ) -> tuple[Transport, FunctionCallRouter]:
         feature_flags = feature_flags or {}
         orders_enabled = bool(feature_flags.get("orders_enabled", True))
@@ -732,64 +1035,127 @@ class WebSocketService:
         faqs_enabled = bool(feature_flags.get("faqs_enabled", True))
         menu_enabled = orders_enabled or faqs_enabled
         registry = FunctionRegistry()
-        if orders_enabled:
-            registry.register(
-                name="create_order",
-                handler=orders.create_order,
-                arg_model=orders.CreateOrderArgs,
-            )
-            registry.register(
-                name="lookup_order",
-                handler=orders.lookup_order,
-                arg_model=NoArgs,
-            )
-            registry.register(
-                name="lookup_order_by_id",
-                handler=orders.lookup_order_by_id,
-                arg_model=orders.LookupOrderByIdArgs,
-            )
-            registry.register(
-                name="update_order_details",
-                handler=orders.update_order_details,
-                arg_model=orders.UpdateOrderDetailsArgs,
-            )
-            registry.register(
-                name="check_items_availability",
-                handler=orders.check_items_availability,
-                arg_model=orders.CheckItemsAvailabilityArgs,
-            )
-        if menu_enabled:
-            registry.register(
-                name="get_menu_item_details",
-                handler=menu.get_menu_item_details,
-                arg_model=menu.GetMenuItemDetailsArgs,
-            )
-            registry.register(
-                name="get_menu_item_customizations",
-                handler=menu.get_menu_item_customizations,
-                arg_model=menu.GetMenuItemCustomizationsArgs,
-            )
-        if reservations_enabled:
-            registry.register(
-                name="create_reservation",
-                handler=reservations.create_reservation,
-                arg_model=reservations.CreateReservationArgs,
-            )
-            registry.register(
-                name="lookup_reservation",
-                handler=reservations.lookup_reservation,
-                arg_model=NoArgs,
-            )
-            registry.register(
-                name="update_reservation",
-                handler=reservations.update_reservation,
-                arg_model=reservations.UpdateReservationArgs,
-            )
-            registry.register(
-                name="check_reservation_availability",
-                handler=reservations.check_reservation_availability,
-                arg_model=reservations.CheckAvailabilityArgs,
-            )
+        
+        if entity_type == "business":
+            # Register business-specific functions
+            if orders_enabled:
+                registry.register(
+                    name="create_order",
+                    handler=business_orders.create_order,
+                    arg_model=business_orders.CreateOrderArgs,
+                )
+                registry.register(
+                    name="lookup_order",
+                    handler=business_orders.lookup_order,
+                    arg_model=NoArgs,
+                )
+                registry.register(
+                    name="lookup_order_by_id",
+                    handler=business_orders.lookup_order_by_id,
+                    arg_model=business_orders.LookupOrderByIdArgs,
+                )
+                registry.register(
+                    name="update_order_details",
+                    handler=business_orders.update_order_details,
+                    arg_model=business_orders.UpdateOrderDetailsArgs,
+                )
+                registry.register(
+                    name="check_items_availability",
+                    handler=business_orders.check_items_availability,
+                    arg_model=business_orders.CheckItemsAvailabilityArgs,
+                )
+            if menu_enabled:
+                registry.register(
+                    name="get_menu_item_details",
+                    handler=catalogue_functions.get_catalogue_item_details,
+                    arg_model=catalogue_functions.GetCatalogueItemDetailsArgs,
+                )
+                registry.register(
+                    name="get_menu_item_customizations",
+                    handler=catalogue_functions.get_catalogue_item_customizations,
+                    arg_model=catalogue_functions.GetCatalogueItemCustomizationsArgs,
+                )
+            if reservations_enabled:
+                registry.register(
+                    name="create_reservation",
+                    handler=bookings.create_booking,
+                    arg_model=bookings.CreateBookingArgs,
+                )
+                registry.register(
+                    name="lookup_reservation",
+                    handler=bookings.lookup_booking,
+                    arg_model=NoArgs,
+                )
+                registry.register(
+                    name="update_reservation",
+                    handler=bookings.update_booking,
+                    arg_model=bookings.UpdateBookingArgs,
+                )
+                registry.register(
+                    name="check_reservation_availability",
+                    handler=bookings.check_booking_availability,
+                    arg_model=bookings.CheckAvailabilityArgs,
+                )
+        else:
+            # Register restaurant-specific functions
+            if orders_enabled:
+                registry.register(
+                    name="create_order",
+                    handler=orders.create_order,
+                    arg_model=orders.CreateOrderArgs,
+                )
+                registry.register(
+                    name="lookup_order",
+                    handler=orders.lookup_order,
+                    arg_model=NoArgs,
+                )
+                registry.register(
+                    name="lookup_order_by_id",
+                    handler=orders.lookup_order_by_id,
+                    arg_model=orders.LookupOrderByIdArgs,
+                )
+                registry.register(
+                    name="update_order_details",
+                    handler=orders.update_order_details,
+                    arg_model=orders.UpdateOrderDetailsArgs,
+                )
+                registry.register(
+                    name="check_items_availability",
+                    handler=orders.check_items_availability,
+                    arg_model=orders.CheckItemsAvailabilityArgs,
+                )
+            if menu_enabled:
+                registry.register(
+                    name="get_menu_item_details",
+                    handler=menu.get_menu_item_details,
+                    arg_model=menu.GetMenuItemDetailsArgs,
+                )
+                registry.register(
+                    name="get_menu_item_customizations",
+                    handler=menu.get_menu_item_customizations,
+                    arg_model=menu.GetMenuItemCustomizationsArgs,
+                )
+            if reservations_enabled:
+                registry.register(
+                    name="create_reservation",
+                    handler=reservations.create_reservation,
+                    arg_model=reservations.CreateReservationArgs,
+                )
+                registry.register(
+                    name="lookup_reservation",
+                    handler=reservations.lookup_reservation,
+                    arg_model=NoArgs,
+                )
+                registry.register(
+                    name="update_reservation",
+                    handler=reservations.update_reservation,
+                    arg_model=reservations.UpdateReservationArgs,
+                )
+                registry.register(
+                    name="check_reservation_availability",
+                    handler=reservations.check_reservation_availability,
+                    arg_model=reservations.CheckAvailabilityArgs,
+                )
         # registry.register(
         #     name="agent_filler",
         #     handler=conversation.agent_filler,
@@ -1672,16 +2038,25 @@ class WebSocketService:
                 except asyncio.TimeoutError:
                     call_sid = None
 
+            # Try restaurant first, then business
             restaurant_record = self.restaurant_service.get_restaurant_by_twilio(restaurant_twilio_number)
+            business_record = None
+            entity_type = "restaurant"
+            
             if not restaurant_record:
-                self.logger.error("[FATAL ERROR] No restaurant found with twilio number: %s", restaurant_twilio_number)
-                # Play an error message to the caller before disconnecting
-                await self._handle_unregistered_twilio_call(twilio_ws, streamsid_queue, shutdown_event, audio_queue)
-                return
+                business_record = self.business_service.get_business_by_twilio(restaurant_twilio_number)
+                if business_record:
+                    entity_type = "business"
+                    self.logger.info("Serving call for business: %s", business_record.get("name"))
+                else:
+                    self.logger.error("[FATAL ERROR] No restaurant or business found with twilio number: %s", restaurant_twilio_number)
+                    await self._handle_unregistered_twilio_call(twilio_ws, streamsid_queue, shutdown_event, audio_queue)
+                    return
             else:
                 self.logger.info("Serving call for restaurant: %s", restaurant_record.get("name"))
 
-            deepgram_details = restaurant_record.get("deepgram_details") if restaurant_record else None
+            entity_record = restaurant_record if entity_type == "restaurant" else business_record
+            deepgram_details = entity_record.get("deepgram_details") if entity_record else None
             if isinstance(deepgram_details, str):
                 try:
                     deepgram_details = json.loads(deepgram_details)
@@ -1694,7 +2069,7 @@ class WebSocketService:
                     deepgram_api_key = deepgram_api_key.strip() or None
 
             call_resources = await self._prepare_call_resources(
-                restaurant_twilio_number, caller_number, restaurant_record, deepgram_key_terms
+                restaurant_twilio_number, caller_number, restaurant_record, business_record, entity_type, deepgram_key_terms
             )
 
             try:
@@ -1704,7 +2079,7 @@ class WebSocketService:
 
                     try:
                         self.logger.info("🔗 Connected to Deepgram STS")
-                        raw_features = restaurant_record.get("features") if restaurant_record else {}
+                        raw_features = entity_record.get("features") if entity_record else {}
                         # Flatten feature_flags for function definitions and router
                         orders_sms = raw_features.get("orders_sms_redirect") or {}
                         reservations_sms = raw_features.get("reservations_sms_redirect") or {}
@@ -1715,30 +2090,35 @@ class WebSocketService:
                             "orders_sms_redirect_enabled": orders_sms.get("enabled", False),
                             "reservations_sms_redirect_enabled": reservations_sms.get("enabled", False),
                         }
+                        entity_name = call_resources.restaurant_name if entity_type == "restaurant" else call_resources.business_name
                         config_message = self.deepgram_service.load_config(
                             think_prompt=call_resources.think_prompt,
                             key_terms=call_resources.deepgram_key_terms or None,
-                            restaurant_name=call_resources.restaurant_name,
+                            restaurant_name=entity_name,
                             feature_flags=feature_flags,
                         )
                         config_message_json = json.dumps(config_message)
                         await sts_ws.send(config_message_json)
 
-                        transport, router = self._build_function_router(sts_ws, feature_flags)
+                        transport, router = self._build_function_router(sts_ws, feature_flags, entity_type)
                         resolved_user_id = self._resolve_user_id(caller_number, user_id)
+                        entity_id = call_resources.restaurant_id if entity_type == "restaurant" else call_resources.business_id
                         call_id = self._create_call_session(
-                            resolved_user_id, call_resources.restaurant_id, call_sid, None
+                            resolved_user_id, entity_id, call_sid, None
                         )
                         # Build default arguments, only including customer_contact if available
                         # to avoid validation errors when caller ID is blocked/unavailable
                         default_args = {
                             "user_id": resolved_user_id,
                             "call_id": call_id,
-                            "restaurant_id": call_resources.restaurant_id,
                             "call_sid": call_sid,
                             "customization_progress_by_item": state.customization_progress_by_item,
                             "order_session_state": state.order_session_state,
                         }
+                        if entity_type == "restaurant":
+                            default_args["restaurant_id"] = call_resources.restaurant_id
+                        else:
+                            default_args["business_id"] = call_resources.business_id
                         if caller_number:
                             default_args["customer_contact"] = caller_number
                         router.set_default_arguments(default_args)

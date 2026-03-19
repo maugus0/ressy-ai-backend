@@ -1,0 +1,22 @@
+-- Migration: Create Business_Administrators table
+-- Description: Stores business-specific administrators (generalized from Restaurant_Administrators)
+
+CREATE TABLE IF NOT EXISTS Business_Administrators (
+    uuid VARCHAR(36) PRIMARY KEY COMMENT 'UUID primary key',
+    business_id INT NOT NULL COMMENT 'Business ID',
+    email VARCHAR(255) NOT NULL,
+    password VARCHAR(255) NOT NULL COMMENT 'Hashed password',
+    role_id INT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    last_login TIMESTAMP NULL DEFAULT NULL,
+    last_active TIMESTAMP NULL DEFAULT NULL,
+    FOREIGN KEY (business_id) REFERENCES Businesses(id) ON DELETE CASCADE ON UPDATE CASCADE,
+    FOREIGN KEY (role_id) REFERENCES Crm_roles(id) ON DELETE RESTRICT ON UPDATE CASCADE,
+    INDEX idx_business_id (business_id),
+    INDEX idx_email (email),
+    INDEX idx_role_id (role_id),
+    INDEX idx_created_at (created_at),
+    INDEX idx_business_email (business_id, email),
+    UNIQUE KEY unique_business_email (business_id, email)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

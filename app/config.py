@@ -47,6 +47,48 @@ class Settings:
     )
     RESTAURANT_TIMEZONE = os.getenv("RESTAURANT_TIMEZONE", "America/Vancouver")
 
+    # Business Type to Prompt File Mapping
+    # Format: BUSINESS_TYPE_PROMPT_FILE_<type>=/path/to/prompt.json
+    # Default prompt file (used when business_type is not specified or no mapping exists)
+    DEEPGRAM_THINK_PROMPT_FILE = os.getenv("DEEPGRAM_THINK_PROMPT_FILE", "")
+    
+    # Business type prompt file mappings
+    # These can be set via environment variables like:
+    # BUSINESS_TYPE_PROMPT_FILE_restaurant=/path/to/restaurant_prompt.json
+    # BUSINESS_TYPE_PROMPT_FILE_salon=/path/to/salon_prompt.json
+    # BUSINESS_TYPE_PROMPT_FILE_spa=/path/to/spa_prompt.json
+    # etc.
+    
+    @staticmethod
+    def get_prompt_file_for_business_type(business_type: str | None) -> str:
+        """
+        Get the prompt file path for a given business type.
+        
+        Args:
+            business_type: The business type (e.g., 'restaurant', 'salon', 'real_estate', 'hotel')
+            
+        Returns:
+            Path to the prompt file, or default DEEPGRAM_THINK_PROMPT_FILE if no mapping exists
+        """
+        if not business_type:
+            return Settings.DEEPGRAM_THINK_PROMPT_FILE
+        
+        # Check for business-type-specific prompt file via environment variable
+        env_key = f"BUSINESS_TYPE_PROMPT_FILE_{business_type.lower()}"
+        prompt_file = os.getenv(env_key)
+        
+        if prompt_file:
+            return prompt_file
+        
+        # Fall back to default file naming pattern: prompts/dg_context_prompt_{business_type}.json
+        from pathlib import Path
+        default_prompt_path = Path("prompts") / f"dg_context_prompt_{business_type.lower()}.json"
+        if default_prompt_path.exists():
+            return str(default_prompt_path)
+        
+        # Final fallback to default prompt file
+        return Settings.DEEPGRAM_THINK_PROMPT_FILE
+
     # Message played when an incoming call is for a Twilio number not registered to any restaurant
     UNREGISTERED_TWILIO_MESSAGE = os.getenv(
         "UNREGISTERED_TWILIO_MESSAGE",
@@ -133,6 +175,29 @@ class Settings:
     FAQS_TABLE: str = "FAQs"
     USERS_TABLE: str = "Users"
     OPENTABLE_API_LOGS_TABLE: str = "OpenTable_API_Logs"
+    
+    # Business Tables (V2)
+    BUSINESSES_TABLE: str = "Businesses"
+    CATALOGUE_TABLE: str = "Catalogue"
+    BUSINESS_ORDERS_TABLE: str = "Business_Orders"
+    BUSINESS_ORDER_DETAILS_TABLE: str = "Business_Order_Details"
+    BOOKINGS_TABLE: str = "Bookings"
+    BOOKING_SLOTS_TABLE: str = "Booking_Slots"
+    AVAILABILITY_REQUESTS_TABLE: str = "Availability_Requests"
+    BUSINESS_FAQS_TABLE: str = "Business_FAQs"
+    BUSINESS_FEATURES_TABLE: str = "Business_Features"
+    BUSINESS_ADMINISTRATORS_TABLE: str = "Business_Administrators"
+    USER_BUSINESS_METADATA_TABLE: str = "User_Business_Metadata"
+    CATALOGUE_OPTION_GROUPS_TABLE: str = "Catalogue_Option_Groups"
+    CATALOGUE_OPTION_VALUES_TABLE: str = "Catalogue_Option_Values"
+    CATALOGUE_ITEM_OPTION_GROUPS_TABLE: str = "Catalogue_Item_Option_Groups"
+    BUSINESS_ORDER_ITEM_SNAPSHOTS_TABLE: str = "Business_Order_Item_Snapshots"
+    BUSINESS_ORDER_ITEM_OPTIONS_SNAPSHOTS_TABLE: str = "Business_Order_Item_Options_Snapshots"
+    BUSINESS_CALLS_TABLE: str = "Business_Calls"
+    BUSINESS_ESCALATIONS_TABLE: str = "Business_Escalations"
+    BUSINESS_NOTIFICATIONS_TABLE: str = "Business_Notifications"
+    BUSINESS_NOTIFICATION_LOGS_TABLE: str = "Business_Notification_Logs"
+    BUSINESS_USER_ACTIVITY_HISTORY_TABLE: str = "Business_User_Activity_History"
 
 
 settings = Settings()

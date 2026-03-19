@@ -140,6 +140,70 @@ async def emit_kill_switch_toggled_bulk_for_restaurants(
         logger.warning("Kill-switch bulk toggle: failed to persist notifications in bulk: %s", exc)
 
 
+async def emit_kill_switch_toggled_bulk_for_businesss(
+    *,
+    changed_businesss: list[dict[str, Any]],
+    enabled: bool,
+    actor_type: str,
+    actor_id: Optional[str],
+    actor_email: Optional[str],
+    source: str,
+    include_admin_sse: bool = False,
+) -> None:
+    """
+    Emit per-business SSE events for bulk toggle and persist notifications in one DB batch.
+    """
+    if not changed_businesss:
+        return
+
+    sse_service = SSEService()
+    notification_events: list[dict[str, Any]] = []
+
+    for item in changed_businesss:
+        business_id = int(item["business_id"])
+        payload: Dict[str, Any] = {
+            "business_id": business_id,
+            "business_name": item.get("business_name"),
+            "enabled": bool(enabled),
+            "previous_enabled": bool(item.get("previous_enabled")),
+            "actor_type": actor_type,
+            "actor_id": actor_id,
+            "actor_email": actor_email,
+            "source": source,
+            "bulk": True,
+        }
+
+        try:
+            # Use business_id as restaurant_id for SSE (SSE service supports both)
+            await sse_service.emit_system_kill_switch_toggled(
+                restaurant_id=business_id,
+                data=payload,
+                include_admin=include_admin_sse,
+            )
+        except Exception as exc:
+            logger.warning(
+                "Kill-switch bulk toggle: failed to emit SSE event business_id=%s: %s",
+                business_id,
+                exc,
+            )
+
+        notification_events.append(
+            {
+                "restaurant_id": business_id,  # Notification service uses restaurant_id field
+                "data": payload,
+                "entity_id": None,
+            }
+        )
+
+    try:
+        await run_in_threadpool(
+            NotificationPersistenceService().create_system_kill_switch_toggled_bulk,
+            notification_events,
+        )
+    except Exception as exc:
+        logger.warning("Kill-switch bulk toggle: failed to persist notifications in bulk: %s", exc)
+
+
 async def emit_kill_switch_bulk_summary(
     *,
     enabled: bool,

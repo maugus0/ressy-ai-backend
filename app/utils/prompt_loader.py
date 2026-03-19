@@ -7,18 +7,37 @@ from typing import Any, Dict, Optional
 from app.utils import prompt_builder
 
 
-def _read_prompt_file() -> str:
-    file_path = os.getenv("DEEPGRAM_THINK_PROMPT_FILE")
+def _read_prompt_file(business_type: Optional[str] = None) -> str:
+    """
+    Read prompt file, optionally based on business type.
+    
+    Args:
+        business_type: Optional business type to determine which prompt file to load
+        
+    Returns:
+        Contents of the prompt file as a string
+    """
+    from app.config import settings
+    
+    # Get the appropriate prompt file path based on business type
+    file_path = settings.get_prompt_file_for_business_type(business_type)
+    
     if not file_path:
         return ""
     path = Path(file_path).expanduser().resolve()
     return path.read_text(encoding="utf-8").strip()
 
 
-def load_think_prompt(context: Optional[Dict[str, Any]] = None) -> str:
-    """Return the agent prompt, optionally embedding structured context."""
+def load_think_prompt(context: Optional[Dict[str, Any]] = None, business_type: Optional[str] = None) -> str:
+    """
+    Return the agent prompt, optionally embedding structured context.
+    
+    Args:
+        context: Optional context dictionary to embed in the prompt
+        business_type: Optional business type to determine which prompt file to load
+    """
 
-    raw_prompt = _read_prompt_file()
+    raw_prompt = _read_prompt_file(business_type=business_type)
     context_payload = context or {}
 
     def _default_serializer(value: Any):

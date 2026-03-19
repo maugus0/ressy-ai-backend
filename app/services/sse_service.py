@@ -6,6 +6,7 @@ Supports the following event types:
 - System: kill_switch_toggled, kill_switch_bulk_updated
 - Order: new_order, order_updated, order_cancelled
 - Reservation: new_reservation, reservation_updated, reservation_cancelled
+- Booking: new_booking, booking_updated, booking_cancelled (for businesses)
 """
 
 import asyncio
@@ -58,6 +59,7 @@ class SSEEventType(str, Enum):
     SYSTEM = "system"
     ORDER = "order"
     RESERVATION = "reservation"
+    BOOKING = "booking"
     HEARTBEAT = "heartbeat"
 
 
@@ -94,6 +96,14 @@ class ReservationEventSubtype(str, Enum):
     RESERVATION_CANCELLED = "reservation_cancelled"
 
 
+class BookingEventSubtype(str, Enum):
+    """Subtypes for booking events (business reservations)."""
+
+    NEW_BOOKING = "new_booking"
+    BOOKING_UPDATED = "booking_updated"
+    BOOKING_CANCELLED = "booking_cancelled"
+
+
 class SSEEvent(BaseModel):
     """SSE Event model."""
 
@@ -101,6 +111,7 @@ class SSEEvent(BaseModel):
     event_type: SSEEventType
     subtype: Optional[str] = None
     restaurant_id: Optional[int] = None
+    business_id: Optional[int] = None
     timestamp: str = Field(default_factory=lambda: isoformat_z(datetime.now(timezone.utc)))
     data: Dict[str, Any] = Field(default_factory=dict)
 
@@ -116,6 +127,7 @@ class SSEEvent(BaseModel):
             "event_type": self.event_type.value,
             "subtype": self.subtype,
             "restaurant_id": self.restaurant_id,
+            "business_id": self.business_id,
             "timestamp": self.timestamp,
             "data": self.data,
         }
@@ -129,11 +141,13 @@ class SSEConnection:
         self,
         connection_id: str,
         restaurant_id: Optional[int] = None,
+        business_id: Optional[int] = None,
         user_id: Optional[str] = None,
         is_admin: bool = False,
     ):
         self.connection_id = connection_id
         self.restaurant_id = restaurant_id
+        self.business_id = business_id
         self.user_id = user_id
         self.is_admin = is_admin
         self.queue: asyncio.Queue = asyncio.Queue(maxsize=100)
@@ -211,6 +225,7 @@ class SSEService:
     async def connect(
         self,
         restaurant_id: Optional[int] = None,
+        business_id: Optional[int] = None,
         user_id: Optional[str] = None,
         is_admin: bool = False,
     ) -> SSEConnection:
@@ -219,6 +234,7 @@ class SSEService:
 
         Args:
             restaurant_id: Restaurant ID for filtering (None for admin global access)
+            business_id: Business ID for filtering (None for admin global access)
             user_id: User identifier
             is_admin: Whether the connection is from an admin
 
@@ -229,6 +245,7 @@ class SSEService:
         connection = SSEConnection(
             connection_id=connection_id,
             restaurant_id=restaurant_id,
+            business_id=business_id,
             user_id=user_id,
             is_admin=is_admin,
         )
@@ -242,11 +259,17 @@ class SSEService:
                 if restaurant_id not in self.restaurant_connections:
                     self.restaurant_connections[restaurant_id] = set()
                 self.restaurant_connections[restaurant_id].add(connection_id)
+            elif business_id is not None:
+                # For businesses, we'll use the same restaurant_connections dict but with business_id as key
+                # This allows us to reuse the existing infrastructure
+                if business_id not in self.restaurant_connections:
+                    self.restaurant_connections[business_id] = set()
+                self.restaurant_connections[business_id].add(connection_id)
 
         # Start heartbeat if not running
         await self.start_heartbeat()
 
-        logger.info("[SSE] New connection: %s (restaurant_id=%s, is_admin=%s)", connection_id, restaurant_id, is_admin)
+        logger.info("[SSE] New connection: %s (restaurant_id=%s, business_id=%s, is_admin=%s)", connection_id, restaurant_id, business_id, is_admin)
         return connection
 
     async def disconnect(self, connection_id: str):
@@ -259,12 +282,13 @@ class SSEService:
                 # Remove from admin set
                 self.admin_connections.discard(connection_id)
 
-                # Remove from restaurant set
-                if connection.restaurant_id is not None:
-                    if connection.restaurant_id in self.restaurant_connections:
-                        self.restaurant_connections[connection.restaurant_id].discard(connection_id)
-                        if not self.restaurant_connections[connection.restaurant_id]:
-                            del self.restaurant_connections[connection.restaurant_id]
+                # Remove from restaurant/business set
+                entity_id = connection.restaurant_id or connection.business_id
+                if entity_id is not None:
+                    if entity_id in self.restaurant_connections:
+                        self.restaurant_connections[entity_id].discard(connection_id)
+                        if not self.restaurant_connections[entity_id]:
+                            del self.restaurant_connections[entity_id]
 
                 del self.connections[connection_id]
                 logger.info("[SSE] Disconnected: %s", connection_id)
@@ -306,6 +330,7 @@ class SSEService:
         event_type: SSEEventType,
         subtype: Optional[str] = None,
         restaurant_id: Optional[int] = None,
+        business_id: Optional[int] = None,
         data: Optional[Dict[str, Any]] = None,
         include_admin: bool = True,
     ) -> SSEEvent:
@@ -316,6 +341,7 @@ class SSEService:
             event_type: Type of event
             subtype: Event subtype
             restaurant_id: Target restaurant ID (None for global broadcast)
+            business_id: Target business ID (None for global broadcast)
             data: Event data payload
 
         Returns:
@@ -325,15 +351,17 @@ class SSEService:
             event_type=event_type,
             subtype=subtype,
             restaurant_id=restaurant_id,
+            business_id=business_id,
             data=data or {},
         )
 
-        if restaurant_id is not None:
-            await self._broadcast_to_restaurant(restaurant_id, event, include_admin=include_admin)
+        entity_id = restaurant_id or business_id
+        if entity_id is not None:
+            await self._broadcast_to_restaurant(entity_id, event, include_admin=include_admin)
         else:
             await self._broadcast_to_all(event)
 
-        logger.info("[SSE] Event emitted: %s/%s to restaurant_id=%s", event_type.value, subtype, restaurant_id)
+        logger.info("[SSE] Event emitted: %s/%s to restaurant_id=%s, business_id=%s", event_type.value, subtype, restaurant_id, business_id)
         return event
 
     # ---------- Escalation Event Methods ----------
@@ -602,6 +630,38 @@ class SSEService:
             event_type=SSEEventType.RESERVATION,
             subtype=subtype.value,
             restaurant_id=restaurant_id,
+            data=event_data,
+        )
+
+    # ---------- Booking Event Methods (Business Reservations) ----------
+
+    async def emit_booking_event(
+        self,
+        business_id: int,
+        booking_id: int,
+        subtype: BookingEventSubtype,
+        data: Optional[Dict[str, Any]] = None,
+    ) -> SSEEvent:
+        """
+        Emit a booking-related event (for businesses).
+
+        Args:
+            business_id: Business ID
+            booking_id: Booking ID
+            subtype: Booking event subtype
+            data: Additional event data
+
+        Returns:
+            The emitted SSEEvent
+        """
+        event_data = {
+            "booking_id": booking_id,
+            **(data or {}),
+        }
+        return await self.emit_event(
+            event_type=SSEEventType.BOOKING,
+            subtype=subtype.value,
+            business_id=business_id,
             data=event_data,
         )
 
