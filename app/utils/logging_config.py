@@ -23,6 +23,8 @@ NOISY_LOGGERS = {
     "uvicorn.error": "INFO",
     # TODO: add any other noisy loggers you see here when DEBUG enabled.
     # "app.repositories.db_pool": "WARNING",
+    "httpcore.http11": "INFO",
+    "httpcore.connection": "INFO",
 }
 
 

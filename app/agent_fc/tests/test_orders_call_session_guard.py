@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from typing import Any, Dict, List
 
 import pytest
@@ -116,6 +117,91 @@ class _FakeHistoryService:
         return 1
 
 
+class _FakePOSService:
+    def __init__(self, result: Dict[str, Any] | None = None) -> None:
+        self.result = result or {
+            "required": False,
+            "success": True,
+            "status": "SKIPPED",
+            "retry_scheduled": False,
+            "results": [],
+        }
+        self.calls: List[Dict[str, Any]] = []
+        self.snapshot_attach_calls: List[Dict[str, Any]] = []
+        self.replace_calls: List[Dict[str, Any]] = []
+        self.cancel_calls: List[Dict[str, Any]] = []
+        self.restore_calls: List[Dict[str, Any]] = []
+        self.confirmed_sync = False
+        self.replace_result: Dict[str, Any] = {
+            "required": True,
+            "success": True,
+            "status": "CONFIRMED",
+            "results": [{"success": True, "status": "CONFIRMED"}],
+            "rollback_performed": False,
+            "rollback_success": True,
+        }
+        self.cancel_result: Dict[str, Any] = {
+            "required": True,
+            "success": True,
+            "status": "CANCELLED",
+            "results": [{"success": True, "status": "CANCELLED"}],
+        }
+
+    def submit_order_to_pos(self, order_id: int, restaurant_id: int) -> Dict[str, Any]:
+        self.calls.append({"order_id": order_id, "restaurant_id": restaurant_id})
+        return dict(self.result)
+
+    def attach_external_snapshot_ids(
+        self, restaurant_id: int, priced_items: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        self.snapshot_attach_calls.append({"restaurant_id": restaurant_id, "priced_items": priced_items})
+        return [dict(item) for item in priced_items]
+
+    def capture_order_state(self, order_id: int) -> Dict[str, Any]:
+        return {
+            "order_id": order_id,
+            "status": "pending",
+            "total_amount": 20.0,
+            "order_details": [],
+            "customization": {},
+            "snapshot_items": [],
+        }
+
+    def has_confirmed_sync(self, order_id: int) -> bool:
+        return self.confirmed_sync
+
+    def replace_order_after_internal_update(
+        self,
+        order_id: int,
+        restaurant_id: int,
+        *,
+        previous_state: Dict[str, Any],
+        reason: str | None = None,
+    ) -> Dict[str, Any]:
+        self.replace_calls.append(
+            {
+                "order_id": order_id,
+                "restaurant_id": restaurant_id,
+                "previous_state": previous_state,
+                "reason": reason,
+            }
+        )
+        return dict(self.replace_result)
+
+    def cancel_order_in_pos(
+        self,
+        order_id: int,
+        restaurant_id: int,
+        *,
+        reason: str | None = None,
+    ) -> Dict[str, Any]:
+        self.cancel_calls.append({"order_id": order_id, "restaurant_id": restaurant_id, "reason": reason})
+        return dict(self.cancel_result)
+
+    def restore_order_state(self, order_id: int, state: Dict[str, Any]) -> None:
+        self.restore_calls.append({"order_id": order_id, "state": state})
+
+
 def _item_payload() -> List[Dict[str, Any]]:
     return [{"item_id": 444, "name": "OG Hot Chicken", "quantity": 1, "options": [{"group_id": 1, "selections": [2]}]}]
 
@@ -127,7 +213,39 @@ async def _run_direct(func, *args, **kwargs):
     return result
 
 
-def _patch_common(monkeypatch, order_repo: _FakeOrderRepo) -> _FakeOrderItemRepo:
+class _FakeMenuRepoAvailability:
+    def __init__(self, items_by_id: Dict[int, Dict[str, Any]]) -> None:
+        self.items_by_id = items_by_id
+
+    def get_by_ids(self, menu_ids: List[int]) -> Dict[int, Dict[str, Any]]:
+        return {menu_id: dict(self.items_by_id[menu_id]) for menu_id in menu_ids if menu_id in self.items_by_id}
+
+
+class _FakeCustomizationService:
+    def validate_item_options(self, menu_item_id: int, options: List[Any]) -> SimpleNamespace:
+        return SimpleNamespace(is_valid=True, issues=[], normalized_options=options)
+
+    def price_item(
+        self,
+        menu_item_id: int,
+        base_price: float,
+        quantity: int,
+        normalized_options: List[Any],
+    ) -> SimpleNamespace:
+        return SimpleNamespace(
+            option_total=0.0,
+            final_unit_price=base_price,
+            total_price=base_price * max(quantity, 1),
+            option_snapshots=[],
+            normalized_options=normalized_options,
+        )
+
+
+def _patch_common(monkeypatch, order_repo: _FakeOrderRepo):
+    emitted_events: List[Dict[str, Any]] = []
+    sent_sms: List[Dict[str, Any]] = []
+    fake_pos_service = _FakePOSService()
+
     async def _fake_load_restaurant(restaurant_id: int) -> Dict[str, Any]:
         return {"id": restaurant_id, "name": "Test Resto"}
 
@@ -141,9 +259,11 @@ def _patch_common(monkeypatch, order_repo: _FakeOrderRepo) -> _FakeOrderItemRepo
         )
 
     async def _fake_emit_order_sse_event(**kwargs) -> None:
+        emitted_events.append(kwargs)
         return None
 
     async def _fake_send_voice_order_sms(**kwargs) -> None:
+        sent_sms.append(kwargs)
         return None
 
     order_item_repo = _FakeOrderItemRepo()
@@ -159,7 +279,8 @@ def _patch_common(monkeypatch, order_repo: _FakeOrderRepo) -> _FakeOrderItemRepo
     monkeypatch.setattr(orders, "_run_service_call", _run_direct)
     monkeypatch.setattr(orders, "_emit_order_sse_event", _fake_emit_order_sse_event)
     monkeypatch.setattr(orders, "_send_voice_order_sms", _fake_send_voice_order_sms)
-    return order_item_repo
+    monkeypatch.setattr(orders, "_get_pos_service", lambda: fake_pos_service)
+    return order_item_repo, fake_pos_service, emitted_events, sent_sms
 
 
 @pytest.mark.asyncio
@@ -194,7 +315,8 @@ async def test_create_order_updates_existing_active_order_in_same_call(monkeypat
 @pytest.mark.asyncio
 async def test_update_order_details_prefers_active_order_id_over_latest(monkeypatch) -> None:
     order_repo = _FakeOrderRepo()
-    _patch_common(monkeypatch, order_repo)
+    _, fake_pos_service, _, _ = _patch_common(monkeypatch, order_repo)
+    fake_pos_service.confirmed_sync = True
 
     order_repo.orders[200] = {
         "id": 200,
@@ -231,12 +353,16 @@ async def test_update_order_details_prefers_active_order_id_over_latest(monkeypa
     assert response["status"] == "UPDATED"
     assert response["order"]["id"] == 200
     assert order_session_state["active_order_id"] == 200
+    assert len(fake_pos_service.replace_calls) == 1
+    assert fake_pos_service.replace_calls[0]["order_id"] == 200
+    assert fake_pos_service.replace_calls[0]["restaurant_id"] == 9
+    assert fake_pos_service.replace_calls[0]["reason"] == "Voice caller updated order"
 
 
 @pytest.mark.asyncio
 async def test_create_order_custom_item_snapshot_uses_null_menu_item_id(monkeypatch) -> None:
     order_repo = _FakeOrderRepo()
-    order_item_repo = _patch_common(monkeypatch, order_repo)
+    order_item_repo, _, _, _ = _patch_common(monkeypatch, order_repo)
     order_session_state = {}
 
     response = await orders.create_order(
@@ -250,3 +376,190 @@ async def test_create_order_custom_item_snapshot_uses_null_menu_item_id(monkeypa
     assert response["status"] == "CREATED"
     assert order_item_repo.created_items
     assert order_item_repo.created_items[0]["menu_item_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_create_order_returns_confirmed_for_pos_backed_restaurant(monkeypatch) -> None:
+    order_repo = _FakeOrderRepo()
+    _, fake_pos_service, emitted_events, sent_sms = _patch_common(monkeypatch, order_repo)
+    fake_pos_service.result = {
+        "required": True,
+        "success": True,
+        "status": "CONFIRMED",
+        "retry_scheduled": False,
+        "results": [{"success": True, "status": "CONFIRMED"}],
+    }
+    order_session_state = {}
+
+    response = await orders.create_order(
+        items=_item_payload(),
+        restaurant_id=9,
+        customer_contact="+15555550123",
+        call_sid="CA-4",
+        order_session_state=order_session_state,
+    )
+
+    assert response["status"] == "CONFIRMED"
+    assert fake_pos_service.calls == [{"order_id": response["order_id"], "restaurant_id": 9}]
+    assert order_session_state["active_order_id"] == response["order_id"]
+    assert len(emitted_events) == 1
+    assert len(sent_sms) == 1
+
+
+@pytest.mark.asyncio
+async def test_update_order_details_cancels_pos_order_when_requested(monkeypatch) -> None:
+    order_repo = _FakeOrderRepo()
+    _, fake_pos_service, _, _ = _patch_common(monkeypatch, order_repo)
+    fake_pos_service.confirmed_sync = True
+    order_repo.orders[200] = {
+        "id": 200,
+        "user_id": 2,
+        "restaurant_id": 9,
+        "status": "pending",
+        "total_amount": 19.0,
+        "order_details": [],
+        "customization": {},
+        "created_at": datetime.now(timezone.utc),
+        "updated_at": datetime.now(timezone.utc),
+    }
+
+    response = await orders.update_order_details(
+        items=_item_payload(),
+        status="cancelled",
+        restaurant_id=9,
+        customer_contact="+15555550123",
+        call_sid="CA-7",
+        order_session_state={"active_order_id": 200},
+    )
+
+    assert response["status"] == "UPDATED"
+    assert fake_pos_service.cancel_calls == [
+        {
+            "order_id": 200,
+            "restaurant_id": 9,
+            "reason": "Voice caller cancelled order",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_update_order_details_fails_when_pos_replace_fails(monkeypatch) -> None:
+    order_repo = _FakeOrderRepo()
+    _, fake_pos_service, emitted_events, _ = _patch_common(monkeypatch, order_repo)
+    fake_pos_service.confirmed_sync = True
+    fake_pos_service.replace_result = {
+        "required": True,
+        "success": False,
+        "status": "FAILED",
+        "error": "square error",
+        "rollback_performed": True,
+        "rollback_success": True,
+    }
+    order_repo.orders[200] = {
+        "id": 200,
+        "user_id": 2,
+        "restaurant_id": 9,
+        "status": "pending",
+        "total_amount": 19.0,
+        "order_details": [],
+        "customization": {},
+        "created_at": datetime.now(timezone.utc),
+        "updated_at": datetime.now(timezone.utc),
+    }
+
+    response = await orders.update_order_details(
+        items=_item_payload(),
+        restaurant_id=9,
+        customer_contact="+15555550123",
+        call_sid="CA-8",
+        order_session_state={"active_order_id": 200},
+    )
+
+    assert response["status"] == "FAILED"
+    assert emitted_events == []
+
+
+@pytest.mark.asyncio
+async def test_create_order_does_not_confirm_when_pos_submission_fails(monkeypatch) -> None:
+    order_repo = _FakeOrderRepo()
+    _, fake_pos_service, emitted_events, sent_sms = _patch_common(monkeypatch, order_repo)
+    fake_pos_service.result = {
+        "required": True,
+        "success": False,
+        "status": "FAILED",
+        "retry_scheduled": False,
+        "results": [{"success": False, "status": "FAILED"}],
+        "error": "config error",
+    }
+    order_session_state = {}
+
+    response = await orders.create_order(
+        items=_item_payload(),
+        restaurant_id=9,
+        customer_contact="+15555550123",
+        call_sid="CA-5",
+        order_session_state=order_session_state,
+    )
+
+    assert response["status"] == "FAILED"
+    assert "active_order_id" not in order_session_state
+    assert emitted_events == []
+    assert sent_sms == []
+
+
+@pytest.mark.asyncio
+async def test_create_order_returns_temporary_failure_for_retryable_pos_failure(monkeypatch) -> None:
+    order_repo = _FakeOrderRepo()
+    _, fake_pos_service, emitted_events, sent_sms = _patch_common(monkeypatch, order_repo)
+    fake_pos_service.result = {
+        "required": True,
+        "success": False,
+        "status": "TEMPORARY_FAILURE",
+        "retry_scheduled": True,
+        "results": [{"success": False, "status": "PENDING", "retry_scheduled": True}],
+        "error": "timeout",
+    }
+    order_session_state = {}
+
+    response = await orders.create_order(
+        items=_item_payload(),
+        restaurant_id=9,
+        customer_contact="+15555550123",
+        call_sid="CA-6",
+        order_session_state=order_session_state,
+    )
+
+    assert response["status"] == "TEMPORARY_FAILURE"
+    assert response["retry_scheduled"] is True
+    assert "active_order_id" not in order_session_state
+    assert emitted_events == []
+    assert sent_sms == []
+
+
+@pytest.mark.asyncio
+async def test_validate_and_price_items_rejects_unavailable_base_item(monkeypatch) -> None:
+    monkeypatch.setattr(
+        orders,
+        "_get_menu_repo",
+        lambda: _FakeMenuRepoAvailability({444: {"id": 444, "is_active": 1, "is_available": 0}}),
+    )
+    monkeypatch.setattr(orders, "_get_customization_service", lambda: _FakeCustomizationService())
+    monkeypatch.setattr(orders, "_run_service_call", _run_direct)
+
+    priced_items, issues = await orders._validate_and_price_items(
+        [orders.OrderItem(item_id=444, name="OG Hot Chicken", quantity=1, price=12.0, options=[])]
+    )
+
+    assert priced_items == []
+    assert issues == [
+        {
+            "item_id": 444,
+            "item_name": "OG Hot Chicken",
+            "issues": [
+                {
+                    "issue_code": "UNAVAILABLE_ITEM",
+                    "message": "This item is currently unavailable.",
+                }
+            ],
+        }
+    ]

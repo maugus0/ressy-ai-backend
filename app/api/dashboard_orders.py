@@ -15,6 +15,7 @@ from app.middleware.auth_middleware import require_role
 from app.services.activity_history_service import ActivityHistoryService
 from app.services.dashboard_order_service import DashboardOrderService
 from app.services.notification_service import NotificationService
+from app.services.pos_service import POSService
 from app.services.restaurant_service import RestaurantService
 from app.services.sse_service import OrderEventSubtype, SSEService
 
@@ -56,6 +57,11 @@ def get_restaurant_service() -> RestaurantService:
 def get_notification_service() -> NotificationService:
     """Dependency to get notification service instance."""
     return NotificationService()
+
+
+def get_pos_service() -> POSService:
+    """Dependency to get POS service instance."""
+    return POSService()
 
 
 async def _emit_order_sse_event(
@@ -364,18 +370,26 @@ class OrderItemResponse(BaseModel):
 class OrderItemOptionResponse(BaseModel):
     """Response model for order item option snapshot."""
 
+    option_group_id: Optional[int] = Field(None, description="Menu option group ID")
     option_value_id: Optional[int] = Field(None, description="Menu option value ID")
     option_group_name_snapshot: str = Field(..., description="Option group name snapshot")
-    option_value_name_snapshot: str = Field(..., description="Option value name snapshot")
+    input_type_snapshot: Optional[str] = Field(None, description="Customization input type snapshot")
+    option_value_name_snapshot: Optional[str] = Field(None, description="Option value name snapshot")
+    free_text_value: Optional[str] = Field(None, description="Free-text customization value")
+    external_group_id_snapshot: Optional[str] = Field(None, description="External POS group ID snapshot")
+    external_value_id_snapshot: Optional[str] = Field(None, description="External POS value ID snapshot")
     price_delta_snapshot: float = Field(..., description="Option price delta snapshot")
     quantity: int = Field(..., description="Option quantity")
 
     model_config = {
         "json_schema_extra": {
             "example": {
+                "option_group_id": 12,
                 "option_value_id": 101,
                 "option_group_name_snapshot": "Toppings",
+                "input_type_snapshot": "SELECT",
                 "option_value_name_snapshot": "Pepperoni",
+                "free_text_value": None,
                 "price_delta_snapshot": 1.5,
                 "quantity": 1,
             }
@@ -388,6 +402,7 @@ class OrderItemSnapshotResponse(BaseModel):
 
     id: int = Field(..., description="Order item ID")
     menu_item_id: Optional[int] = Field(None, description="Menu item ID")
+    external_item_id_snapshot: Optional[str] = Field(None, description="External POS item ID snapshot")
     item_name_snapshot: str = Field(..., description="Item name snapshot")
     base_price_snapshot: float = Field(..., description="Base price snapshot")
     quantity: int = Field(..., description="Quantity")
@@ -402,6 +417,7 @@ class OrderItemSnapshotResponse(BaseModel):
             "example": {
                 "id": 55,
                 "menu_item_id": 444,
+                "external_item_id_snapshot": "ABC123",
                 "item_name_snapshot": "Margherita Pizza",
                 "base_price_snapshot": 12.99,
                 "quantity": 1,
@@ -784,6 +800,7 @@ async def create_order(
     history_service: ActivityHistoryService = Depends(get_history_service),
     restaurant_service: RestaurantService = Depends(get_restaurant_service),
     notification_service: NotificationService = Depends(get_notification_service),
+    pos_service: POSService = Depends(get_pos_service),
 ):
     """Create a new order from the dashboard."""
     _check_restaurant_access(current_user, restaurant_id)
@@ -834,7 +851,6 @@ async def create_order(
             },
         )
 
-        # SMS on order created (initial status)
         _queue_order_sms(
             background_tasks,
             notification_service,
@@ -844,6 +860,8 @@ async def create_order(
             result.get("status", "pending"),
             request.customer_phone or result.get("customer_phone"),
         )
+
+        background_tasks.add_task(pos_service.sync_order_to_pos, result["order_id"], restaurant_id)
 
         return result
     except ValueError as e:

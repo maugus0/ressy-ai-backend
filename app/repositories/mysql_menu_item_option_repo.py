@@ -17,6 +17,7 @@ class MySQLMenuItemOptionRepository(MySQLBaseRepository):
             INSERT INTO Menu_Item_Option_Groups (
                 menu_item_id,
                 group_id,
+                selection_type_override,
                 min_select_override,
                 max_select_override,
                 free_allowance_override,
@@ -27,8 +28,9 @@ class MySQLMenuItemOptionRepository(MySQLBaseRepository):
                 created_at,
                 updated_at
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
             ON DUPLICATE KEY UPDATE
+                selection_type_override = VALUES(selection_type_override),
                 min_select_override = VALUES(min_select_override),
                 max_select_override = VALUES(max_select_override),
                 free_allowance_override = VALUES(free_allowance_override),
@@ -43,6 +45,7 @@ class MySQLMenuItemOptionRepository(MySQLBaseRepository):
             (
                 menu_item_id,
                 group_id,
+                overrides.get("selection_type_override"),
                 overrides.get("min_select_override"),
                 overrides.get("max_select_override"),
                 overrides.get("free_allowance_override"),
@@ -64,6 +67,16 @@ class MySQLMenuItemOptionRepository(MySQLBaseRepository):
             ORDER BY sort_order, group_id
         """
         return self._execute_query(query, (menu_item_id,))
+
+    def list_by_restaurant(self, restaurant_id: int) -> List[Dict[str, Any]]:
+        query = """
+            SELECT mig.*
+            FROM Menu_Item_Option_Groups mig
+            JOIN Menus m ON m.id = mig.menu_item_id
+            WHERE m.restaurant_id = %s
+            ORDER BY mig.menu_item_id, mig.sort_order, mig.group_id
+        """
+        return self._execute_query(query, (restaurant_id,))
 
     def has_group_attachment(self, group_id: int) -> bool:
         query = """

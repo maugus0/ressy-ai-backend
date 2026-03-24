@@ -1,3 +1,4 @@
+import inspect
 from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import HTTPException, status
@@ -31,6 +32,71 @@ class MenuService:
         if page < 1 or limit < 1:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="page and limit must be positive")
         return page, limit
+
+    @staticmethod
+    def _repo_supports_kwarg(method: Any, kwarg_name: str) -> bool:
+        parameters = inspect.signature(method).parameters.values()
+        return kwarg_name in {param.name for param in parameters} or any(
+            param.kind == inspect.Parameter.VAR_KEYWORD for param in parameters
+        )
+
+    @staticmethod
+    def _is_active(item: Dict[str, Any]) -> bool:
+        return bool(item.get("is_active", True))
+
+    def _get_paginated_items(
+        self,
+        *,
+        restaurant_id: int,
+        page: int,
+        limit: int,
+        category: Optional[str],
+        sub_category: Optional[str],
+        is_available: Optional[bool],
+        is_special: Optional[bool],
+        search: Optional[str],
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        get_paginated = self.menu_repo.get_paginated_by_restaurant
+        kwargs = {
+            "restaurant_id": restaurant_id,
+            "page": page,
+            "limit": limit,
+            "category": category,
+            "sub_category": sub_category,
+            "is_available": is_available,
+            "is_special": is_special,
+            "search": search,
+        }
+        if self._repo_supports_kwarg(get_paginated, "only_active"):
+            kwargs["only_active"] = True
+        items, total = get_paginated(**kwargs)
+        if "only_active" not in kwargs:
+            items = [item for item in items if self._is_active(item)]
+            total = len(items)
+        return items, total
+
+    def _get_menu_item_with_options(self, menu_id: int) -> Optional[Dict[str, Any]]:
+        get_item = self.menu_repo.get_menu_item_with_options
+        if self._repo_supports_kwarg(get_item, "only_active"):
+            return get_item(menu_id, only_active=True)
+        item = get_item(menu_id)
+        if item and not self._is_active(item):
+            return None
+        if item:
+            item["option_groups"] = [group for group in item.get("option_groups", []) if self._is_active(group)]
+        return item
+
+    def _get_option_groups_for_item(self, menu_id: int) -> List[Dict[str, Any]]:
+        get_groups = self.menu_repo.get_option_groups_for_item
+        if self._repo_supports_kwarg(get_groups, "only_active"):
+            return get_groups(menu_id, only_active=True)
+        return [group for group in get_groups(menu_id) if self._is_active(group)]
+
+    def _get_menu_categories(self, restaurant_id: int) -> Dict[str, List[str]]:
+        get_categories = self.menu_repo.get_menu_categories
+        if self._repo_supports_kwarg(get_categories, "only_active"):
+            return get_categories(restaurant_id, only_active=True)
+        return get_categories(restaurant_id)
 
     def _enrich_with_restaurant_name(
         self, item: Dict[str, Any], cache: Optional[Dict[int, Optional[str]]] = None
@@ -82,7 +148,10 @@ class MenuService:
 
     def get_available_items_by_restaurant(self, restaurant_id: str) -> list:
         """List available menu items (is_available = TRUE)."""
-        return self.menu_repo.get_available_items_by_restaurant(int(restaurant_id))
+        get_available = self.menu_repo.get_available_items_by_restaurant
+        if self._repo_supports_kwarg(get_available, "only_active"):
+            return get_available(int(restaurant_id), only_active=True)
+        return [item for item in get_available(int(restaurant_id)) if self._is_active(item)]
 
     # ==================== New Admin API methods ====================
 
@@ -201,7 +270,7 @@ class MenuService:
         search_term = (search or "").strip() or None
 
         # Get paginated items
-        items, total = self.menu_repo.get_paginated_by_restaurant(
+        items, total = self._get_paginated_items(
             restaurant_id=restaurant_id,
             page=page,
             limit=limit,
@@ -235,8 +304,10 @@ class MenuService:
         Raises:
             HTTPException: 404 if menu item not found
         """
-        item = self.menu_repo.get_menu_item_with_options(menu_id)
+        item = self._get_menu_item_with_options(menu_id)
         if not item:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Menu item not found")
+        if not item.get("is_active", True):
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Menu item not found")
         self._enrich_with_restaurant_name(item)
         return item
@@ -246,7 +317,9 @@ class MenuService:
         item = self.menu_repo.get_menu_by_id(restaurant_id, menu_id)
         if not item:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Menu item not found")
-        item["option_groups"] = self.menu_repo.get_option_groups_for_item(menu_id)
+        if not item.get("is_active", True):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Menu item not found")
+        item["option_groups"] = self._get_option_groups_for_item(menu_id)
         self._enrich_with_restaurant_name(item, {restaurant_id: None})
         return item
 
@@ -529,5 +602,5 @@ class MenuService:
         # Validate restaurant exists
         self._validate_restaurant(restaurant_id)
 
-        categories = self.menu_repo.get_menu_categories(restaurant_id)
+        categories = self._get_menu_categories(restaurant_id)
         return categories

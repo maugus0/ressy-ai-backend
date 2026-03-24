@@ -17,6 +17,7 @@ class MenuOptionService:
     """Service for CRUD and mapping operations for menu options."""
 
     FREE_ALLOWANCE_STRATEGIES = {"HIGHEST_PRICE_FIRST", "LOWEST_PRICE_FIRST"}
+    INPUT_TYPES = {"SELECT", "TEXT"}
 
     def __init__(
         self,
@@ -56,9 +57,16 @@ class MenuOptionService:
             self._bad_request("free_allowance_strategy must be HIGHEST_PRICE_FIRST or LOWEST_PRICE_FIRST")
         return text
 
+    def _normalize_input_type(self, value: Any) -> str:
+        text = str(value or "SELECT").strip().upper()
+        if text not in self.INPUT_TYPES:
+            self._bad_request("input_type must be SELECT or TEXT")
+        return text
+
     def _validate_group_rules(
         self,
         *,
+        input_type: str,
         selection_type: Optional[str],
         min_select: Optional[int],
         max_select: Optional[int],
@@ -66,9 +74,24 @@ class MenuOptionService:
         free_allowance_strategy: Optional[str],
         allows_quantity: Optional[bool],
         max_quantity_per_option: Optional[int],
+        is_required: Optional[bool],
+        text_required: Optional[bool],
     ) -> None:
         if max_select is not None and min_select is not None and max_select < min_select:
             self._bad_request("max_select must be greater than or equal to min_select")
+        if input_type == "TEXT":
+            if selection_type != "single":
+                self._bad_request("Text input groups must use single selection_type")
+            if max_select is not None and max_select > 1:
+                self._bad_request("Text input groups can have at most one selection")
+            if free_allowance not in (None, 0):
+                self._bad_request("Text input groups cannot use free_allowance")
+            if self._is_available(allows_quantity):
+                self._bad_request("Text input groups cannot enable quantities")
+            if max_quantity_per_option not in (None, 1):
+                self._bad_request("Text input groups cannot set max_quantity_per_option above 1")
+            if (is_required or (min_select or 0) > 0) and not self._is_available(text_required):
+                self._bad_request("Required text input groups must set text_required to true")
         if selection_type == "single":
             if min_select is not None and min_select > 1:
                 self._bad_request("min_select must be 0 or 1 for single-select groups")
@@ -81,7 +104,11 @@ class MenuOptionService:
         if allows_quantity is False and max_quantity_per_option is not None and max_quantity_per_option > 1:
             self._bad_request("max_quantity_per_option cannot exceed 1 when quantities are disabled")
 
-    def _validate_group_defaults(self, *, selection_type: Optional[str], values: List[Dict[str, Any]]) -> None:
+    def _validate_group_defaults(
+        self, *, input_type: str = "SELECT", selection_type: Optional[str], values: List[Dict[str, Any]]
+    ) -> None:
+        if input_type == "TEXT" and values:
+            self._bad_request("Text input groups cannot define option values")
         if not values:
             return
         default_values = [value for value in values if value.get("is_default")]
@@ -91,7 +118,28 @@ class MenuOptionService:
             if not self._is_available(value.get("is_available", True)):
                 self._bad_request("Default options must be available")
 
+    def _normalize_group_payload(
+        self, data: Dict[str, Any], existing: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        payload = dict(data)
+        input_type = self._normalize_input_type(
+            self._ensure_field(payload, "input_type", existing.get("input_type") if existing else "SELECT")
+        )
+        payload["input_type"] = input_type
+        if input_type == "TEXT":
+            payload.setdefault("selection_type", "single")
+            if "max_select" not in payload:
+                payload["max_select"] = 1
+            payload.setdefault("free_allowance", 0)
+            payload.setdefault("allows_quantity", False)
+            if "max_quantity_per_option" not in payload:
+                payload["max_quantity_per_option"] = None
+        return payload
+
     def _validate_group_payload(self, data: Dict[str, Any], existing: Optional[Dict[str, Any]] = None) -> None:
+        input_type = self._normalize_input_type(
+            self._ensure_field(data, "input_type", existing.get("input_type") if existing else "SELECT")
+        )
         selection_type = self._ensure_field(
             data, "selection_type", existing.get("selection_type") if existing else None
         )
@@ -114,7 +162,14 @@ class MenuOptionService:
             "max_quantity_per_option",
             existing.get("max_quantity_per_option") if existing else None,
         )
+        is_required = self._ensure_field(data, "is_required", existing.get("is_required") if existing else False)
+        text_required = self._ensure_field(
+            data,
+            "text_required",
+            existing.get("text_required") if existing else False,
+        )
         self._validate_group_rules(
+            input_type=input_type,
             selection_type=selection_type,
             min_select=min_select,
             max_select=max_select,
@@ -122,12 +177,15 @@ class MenuOptionService:
             free_allowance_strategy=free_allowance_strategy if validate_strategy else None,
             allows_quantity=allows_quantity,
             max_quantity_per_option=max_quantity_per_option,
+            is_required=is_required,
+            text_required=text_required,
         )
 
     def _validate_item_group_overrides(self, group: Dict[str, Any], overrides: Dict[str, Any]) -> None:
         if not overrides:
             return
         effective = {
+            "input_type": self._normalize_input_type(group.get("input_type")),
             "selection_type": group.get("selection_type"),
             "min_select": group.get("min_select"),
             "max_select": group.get("max_select"),
@@ -135,8 +193,11 @@ class MenuOptionService:
             "free_allowance_strategy": None,
             "allows_quantity": group.get("allows_quantity"),
             "max_quantity_per_option": group.get("max_quantity_per_option"),
+            "is_required": group.get("is_required"),
+            "text_required": group.get("text_required"),
         }
         override_map = {
+            "selection_type": "selection_type_override",
             "min_select": "min_select_override",
             "max_select": "max_select_override",
             "free_allowance": "free_allowance_override",
@@ -149,11 +210,15 @@ class MenuOptionService:
         self._validate_group_rules(**effective)
 
     def create_option_group(self, restaurant_id: int, data: Dict[str, Any]) -> Dict[str, Any]:
-        data = dict(data)
+        data = self._normalize_group_payload(data)
         data["free_allowance_strategy"] = self._normalize_free_allowance_strategy(data.get("free_allowance_strategy"))
         self._validate_group_payload(data)
         values = data.get("values") or []
-        self._validate_group_defaults(selection_type=data.get("selection_type"), values=values)
+        self._validate_group_defaults(
+            input_type=data.get("input_type", "SELECT"),
+            selection_type=data.get("selection_type"),
+            values=values,
+        )
         group_id = self.option_repo.create_group(restaurant_id, data)
         if not group_id:
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to create group")
@@ -177,22 +242,31 @@ class MenuOptionService:
         existing = self.option_repo.get_group_by_id(group_id)
         if not existing:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Option group not found")
+        data = self._normalize_group_payload(data, existing=existing)
         self._validate_group_payload(data, existing=existing)
         effective_selection_type = self._ensure_field(data, "selection_type", existing.get("selection_type"))
+        effective_input_type = self._ensure_field(data, "input_type", existing.get("input_type", "SELECT"))
         if effective_selection_type == "single":
             values = self.option_repo.list_values_by_group(group_id)
             default_count = sum(1 for value in values if value.get("is_default"))
             if default_count > 1:
                 self._bad_request("Single-select groups can have at most one default option")
+        if effective_input_type == "TEXT" and self.option_repo.list_values_by_group(group_id):
+            self._bad_request("Text input groups cannot have option values")
         if self.item_option_repo.has_group_attachment(group_id):
             defaults_count = self.option_repo.count_defaults(group_id)
             if "max_select" in data:
                 effective_max_select = self._ensure_field(data, "max_select", existing.get("max_select"))
-                if effective_max_select is not None and defaults_count > effective_max_select:
+                existing_max_select = existing.get("max_select")
+                if effective_max_select is not None and defaults_count > effective_max_select != existing_max_select:
                     self._bad_request("max_select cannot be less than the number of default options")
             if "free_allowance" in data:
                 effective_free_allowance = self._ensure_field(data, "free_allowance", existing.get("free_allowance"))
-                if defaults_count > (effective_free_allowance or 0):
+                existing_free_allowance = existing.get("free_allowance")
+                if (
+                    defaults_count > (effective_free_allowance or 0)
+                    and effective_free_allowance != existing_free_allowance
+                ):
                     self._bad_request("free_allowance cannot be less than the number of default options")
         affected = self.option_repo.update_group(group_id, data)
         if affected == 0 and not existing:
@@ -210,13 +284,15 @@ class MenuOptionService:
         return self.update_option_group(group_id, data)
 
     def list_option_groups(self, restaurant_id: int) -> List[Dict[str, Any]]:
-        return self.option_repo.list_groups_with_values(restaurant_id)
+        return self.option_repo.list_groups_with_values(restaurant_id, only_active=True)
 
     def get_option_group(self, group_id: int) -> Dict[str, Any]:
         group = self.option_repo.get_group_by_id(group_id)
         if not group:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Option group not found")
-        group["values"] = self.option_repo.list_values_by_group(group_id)
+        if not group.get("is_active", True):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Option group not found")
+        group["values"] = self.option_repo.list_values_by_group(group_id, only_active=True)
         return group
 
     def get_option_group_for_restaurant(self, restaurant_id: int, group_id: int) -> Dict[str, Any]:
@@ -246,6 +322,8 @@ class MenuOptionService:
         group = self.option_repo.get_group_by_id(group_id)
         if not group:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Option group not found")
+        if self._normalize_input_type(group.get("input_type")) == "TEXT":
+            self._bad_request("Text input groups cannot create option values")
         if data.get("is_default") and not self._is_available(group.get("is_available")):
             self._bad_request("Default options cannot be added to unavailable groups")
         if data.get("is_default") and not self._is_available(data.get("is_available", True)):
@@ -275,6 +353,8 @@ class MenuOptionService:
         group = self.option_repo.get_group_by_id(existing["group_id"])
         if not group:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Option group not found")
+        if self._normalize_input_type(group.get("input_type")) == "TEXT":
+            self._bad_request("Text input groups cannot update option values")
         effective_is_default = data.get("is_default", existing.get("is_default"))
         effective_is_available = data.get("is_available", existing.get("is_available"))
         if self._is_available(effective_is_default) and not self._is_available(effective_is_available):
@@ -333,15 +413,16 @@ class MenuOptionService:
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Option group must belong to the same restaurant as the menu item",
             )
+        input_type = self._normalize_input_type(group.get("input_type"))
         available_count = self.option_repo.count_available_values(group_id)
-        if available_count == 0:
+        if input_type == "SELECT" and available_count == 0:
             self._bad_request("Option group must have at least one available value to attach")
         self._validate_item_group_overrides(group, overrides)
         effective_min_select = overrides.get("min_select_override", group.get("min_select") or 0)
         effective_max_select = overrides.get("max_select_override", group.get("max_select"))
-        if effective_min_select and effective_min_select > available_count:
+        if input_type == "SELECT" and effective_min_select and effective_min_select > available_count:
             self._bad_request("min_select cannot exceed available option values")
-        if effective_max_select is not None and effective_max_select > available_count:
+        if input_type == "SELECT" and effective_max_select is not None and effective_max_select > available_count:
             self._bad_request("max_select cannot exceed available option values")
         self.item_option_repo.upsert_item_group(menu_item_id, group_id, overrides)
         return {"message": "Option group attached", "menu_item_id": menu_item_id, "group_id": group_id}

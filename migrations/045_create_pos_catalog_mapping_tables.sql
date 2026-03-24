@@ -1,0 +1,77 @@
+-- Migration: Create POS catalog mapping tables
+-- Description: Stores provider-agnostic mappings between internal catalog records and external POS identifiers.
+
+CREATE TABLE IF NOT EXISTS POS_Menu_Item_Mappings (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    restaurant_id INT NOT NULL,
+    pos_integration_id INT NOT NULL,
+    menu_item_id INT NOT NULL,
+    external_item_id VARCHAR(255) NOT NULL,
+    external_parent_item_id VARCHAR(255) DEFAULT NULL,
+    external_object_type VARCHAR(50) NOT NULL DEFAULT 'ITEM',
+    external_name VARCHAR(255) DEFAULT NULL,
+    external_version VARCHAR(255) DEFAULT NULL,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    last_seen_at TIMESTAMP NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    FOREIGN KEY (restaurant_id) REFERENCES Restaurants(id) ON DELETE CASCADE ON UPDATE CASCADE,
+    FOREIGN KEY (pos_integration_id) REFERENCES POS_Integrations(id) ON DELETE CASCADE ON UPDATE CASCADE,
+    FOREIGN KEY (menu_item_id) REFERENCES Menus(id) ON DELETE CASCADE ON UPDATE CASCADE,
+    UNIQUE KEY unique_pos_menu_item_external (pos_integration_id, external_item_id),
+    UNIQUE KEY unique_pos_menu_item_internal (pos_integration_id, menu_item_id),
+    INDEX idx_pmim_restaurant_pos (restaurant_id, pos_integration_id),
+    INDEX idx_pmim_menu_item (menu_item_id),
+    INDEX idx_pmim_active (restaurant_id, pos_integration_id, is_active)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS POS_Option_Group_Mappings (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    restaurant_id INT NOT NULL,
+    pos_integration_id INT NOT NULL,
+    option_group_id INT NOT NULL,
+    external_group_id VARCHAR(255) NOT NULL,
+    external_parent_id VARCHAR(255) DEFAULT NULL,
+    external_object_type VARCHAR(50) NOT NULL DEFAULT 'OPTION_GROUP',
+    external_name VARCHAR(255) DEFAULT NULL,
+    external_version VARCHAR(255) DEFAULT NULL,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    last_seen_at TIMESTAMP NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    FOREIGN KEY (restaurant_id) REFERENCES Restaurants(id) ON DELETE CASCADE ON UPDATE CASCADE,
+    FOREIGN KEY (pos_integration_id) REFERENCES POS_Integrations(id) ON DELETE CASCADE ON UPDATE CASCADE,
+    FOREIGN KEY (option_group_id) REFERENCES Menu_Option_Groups(id) ON DELETE CASCADE ON UPDATE CASCADE,
+    UNIQUE KEY unique_pos_option_group_external (pos_integration_id, external_group_id),
+    UNIQUE KEY unique_pos_option_group_internal (pos_integration_id, option_group_id),
+    INDEX idx_pogm_restaurant_pos (restaurant_id, pos_integration_id),
+    INDEX idx_pogm_option_group (option_group_id),
+    INDEX idx_pogm_active (restaurant_id, pos_integration_id, is_active)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS POS_Option_Value_Mappings (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    restaurant_id INT NOT NULL,
+    pos_integration_id INT NOT NULL,
+    option_group_id INT NOT NULL,
+    option_value_id INT NOT NULL,
+    external_value_id VARCHAR(255) NOT NULL,
+    external_group_id VARCHAR(255) DEFAULT NULL,
+    external_object_type VARCHAR(50) NOT NULL DEFAULT 'OPTION_VALUE',
+    external_name VARCHAR(255) DEFAULT NULL,
+    external_version VARCHAR(255) DEFAULT NULL,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    last_seen_at TIMESTAMP NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    FOREIGN KEY (restaurant_id) REFERENCES Restaurants(id) ON DELETE CASCADE ON UPDATE CASCADE,
+    FOREIGN KEY (pos_integration_id) REFERENCES POS_Integrations(id) ON DELETE CASCADE ON UPDATE CASCADE,
+    FOREIGN KEY (option_group_id) REFERENCES Menu_Option_Groups(id) ON DELETE CASCADE ON UPDATE CASCADE,
+    FOREIGN KEY (option_value_id) REFERENCES Menu_Option_Values(id) ON DELETE CASCADE ON UPDATE CASCADE,
+    UNIQUE KEY unique_pos_option_value_external (pos_integration_id, external_value_id),
+    UNIQUE KEY unique_pos_option_value_internal (pos_integration_id, option_value_id),
+    INDEX idx_povm_restaurant_pos (restaurant_id, pos_integration_id),
+    INDEX idx_povm_option_group (option_group_id),
+    INDEX idx_povm_option_value (option_value_id),
+    INDEX idx_povm_active (restaurant_id, pos_integration_id, is_active)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

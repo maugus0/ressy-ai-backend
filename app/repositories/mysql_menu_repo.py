@@ -26,7 +26,7 @@ class MySQLMenuRepository(MySQLBaseRepository):
             item["suggested_items"] = []
         return item
 
-    def get_available_items_by_restaurant(self, restaurant_id: int) -> List[Dict]:
+    def get_available_items_by_restaurant(self, restaurant_id: int, only_active: bool = False) -> List[Dict]:
         """
         Get all available menu items for a restaurant.
         Only returns items where is_available = TRUE.
@@ -43,14 +43,22 @@ class MySQLMenuRepository(MySQLBaseRepository):
                 avg_prep_time,
                 suggested_items,
                 is_available,
+                is_active,
+                catalog_source,
+                source_name,
+                source_description,
+                source_category,
+                source_sub_category,
                 is_special,
                 created_at,
                 updated_at
             FROM Menus
             WHERE restaurant_id = %s
               AND is_available = TRUE
-            ORDER BY category, sub_category, item_name
         """
+        if only_active:
+            query += " AND is_active = TRUE"
+        query += " ORDER BY category, sub_category, item_name"
         items = self._execute_query(query, (restaurant_id,))
         return [self._parse_suggested_items(item) for item in items]
 
@@ -100,8 +108,27 @@ class MySQLMenuRepository(MySQLBaseRepository):
     def create_menu(self, restaurant_id: int, data: Dict[str, Any]) -> int:
         """Create a new menu item."""
         query = """
-            INSERT INTO Menus (restaurant_id, category, sub_category, item_name, item_desc, price, avg_prep_time, suggested_items, is_available, is_special, created_at, updated_at)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
+            INSERT INTO Menus (
+                restaurant_id,
+                category,
+                sub_category,
+                item_name,
+                item_desc,
+                price,
+                avg_prep_time,
+                suggested_items,
+                is_available,
+                is_active,
+                catalog_source,
+                source_name,
+                source_description,
+                source_category,
+                source_sub_category,
+                is_special,
+                created_at,
+                updated_at
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
         """
         suggested_items = data.get("suggested_items")
         suggested_items_json = json.dumps(suggested_items) if suggested_items else json.dumps([])
@@ -114,6 +141,9 @@ class MySQLMenuRepository(MySQLBaseRepository):
         is_special = data.get("is_special")
         if is_special is None:
             is_special = False
+        is_active = data.get("is_active")
+        if is_active is None:
+            is_active = True
 
         return self._execute_insert(
             query,
@@ -127,18 +157,36 @@ class MySQLMenuRepository(MySQLBaseRepository):
                 data.get("avg_prep_time"),
                 suggested_items_json,
                 is_available,
+                is_active,
+                data.get("catalog_source", "INTERNAL"),
+                data.get("source_name"),
+                data.get("source_description"),
+                data.get("source_category"),
+                data.get("source_sub_category"),
                 is_special,
             ),
         )
 
-    def get_menus_by_restaurant(self, restaurant_id: int) -> List[Dict]:
-        query = """
-            SELECT * FROM Menus
-            WHERE restaurant_id = %s
-            ORDER BY category, sub_category, item_name
-        """
+    def get_menus_by_restaurant(self, restaurant_id: int, only_active: bool = False) -> List[Dict]:
+        query = "SELECT * FROM Menus WHERE restaurant_id = %s"
+        if only_active:
+            query += " AND is_active = TRUE"
+        query += " ORDER BY category, sub_category, item_name"
         items = self._execute_query(query, (restaurant_id,))
         return [self._parse_suggested_items(item) for item in items]
+
+    def get_active_items_by_restaurant(self, restaurant_id: int) -> List[Dict]:
+        """Get all active menu items for a restaurant, regardless of availability."""
+        return self.get_menus_by_restaurant(restaurant_id, only_active=True)
+
+    def set_active_state_by_ids(self, menu_item_ids: List[int], is_active: bool) -> int:
+        """Bulk update is_active for the provided menu item IDs."""
+        if not menu_item_ids:
+            return 0
+        placeholders = ", ".join(["%s"] * len(menu_item_ids))
+        query = f"UPDATE Menus SET is_active = %s, updated_at = NOW() WHERE id IN ({placeholders})"
+        params = [is_active] + menu_item_ids
+        return self._execute_update(query, tuple(params))
 
     def get_menu_by_id(self, restaurant_id: int, menu_id: int) -> Dict:
         query = "SELECT * FROM Menus WHERE restaurant_id = %s AND id = %s LIMIT 1"
@@ -222,6 +270,7 @@ class MySQLMenuRepository(MySQLBaseRepository):
         is_available: Optional[bool] = None,
         is_special: Optional[bool] = None,
         search: Optional[str] = None,
+        only_active: bool = False,
     ) -> Tuple[List[Dict], int]:
         """
         Get paginated menu items with filters.
@@ -235,6 +284,7 @@ class MySQLMenuRepository(MySQLBaseRepository):
             is_available: Filter by availability
             is_special: Filter by special status
             search: Search term for item name
+            only_active: When True, only return active menu items
 
         Returns:
             Tuple of (list of menu items, total count)
@@ -242,6 +292,9 @@ class MySQLMenuRepository(MySQLBaseRepository):
         # Build WHERE clause
         where_clauses = ["m.restaurant_id = %s"]
         params: List[Any] = [restaurant_id]
+
+        if only_active:
+            where_clauses.append("m.is_active = TRUE")
 
         if category:
             where_clauses.append("m.category = %s")
@@ -304,6 +357,12 @@ class MySQLMenuRepository(MySQLBaseRepository):
             "avg_prep_time",
             "suggested_items",
             "is_available",
+            "is_active",
+            "catalog_source",
+            "source_name",
+            "source_description",
+            "source_category",
+            "source_sub_category",
             "is_special",
         ]:
             if key in data:
@@ -332,6 +391,12 @@ class MySQLMenuRepository(MySQLBaseRepository):
             "avg_prep_time",
             "suggested_items",
             "is_available",
+            "is_active",
+            "catalog_source",
+            "source_name",
+            "source_description",
+            "source_category",
+            "source_sub_category",
             "is_special",
         ]:
             if key in data:
@@ -495,7 +560,7 @@ class MySQLMenuRepository(MySQLBaseRepository):
 
         return result[0]["count"] == len(menu_item_ids) if result else False
 
-    def get_menu_categories(self, restaurant_id: int) -> Dict[str, List[str]]:
+    def get_menu_categories(self, restaurant_id: int, only_active: bool = False) -> Dict[str, List[str]]:
         """
         Get distinct categories and sub-categories for a restaurant.
 
@@ -509,8 +574,10 @@ class MySQLMenuRepository(MySQLBaseRepository):
             SELECT DISTINCT category, sub_category
             FROM Menus
             WHERE restaurant_id = %s AND category IS NOT NULL
-            ORDER BY category, sub_category
         """
+        if only_active:
+            query += " AND is_active = TRUE"
+        query += " ORDER BY category, sub_category"
 
         results = self._execute_query(query, (restaurant_id,))
 
@@ -553,7 +620,9 @@ class MySQLMenuRepository(MySQLBaseRepository):
     def delete_special(self, restaurant_id: int, special_id: int) -> int:
         return self.delete_menu(restaurant_id, special_id)
 
-    def get_option_groups_for_item(self, menu_item_id: int) -> List[Dict[str, Any]]:
+    def get_option_groups_for_item(
+        self, menu_item_id: int, only_active: bool = False, only_available: bool = False
+    ) -> List[Dict[str, Any]]:
         """
         Fetch option groups (with overrides) and values for a menu item.
         """
@@ -561,6 +630,7 @@ class MySQLMenuRepository(MySQLBaseRepository):
             SELECT
                 mog.*,
                 mig.menu_item_id,
+                mig.selection_type_override,
                 mig.min_select_override,
                 mig.max_select_override,
                 mig.free_allowance_override,
@@ -571,8 +641,12 @@ class MySQLMenuRepository(MySQLBaseRepository):
             FROM Menu_Item_Option_Groups mig
             JOIN Menu_Option_Groups mog ON mig.group_id = mog.id
             WHERE mig.menu_item_id = %s
-            ORDER BY mig.sort_order, mog.sort_order, mog.name
         """
+        if only_active:
+            group_query += " AND mog.is_active = TRUE"
+        if only_available:
+            group_query += " AND mog.is_available = TRUE"
+        group_query += " ORDER BY mig.sort_order, mog.sort_order, mog.name"
         groups = self._execute_query(group_query, (menu_item_id,))
         if not groups:
             return []
@@ -583,8 +657,12 @@ class MySQLMenuRepository(MySQLBaseRepository):
         values_query = f"""
             SELECT * FROM Menu_Option_Values
             WHERE group_id IN ({placeholders})
-            ORDER BY sort_order, name
         """
+        if only_active:
+            values_query += " AND is_active = TRUE"
+        if only_available:
+            values_query += " AND is_available = TRUE"
+        values_query += " ORDER BY sort_order, name"
         values = self._execute_query(values_query, tuple(group_ids))
         values_by_group: Dict[int, List[Dict[str, Any]]] = {}
         for value in values:
@@ -598,17 +676,25 @@ class MySQLMenuRepository(MySQLBaseRepository):
             self._apply_option_group_overrides(group)
         return groups
 
-    def get_menu_item_with_options(self, menu_item_id: int) -> Optional[Dict[str, Any]]:
+    def get_menu_item_with_options(
+        self, menu_item_id: int, only_active: bool = False, only_available: bool = False
+    ) -> Optional[Dict[str, Any]]:
         """
         Fetch a menu item and attach option groups/values when present.
         """
         item = self.get_by_id(menu_item_id)
         if not item:
             return None
-        item["option_groups"] = self.get_option_groups_for_item(menu_item_id)
+        item["option_groups"] = self.get_option_groups_for_item(
+            menu_item_id,
+            only_active=only_active,
+            only_available=only_available,
+        )
         return item
 
-    def get_option_group_summaries_for_items(self, menu_item_ids: List[int]) -> Dict[int, List[Dict[str, Any]]]:
+    def get_option_group_summaries_for_items(
+        self, menu_item_ids: List[int], only_active: bool = False
+    ) -> Dict[int, List[Dict[str, Any]]]:
         """
         Fetch summarized option group data for multiple menu items in one query.
         """
@@ -621,7 +707,10 @@ class MySQLMenuRepository(MySQLBaseRepository):
                 mog.id AS group_id,
                 mog.name,
                 mog.prompt_style,
-                mog.selection_type,
+                COALESCE(mig.selection_type_override, mog.selection_type) AS selection_type,
+                mog.input_type,
+                mog.text_required,
+                mog.max_text_length,
                 COALESCE(mig.min_select_override, mog.min_select) AS min_select,
                 COALESCE(mig.max_select_override, mog.max_select) AS max_select,
                 COALESCE(mig.free_allowance_override, mog.free_allowance) AS free_allowance,
@@ -632,8 +721,10 @@ class MySQLMenuRepository(MySQLBaseRepository):
             FROM Menu_Item_Option_Groups mig
             JOIN Menu_Option_Groups mog ON mig.group_id = mog.id
             WHERE mig.menu_item_id IN ({placeholders})
-            ORDER BY mig.menu_item_id, mig.sort_order, mog.sort_order, mog.name
         """
+        if only_active:
+            query += " AND mog.is_active = TRUE"
+        query += " ORDER BY mig.menu_item_id, mig.sort_order, mog.sort_order, mog.name"
         results = self._execute_query(query, tuple(menu_item_ids))
         summaries: Dict[int, List[Dict[str, Any]]] = {}
         for row in results:
@@ -646,6 +737,9 @@ class MySQLMenuRepository(MySQLBaseRepository):
                     "name": row.get("name"),
                     "prompt_style": row.get("prompt_style"),
                     "selection_type": row.get("selection_type"),
+                    "input_type": row.get("input_type"),
+                    "text_required": row.get("text_required"),
+                    "max_text_length": row.get("max_text_length"),
                     "min_select": row.get("min_select"),
                     "max_select": row.get("max_select"),
                     "free_allowance": row.get("free_allowance"),
@@ -657,7 +751,7 @@ class MySQLMenuRepository(MySQLBaseRepository):
             )
         return summaries
 
-    def get_items_with_option_groups(self, menu_item_ids: List[int]) -> Dict[int, bool]:
+    def get_items_with_option_groups(self, menu_item_ids: List[int], only_active: bool = False) -> Dict[int, bool]:
         """
         Return which menu items have option groups attached.
         """
@@ -666,15 +760,19 @@ class MySQLMenuRepository(MySQLBaseRepository):
         placeholders = ", ".join(["%s"] * len(menu_item_ids))
         query = f"""
             SELECT DISTINCT menu_item_id
-            FROM Menu_Item_Option_Groups
+            FROM Menu_Item_Option_Groups mig
+            JOIN Menu_Option_Groups mog ON mig.group_id = mog.id
             WHERE menu_item_id IN ({placeholders})
         """
+        if only_active:
+            query += " AND mog.is_active = TRUE"
         results = self._execute_query(query, tuple(menu_item_ids))
         return {int(row["menu_item_id"]): True for row in results if row.get("menu_item_id") is not None}
 
     @staticmethod
     def _apply_option_group_overrides(group: Dict[str, Any]) -> None:
         override_map = {
+            "selection_type": "selection_type_override",
             "min_select": "min_select_override",
             "max_select": "max_select_override",
             "free_allowance": "free_allowance_override",

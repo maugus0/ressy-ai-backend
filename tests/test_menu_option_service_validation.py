@@ -238,6 +238,56 @@ def test_create_group_rejects_invalid_free_allowance_strategy():
         service.create_option_group(restaurant_id=1, data=payload)
 
 
+def test_create_text_group_rejects_inline_values():
+    option_repo = _FakeOptionRepo()
+    service = MenuOptionService(
+        option_repo=option_repo,
+        item_option_repo=_FakeItemOptionRepo(),
+        menu_repo=_FakeRepo(),
+    )
+    payload = {
+        "name": "Special Instructions",
+        "input_type": "TEXT",
+        "selection_type": "single",
+        "text_required": True,
+        "values": [{"name": "Should Not Exist", "price_delta": 0}],
+    }
+
+    with pytest.raises(HTTPException):
+        service.create_option_group(restaurant_id=1, data=payload)
+
+
+def test_attach_text_group_allows_zero_option_values():
+    option_repo = _FakeOptionRepo(
+        group={
+            "id": 2,
+            "restaurant_id": 1,
+            "selection_type": "single",
+            "input_type": "TEXT",
+            "text_required": True,
+            "is_available": True,
+            "min_select": 0,
+            "max_select": 1,
+            "free_allowance": 0,
+            "allows_quantity": False,
+            "max_quantity_per_option": None,
+            "is_required": False,
+        },
+        available_count=0,
+    )
+    item_option_repo = _FakeItemOptionRepo()
+    service = MenuOptionService(
+        option_repo=option_repo,
+        item_option_repo=item_option_repo,
+        menu_repo=_FakeMenuRepo({"id": 9, "restaurant_id": 1}),
+    )
+
+    result = service.attach_group_to_item(menu_item_id=9, group_id=2, overrides={})
+
+    assert result["group_id"] == 2
+    assert item_option_repo.upsert_calls == [(9, 2, {})]
+
+
 def test_create_group_single_select_without_default_does_not_unset():
     option_repo = _FakeOptionRepo()
     service = MenuOptionService(

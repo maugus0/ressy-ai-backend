@@ -203,16 +203,21 @@ class WebSocketService:
             restaurant_id = int(restaurant_id)
         restaurant = restaurant_record or {}
 
-        # Get ALL menu items (both available and unavailable) to send to agent
-        # This allows agent to inform customers when items are unavailable instead of saying "trouble checking"
-        all_menu_items = self.menu_service.menu_repo.get_menus_by_restaurant(restaurant_id) if restaurant_id else []
-        item_ids = [item.get("id") for item in all_menu_items if item.get("id") is not None]
+        all_menu_items = []
         option_group_flags: Dict[int, bool] = {}
-        if item_ids:
-            try:
-                option_group_flags = self.menu_service.menu_repo.get_items_with_option_groups(item_ids)
-            except Exception as exc:
-                self.logger.warning("Failed to load menu option flags restaurant_id=%s: %s", restaurant_id, exc)
+        if restaurant_id:
+            # Get ALL menu items (both available and unavailable) to send to agent.
+            # Only active internal records are eligible for calls; availability remains separate.
+            all_menu_items = self.menu_service.menu_repo.get_menus_by_restaurant(restaurant_id, only_active=True)
+            item_ids = [item.get("id") for item in all_menu_items if item.get("id") is not None]
+            if item_ids:
+                try:
+                    option_group_flags = self.menu_service.menu_repo.get_items_with_option_groups(
+                        item_ids,
+                        only_active=True,
+                    )
+                except Exception as exc:
+                    self.logger.warning("Failed to load menu option flags restaurant_id=%s: %s", restaurant_id, exc)
 
         # Process items in a single pass: separate by availability and build category structures
         # This minimizes iterations for better performance

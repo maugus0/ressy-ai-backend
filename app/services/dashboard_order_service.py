@@ -15,6 +15,7 @@ from app.repositories.mysql_user_restaurant_metadata_repo import (
     MySQLUserRestaurantMetadataRepository,
 )
 from app.services.order_customization_service import OrderCustomizationService
+from app.services.pos_service import POSService
 from app.utils.logging_config import get_logger
 from app.utils.timezone import isoformat_z, parse_datetime
 
@@ -75,6 +76,7 @@ class DashboardOrderService:
         self.menu_repo = MySQLMenuRepository()
         self.order_item_repo = MySQLOrderItemRepository()
         self.customization_service = OrderCustomizationService(self.menu_repo)
+        self.pos_service = POSService()
 
     def _attach_order_item_snapshots(self, order: Dict[str, Any]) -> Dict[str, Any]:
         if not order or not order.get("id"):
@@ -249,6 +251,7 @@ class DashboardOrderService:
                 logger.warning("Failed to create user-restaurant metadata: %s", meta_err)
 
         priced_items, computed_total = self._validate_and_price_order_details(order_details)
+        priced_items = self.pos_service.attach_external_snapshot_ids(restaurant_id, priced_items)
         if computed_total > 0:
             total_amount = computed_total
 
@@ -267,6 +270,7 @@ class DashboardOrderService:
                 order_id,
                 {
                     "menu_item_id": item.get("menu_item_id"),
+                    "external_item_id_snapshot": item.get("external_item_id_snapshot"),
                     "item_name_snapshot": item.get("item_name_snapshot"),
                     "base_price_snapshot": item.get("base_price_snapshot"),
                     "quantity": item.get("quantity"),
@@ -460,8 +464,11 @@ class DashboardOrderService:
 
         if order_details is not None:
             priced_items, computed_total = self._validate_and_price_order_details(order_details)
+            priced_items = self.pos_service.attach_external_snapshot_ids(order.get("restaurant_id"), priced_items)
             if computed_total > 0:
                 total_amount = computed_total
+
+        previous_state = self.pos_service.capture_order_state(order_id)
 
         # Update order
         success = self.order_repo.update_order(
@@ -476,22 +483,31 @@ class DashboardOrderService:
             raise ValueError("Failed to update order")
 
         if order_details is not None:
-            self.order_item_repo.delete_order_items_by_order(order_id)
-            for item in priced_items:
-                order_item_id = self.order_item_repo.create_order_item(
+            self.order_item_repo.replace_order_item_snapshots(order_id, priced_items)
+
+        if status == "cancelled":
+            if previous_state and self.pos_service.has_confirmed_sync(order_id):
+                pos_result = self.pos_service.cancel_order_in_pos(
                     order_id,
-                    {
-                        "menu_item_id": item.get("menu_item_id"),
-                        "item_name_snapshot": item.get("item_name_snapshot"),
-                        "base_price_snapshot": item.get("base_price_snapshot"),
-                        "quantity": item.get("quantity"),
-                        "instructions": item.get("instructions"),
-                        "final_unit_price_snapshot": item.get("final_unit_price_snapshot"),
-                        "option_total_snapshot": item.get("option_total_snapshot"),
-                        "total_price_snapshot": item.get("total_price_snapshot"),
-                    },
+                    int(order.get("restaurant_id")),
+                    reason="Dashboard cancelled order",
                 )
-                self.order_item_repo.create_order_item_options(order_item_id, item.get("option_snapshots", []))
+                if not pos_result.get("success"):
+                    self.pos_service.restore_order_state(order_id, previous_state)
+                    raise ValueError(
+                        pos_result.get("error") or "Failed to cancel the order with the restaurant system."
+                    )
+        elif order_details is not None and previous_state and self.pos_service.has_confirmed_sync(order_id):
+            pos_result = self.pos_service.replace_order_after_internal_update(
+                order_id,
+                int(order.get("restaurant_id")),
+                previous_state=previous_state,
+                reason="Dashboard updated order",
+            )
+            if not pos_result.get("success"):
+                raise ValueError(
+                    pos_result.get("error") or "Failed to confirm the updated order with the restaurant system."
+                )
 
         # Return updated order (transformed)
         updated = _transform_order(self.order_repo.get_order_with_user(order_id))
@@ -519,6 +535,14 @@ class DashboardOrderService:
         # Validate status
         if status not in self.VALID_STATUSES:
             raise ValueError(f"Invalid status '{status}'. " f"Must be one of: {', '.join(self.VALID_STATUSES)}")
+
+        if status == "cancelled":
+            cancelled = self.cancel_order(order_id)
+            return {
+                "order_id": order_id,
+                "status": "cancelled",
+                "message": cancelled.get("message", "Order cancelled successfully"),
+            }
 
         # Update status
         success = self.order_repo.update_order_status(order_id, status)
@@ -559,11 +583,23 @@ class DashboardOrderService:
         if current_status == "completed":
             raise ValueError("Cannot cancel a completed order")
 
+        previous_state = self.pos_service.capture_order_state(order_id)
+
         # Update status to cancelled
         success = self.order_repo.update_order_status(order_id, "cancelled")
 
         if not success:
             raise ValueError("Failed to cancel order")
+
+        if previous_state and self.pos_service.has_confirmed_sync(order_id):
+            pos_result = self.pos_service.cancel_order_in_pos(
+                order_id,
+                int(order.get("restaurant_id")),
+                reason="Dashboard cancelled order",
+            )
+            if not pos_result.get("success"):
+                self.pos_service.restore_order_state(order_id, previous_state)
+                raise ValueError(pos_result.get("error") or "Failed to cancel the order with the restaurant system.")
 
         return {
             "order_id": order_id,
