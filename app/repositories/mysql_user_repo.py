@@ -178,9 +178,10 @@ class MySQLUserRepository(MySQLBaseRepository):
                 u.is_spam,
                 u.credit_card,
                 u.created_at,
-                u.updated_at
+                u.updated_at,
+                COALESCE(urm.is_spam, FALSE) as restaurant_is_spam
             FROM Users u
-            LEFT JOIN User_Restaurant_Metadata urm ON u.id = urm.user_id
+            LEFT JOIN User_Restaurant_Metadata urm ON u.id = urm.user_id AND urm.restaurant_id = %s
             LEFT JOIN Reservations r ON u.id = r.user_id
             LEFT JOIN Slot_Bookings sb ON r.slot_booking_id = sb.id
             LEFT JOIN Calls c ON u.id = c.user_id
@@ -190,7 +191,7 @@ class MySQLUserRepository(MySQLBaseRepository):
                 OR c.restaurant_id = %s
             )
         """
-        params: List = [restaurant_id, restaurant_id, str(restaurant_id)]
+        params: List = [restaurant_id, restaurant_id, restaurant_id, str(restaurant_id)]
 
         if search:
             query += """ AND (
@@ -202,7 +203,8 @@ class MySQLUserRepository(MySQLBaseRepository):
             params.extend([search_pattern, search_pattern, search_pattern])
 
         if is_spam is not None:
-            query += " AND u.is_spam = %s"
+            # Filter by restaurant-specific spam status
+            query += " AND COALESCE(urm.is_spam, FALSE) = %s"
             params.append(is_spam)
 
         query += " ORDER BY u.created_at DESC LIMIT %s OFFSET %s"
@@ -230,7 +232,7 @@ class MySQLUserRepository(MySQLBaseRepository):
         query = """
             SELECT COUNT(DISTINCT u.id) as total
             FROM Users u
-            LEFT JOIN User_Restaurant_Metadata urm ON u.id = urm.user_id
+            LEFT JOIN User_Restaurant_Metadata urm ON u.id = urm.user_id AND urm.restaurant_id = %s
             LEFT JOIN Reservations r ON u.id = r.user_id
             LEFT JOIN Slot_Bookings sb ON r.slot_booking_id = sb.id
             LEFT JOIN Calls c ON u.id = c.user_id
@@ -240,7 +242,7 @@ class MySQLUserRepository(MySQLBaseRepository):
                 OR c.restaurant_id = %s
             )
         """
-        params: List = [restaurant_id, restaurant_id, restaurant_id]
+        params: List = [restaurant_id, restaurant_id, restaurant_id, str(restaurant_id)]
 
         if search:
             query += """ AND (
@@ -252,7 +254,8 @@ class MySQLUserRepository(MySQLBaseRepository):
             params.extend([search_pattern, search_pattern, search_pattern])
 
         if is_spam is not None:
-            query += " AND u.is_spam = %s"
+            # Filter by restaurant-specific spam status
+            query += " AND COALESCE(urm.is_spam, FALSE) = %s"
             params.append(is_spam)
 
         results = self._execute_query(query, tuple(params))
@@ -469,3 +472,50 @@ class MySQLUserRepository(MySQLBaseRepository):
     def delete_user(self, user_id: int) -> int:
         """Delete user by id."""
         return self._execute_update("DELETE FROM Users WHERE id = %s", (user_id,))
+
+    def mark_user_global_spam(self, user_id: int, reason: Optional[str] = None) -> int:
+        """
+        Mark a user as global spam in the Users table.
+        Uses atomic UPDATE to prevent race conditions.
+
+        Args:
+            user_id: User ID
+            reason: Optional reason for global spam marking
+
+        Returns:
+            Number of rows updated
+        """
+        query = "UPDATE Users SET is_spam = TRUE, updated_at = NOW() WHERE id = %s AND is_spam = FALSE"
+        return self._execute_update(query, (user_id,))
+
+    def get_user_spam_status(self, user_id: int, restaurant_id: int) -> Dict:
+        """
+        Get spam status for a user (both restaurant-specific and global).
+
+        Args:
+            user_id: User ID
+            restaurant_id: Restaurant ID
+
+        Returns:
+            Dictionary with spam status information
+        """
+        user = self.get_user_by_id(user_id)
+        if not user:
+            return {"error": "User not found"}
+
+        # Check restaurant-specific spam
+        from app.repositories.mysql_user_restaurant_metadata_repo import (
+            MySQLUserRestaurantMetadataRepository,
+        )
+
+        metadata_repo = MySQLUserRestaurantMetadataRepository()
+        is_restaurant_spam = metadata_repo.is_spam(user_id, restaurant_id)
+        spam_count = metadata_repo.get_spam_count_by_user(user_id)
+
+        return {
+            "user_id": user_id,
+            "restaurant_id": restaurant_id,
+            "is_global_spam": bool(user.get("is_spam", False)),
+            "is_restaurant_spam": is_restaurant_spam,
+            "spam_restaurant_count": spam_count,
+        }

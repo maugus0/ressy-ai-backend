@@ -11,7 +11,7 @@ import websockets
 from fastapi import WebSocket, WebSocketDisconnect
 
 from app.agent_fc.config import get_settings as get_fc_settings
-from app.agent_fc.functions import conversation, menu, orders, reservations
+from app.agent_fc.functions import conversation, menu, orders, reservations, spam_detection
 from app.agent_fc.functions.function_context import NoArgs
 from app.agent_fc.models import AgentFrame
 from app.agent_fc.registry import FunctionRegistry
@@ -20,6 +20,9 @@ from app.agent_fc.router import FunctionCallRouter
 from app.agent_fc.transport import Transport
 from app.config import settings
 from app.repositories.mysql_user_repo import MySQLUserRepository
+from app.repositories.mysql_user_restaurant_metadata_repo import (
+    MySQLUserRestaurantMetadataRepository,
+)
 from app.services.call_service import CallService
 from app.services.callmanager.call_filler import FillerManager
 from app.services.callmanager.call_latency import log_agent_audio_start_latency, log_assistant_text_latency
@@ -57,6 +60,7 @@ class WebSocketService:
         self.deepgram_service = DeepgramService()
         self.call_service = CallService()
         self.user_repo = MySQLUserRepository()
+        self.metadata_repo = MySQLUserRestaurantMetadataRepository()
         self.restaurant_service = RestaurantService()
         self.menu_service = MenuService()
         self.faq_service = FAQService()
@@ -544,6 +548,118 @@ class WebSocketService:
         except Exception as exc:
             self.logger.warning("[Close] Failed to close Deepgram websocket: %s", exc)
 
+    async def _check_and_block_spam_user(
+        self,
+        caller_number: str,
+        restaurant_id: int,
+        twilio_ws: WebSocket,
+        streamsid_queue: asyncio.Queue,
+        shutdown_event: asyncio.Event,
+        audio_queue: asyncio.Queue,
+        deepgram_api_key: Optional[str] = None,
+    ) -> bool:
+        """
+        Check if user is marked as spam and block the call if so.
+
+        Args:
+            caller_number: Caller's phone number
+            restaurant_id: Restaurant ID
+            twilio_ws: Twilio WebSocket connection
+            streamsid_queue: Queue for stream SID
+            shutdown_event: Shutdown event
+            audio_queue: Audio queue
+
+        Returns:
+            True if call was blocked, False otherwise
+        """
+        try:
+            # Get user by phone number (wrap sync DB call to avoid blocking event loop)
+            user_id = await asyncio.to_thread(
+                self.user_repo.get_user_id_by_phone_or_email,
+                caller_number,
+                None,
+            )
+            if not user_id:
+                return False  # New user, not marked as spam
+
+            # Check global spam first (wrap sync DB call to avoid blocking event loop)
+            user = await asyncio.to_thread(
+                self.user_repo.get_user_by_id,
+                user_id,
+            )
+            if user and user.get("is_spam"):
+                self.logger.warning("Call blocked: User %s is marked as global spam", user_id)
+                await self._play_spam_message_and_disconnect(
+                    twilio_ws,
+                    streamsid_queue,
+                    shutdown_event,
+                    audio_queue,
+                    is_global=True,
+                    deepgram_api_key=deepgram_api_key,
+                )
+                return True
+
+            # Check restaurant-specific spam (wrap sync DB call to avoid blocking event loop)
+            is_restaurant_spam = await asyncio.to_thread(
+                self.metadata_repo.is_spam,
+                user_id,
+                restaurant_id,
+            )
+            if is_restaurant_spam:
+                self.logger.warning(
+                    "Call blocked: User %s is marked as spam for restaurant %s",
+                    user_id,
+                    restaurant_id,
+                )
+                await self._play_spam_message_and_disconnect(
+                    twilio_ws,
+                    streamsid_queue,
+                    shutdown_event,
+                    audio_queue,
+                    is_global=False,
+                    deepgram_api_key=deepgram_api_key,
+                )
+                return True
+
+            return False
+        except Exception as e:
+            self.logger.exception("Error checking spam status: %s", e)
+            return False  # Don't block on error, allow call to proceed
+
+    async def _play_spam_message_and_disconnect(
+        self,
+        twilio_ws: WebSocket,
+        streamsid_queue: asyncio.Queue,
+        shutdown_event: asyncio.Event,
+        audio_queue: asyncio.Queue,
+        is_global: bool = False,
+        deepgram_api_key: Optional[str] = None,
+    ):
+        """
+        Play spam blocking message and disconnect the call.
+        Sets shutdown event to signal that spam was detected. The caller will handle cleanup.
+        The redirect endpoint will handle playing the message via TwiML.
+
+        Args:
+            twilio_ws: Twilio WebSocket connection (not used, but kept for compatibility)
+            streamsid_queue: Queue for stream SID (not used, but kept for compatibility)
+            shutdown_event: Shutdown event to signal spam detection
+            audio_queue: Audio queue (not used, but kept for compatibility)
+            is_global: True if global spam, False if restaurant-specific
+        """
+        # Message based on spam type
+        if is_global:
+            message = "Ressy has marked you as spam. Please contact Ressy support directly to unblock you."
+        else:
+            message = "Ressy has marked you as spam. Please contact the restaurant directly to unblock you."
+
+        self.logger.info("Playing spam blocking message via Twilio: %s", message)
+
+        # Just set the shutdown event - the caller will handle cleanup
+        # The redirect endpoint will handle playing the message via TwiML
+        shutdown_event.set()
+        self.logger.info("Spam detected: shutdown event set, call will be handled by redirect endpoint")
+
     async def _handle_unregistered_twilio_call(
         self,
         twilio_ws,
@@ -805,6 +921,11 @@ class WebSocketService:
             name="escalate_to_human",
             handler=conversation.escalate_to_human,
             arg_model=conversation.EscalateToHumanArgs,
+        )
+        registry.register(
+            name="mark_potential_spam",
+            handler=spam_detection.mark_potential_spam,
+            arg_model=spam_detection.MarkPotentialSpamArgs,
         )
 
         # Register SMS redirect function if enabled for orders or reservations
@@ -1682,7 +1803,10 @@ class WebSocketService:
             else:
                 self.logger.info("Serving call for restaurant: %s", restaurant_record.get("name"))
 
+            # Extract Deepgram API key before spam check (needed for spam blocking message)
             deepgram_details = restaurant_record.get("deepgram_details") if restaurant_record else None
+            deepgram_api_key = None
+            deepgram_key_terms = None
             if isinstance(deepgram_details, str):
                 try:
                     deepgram_details = json.loads(deepgram_details)
@@ -1693,6 +1817,44 @@ class WebSocketService:
                 deepgram_key_terms = deepgram_details.get("key_terms") or deepgram_details.get("keyTerms")
                 if isinstance(deepgram_api_key, str):
                     deepgram_api_key = deepgram_api_key.strip() or None
+
+            # Check spam status before proceeding with call
+            restaurant_id = restaurant_record.get("id")
+            if caller_number and restaurant_id:
+                spam_blocked = await self._check_and_block_spam_user(
+                    caller_number,
+                    restaurant_id,
+                    twilio_ws,
+                    streamsid_queue,
+                    shutdown_event,
+                    audio_queue,
+                    deepgram_api_key=deepgram_api_key,
+                )
+                if spam_blocked:
+                    self.logger.info(
+                        "Call blocked due to spam status: caller=%s restaurant_id=%s", caller_number, restaurant_id
+                    )
+                    # Cancel tasks and clean up before returning
+                    shutdown_event.set()
+                    try:
+                        audio_queue.put_nowait(None)
+                    except (asyncio.QueueFull, AttributeError):
+                        pass
+                    # Cancel tasks
+                    for task in [twilio_task, flusher_task, twilio_send_task]:
+                        if task and not task.done():
+                            task.cancel()
+                    # Wait a moment for tasks to cancel, then close WebSocket
+                    await asyncio.sleep(0.1)
+                    try:
+                        await asyncio.gather(twilio_task, flusher_task, twilio_send_task, return_exceptions=True)
+                    except Exception:
+                        pass
+                    try:
+                        await twilio_ws.close()
+                    except Exception:
+                        pass
+                    return
 
             call_resources = await self._prepare_call_resources(
                 restaurant_twilio_number, caller_number, restaurant_record, deepgram_key_terms

@@ -134,5 +134,30 @@ class Settings:
     USERS_TABLE: str = "Users"
     OPENTABLE_API_LOGS_TABLE: str = "OpenTable_API_Logs"
 
+    # User Profile Sync Job Configuration
+    USER_PROFILE_SYNC_ENABLED = os.getenv("USER_PROFILE_SYNC_ENABLED", "true").lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    USER_PROFILE_SYNC_INTERVAL_MINUTES = int(
+        os.getenv("USER_PROFILE_SYNC_INTERVAL_MINUTES", "1440")
+    )  # How often to run sync job (default: once per day)
+    USER_PROFILE_SYNC_BATCH_SIZE = int(
+        os.getenv("USER_PROFILE_SYNC_BATCH_SIZE", "100")
+    )  # Number of users to process per batch
+    USER_PROFILE_SYNC_LAST_SYNC_WINDOW_HOURS = int(
+        os.getenv("USER_PROFILE_SYNC_LAST_SYNC_WINDOW_HOURS", "24")
+    )  # Only sync users updated in last X hours
+    USER_PROFILE_SYNC_CONFLICT_STRATEGY = os.getenv(
+        "USER_PROFILE_SYNC_CONFLICT_STRATEGY", "latest_wins"
+    )  # Conflict resolution strategy: latest_wins, non_null_wins, source_priority
+
+    # Spam Detection Configuration
+    SPAM_GLOBAL_THRESHOLD = int(
+        os.getenv("SPAM_GLOBAL_THRESHOLD", "5")
+    )  # Number of restaurants marking user as spam before global spam
+
 
 settings = Settings()

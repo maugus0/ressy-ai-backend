@@ -33,6 +33,7 @@ from app.api import (
     dashboard_users,
     escalations,
     faqs,
+    job_management,
     menu_options,
     menus,
     opentable,
@@ -42,9 +43,12 @@ from app.api import (
     testing,
 )
 from app.api.websocket import twilio_websocket_handler
+from app.config import settings
+from app.jobs.user_profile_sync_job import user_profile_sync_job
 from app.repositories.db_pool import close_db_pool, get_db_pool
 from app.services.call_service import CallService
 from app.services.escalation_service import EscalationService
+from app.services.job_scheduler import JobScheduler
 from app.services.notification_persistence_service import NotificationPersistenceService
 from app.services.restaurant_service import RestaurantService
 from app.services.sse_service import SSEService
@@ -73,11 +77,42 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f"[Startup] Warning - Database pool initialization: {e}")
 
+    # Startup: Initialize and start job scheduler
+    job_scheduler = None
+    try:
+        if settings.USER_PROFILE_SYNC_ENABLED:
+            job_scheduler = JobScheduler()
+            await job_scheduler.start()
+
+            # Register user profile sync job
+            from apscheduler.triggers.interval import IntervalTrigger
+
+            job_scheduler.register_job(
+                job_id="user_profile_sync",
+                func=user_profile_sync_job,
+                trigger=IntervalTrigger(minutes=settings.USER_PROFILE_SYNC_INTERVAL_MINUTES),
+            )
+            print(
+                f"[Startup] Job scheduler started. User profile sync job registered (interval: {settings.USER_PROFILE_SYNC_INTERVAL_MINUTES} minutes)"
+            )
+        else:
+            print("[Startup] User profile sync job disabled")
+    except Exception as e:
+        print(f"[Startup] Warning - Job scheduler initialization: {e}")
+
     yield
 
     # Shutdown: cleanup SSE connections and heartbeat task
     sse_service = SSEService()
     await sse_service.shutdown()
+
+    # Shutdown: Stop job scheduler
+    if job_scheduler:
+        try:
+            await job_scheduler.shutdown()
+            print("[Shutdown] Job scheduler stopped")
+        except Exception as e:
+            print(f"[Shutdown] Warning - Job scheduler shutdown: {e}")
 
     # Shutdown: Close database connection pool
     try:
@@ -225,6 +260,7 @@ app.include_router(client_menus.router)
 app.include_router(client_restaurant.router)
 app.include_router(client_client_users.router)
 app.include_router(client_analytics.router, tags=["Client Analytics"])
+app.include_router(job_management.router)
 
 # Testing routes (keep last)
 app.include_router(testing.router)
@@ -557,6 +593,36 @@ async def redirect(request: Request):
             return Response(content="<Response><Hangup/></Response>", media_type="application/xml")
 
         restaurant_id = str(restaurant.get("id"))
+
+        # Check if caller is marked as spam - play message via TwiML Say
+        from app.repositories.mysql_user_repo import MySQLUserRepository
+        from app.repositories.mysql_user_restaurant_metadata_repo import MySQLUserRestaurantMetadataRepository
+
+        user_repo = MySQLUserRepository()
+        metadata_repo = MySQLUserRestaurantMetadataRepository()
+
+        user_id = user_repo.get_user_id_by_phone_or_email(twilio_from, None)
+        if user_id:
+            # Check global spam first
+            user = user_repo.get_user_by_id(user_id)
+            if user and user.get("is_spam"):
+                logger.info("Call blocked: User %s is marked as global spam", user_id)
+                message = escape("Ressy has marked you as spam. Please contact Ressy support directly to unblock you.")
+                return Response(
+                    content=f'<Response><Say language="en-US" voice="alice">{message}</Say><Hangup/></Response>',
+                    media_type="application/xml",
+                )
+
+            # Check restaurant-specific spam
+            is_restaurant_spam = metadata_repo.is_spam(user_id, int(restaurant_id))
+            if is_restaurant_spam:
+                logger.info("Call blocked: User %s is marked as spam for restaurant %s", user_id, restaurant_id)
+                message = escape("Ressy has marked you as spam. Please contact the restaurant directly to unblock you.")
+                return Response(
+                    content=f'<Response><Say language="en-US" voice="alice">{message}</Say><Hangup/></Response>',
+                    media_type="application/xml",
+                )
+
         escalation = escalation_service.get_latest_by_call_sid_and_restaurant(call_sid, restaurant_id)
         if not escalation:
             logger.info("No escalation found for call_sid=%s restaurant_id=%s", call_sid, restaurant_id)

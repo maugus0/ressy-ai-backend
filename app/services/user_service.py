@@ -142,10 +142,20 @@ class UserService:
         # Add statistics for each user using a batch query to avoid N+1 problem
         user_ids = [user["id"] for user in users]
         stats_by_user_id = self.user_repo.get_users_statistics(user_ids, restaurant_id)
+
         users_with_stats = []
         for user in users:
             stats = stats_by_user_id.get(user["id"], {})
-            user_with_stats = {**user, "statistics": stats}
+            # Replace is_spam with restaurant-specific spam status from query result
+            # The query already includes restaurant_is_spam field
+            restaurant_spam_status = bool(user.get("restaurant_is_spam", False))
+            user_with_stats = {
+                **{
+                    k: v for k, v in user.items() if k != "restaurant_is_spam"
+                },  # Remove restaurant_is_spam from response
+                "is_spam": 1 if restaurant_spam_status else 0,
+                "statistics": stats,
+            }
             users_with_stats.append(user_with_stats)
 
         return {
@@ -217,13 +227,14 @@ class UserService:
 
         return user
 
-    def update_user_dashboard(self, user_id: int, user_data: dict) -> dict:
+    def update_user_dashboard(self, user_id: int, user_data: dict, restaurant_id: Optional[int] = None) -> dict:
         """
         Update user from dashboard.
 
         Args:
             user_id: User ID to update
             user_data: Fields to update
+            restaurant_id: Restaurant ID for restaurant-specific spam marking (optional)
 
         Returns:
             Dict with updated user info
@@ -236,6 +247,39 @@ class UserService:
         if not existing_user:
             raise ValueError(f"User with ID {user_id} not found")
 
+        # Handle spam marking if is_spam is provided
+        is_spam = user_data.get("is_spam")
+        if is_spam is not None:
+            if restaurant_id:
+                # Restaurant-specific spam marking (for restaurant users)
+                if is_spam:
+                    # Mark user as spam for this restaurant
+                    self.metadata_repo.mark_as_spam(
+                        user_id=user_id,
+                        restaurant_id=restaurant_id,
+                        reason="Marked as spam via user update",
+                    )
+                    # Check if global threshold reached
+                    from app.config import settings
+
+                    spam_count = self.metadata_repo.get_spam_count_by_user(user_id)
+                    if spam_count >= settings.SPAM_GLOBAL_THRESHOLD and not existing_user.get("is_spam"):
+                        # Mark as global spam atomically
+                        self.user_repo.mark_user_global_spam(
+                            user_id,
+                            reason=f"Marked as spam by {spam_count} restaurants (threshold: {settings.SPAM_GLOBAL_THRESHOLD})",
+                        )
+                else:
+                    # Unmark user as spam for this restaurant
+                    self.metadata_repo.unmark_as_spam(user_id, restaurant_id)
+                # Remove is_spam from user_data so it doesn't update the Users table directly
+                # (restaurant users use restaurant-specific spam, not global)
+                user_data = {k: v for k, v in user_data.items() if k != "is_spam"}
+            else:
+                # No restaurant_id - update Users.is_spam directly (for admin global spam updates)
+                # Keep is_spam in user_data to update Users table
+                pass
+
         # Check for duplicate phone/email if being updated
         phone_number = user_data.get("phone_number")
         email = user_data.get("email")
@@ -247,11 +291,23 @@ class UserService:
             duplicate_id = self.user_repo.get_user_id_by_phone_or_email(None, email)
             if duplicate_id and duplicate_id != user_id:
                 raise ValueError("Another user with this email already exists")
-        rows_affected = self.user_repo.update_user(user_id, user_data)
-        if rows_affected == 0 and user_data:
-            raise ValueError("No fields were updated")
+
+        # Update user fields (excluding is_spam which is handled above)
+        if user_data:
+            rows_affected = self.user_repo.update_user(user_id, user_data)
+            if rows_affected == 0:
+                # If only is_spam was updated (and it was handled above), that's still a success
+                if is_spam is not None:
+                    pass  # Success - spam status was updated
+                else:
+                    raise ValueError("No fields were updated")
 
         updated_user = self.user_repo.get_user_by_id(user_id)
+
+        # Replace is_spam with restaurant-specific spam status if restaurant_id is available
+        if restaurant_id and updated_user:
+            restaurant_spam_status = self.metadata_repo.is_spam(user_id, restaurant_id)
+            updated_user["is_spam"] = 1 if restaurant_spam_status else 0
 
         return {
             "message": "User updated successfully",
