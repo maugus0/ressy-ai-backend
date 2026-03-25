@@ -61,6 +61,8 @@ class SquareClient:
             "location_id": location_id,
             "line_items": order_data.get("line_items", []),
         }
+        if order_data.get("discounts"):
+            order_payload["discounts"] = order_data["discounts"]
         if order_data.get("fulfillments"):
             order_payload["fulfillments"] = order_data["fulfillments"]
         if order_data.get("reference_id"):

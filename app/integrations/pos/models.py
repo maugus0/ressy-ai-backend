@@ -149,6 +149,7 @@ class POSOrderLineItem:
     name: str
     quantity: int
     price: float
+    discount_amount: float = 0.0
     note: Optional[str] = None
     modifiers: List[POSOrderModifierSelection] = field(default_factory=list)
     metadata: Dict[str, Any] = field(default_factory=dict)

@@ -277,6 +277,22 @@ def test_ingest_square_webhook_deduplicates_processed_retries(monkeypatch):
     assert stored["last_retry_reason"] == "TIMEOUT"
 
 
+def test_ingest_square_webhook_rejects_non_utf8_payload(monkeypatch):
+    monkeypatch.setattr(settings, "SQUARE_WEBHOOK_SIGNATURE_KEY", "test-key")
+    monkeypatch.setattr(settings, "SQUARE_WEBHOOK_NOTIFICATION_URL", "https://example.com/api/v1/webhooks/square")
+
+    service = _build_service()
+
+    try:
+        service.ingest_square_webhook(
+            raw_body=b"\xff\xfe\xfd",
+            headers={"x-square-hmacsha256-signature": "invalid"},
+        )
+        assert False, "Expected invalid webhook signature"
+    except ValueError as exc:
+        assert str(exc) == "Invalid Square webhook signature"
+
+
 def test_process_square_event_routes_by_location_and_syncs_integration(monkeypatch):
     monkeypatch.setattr(settings, "POS_WEBHOOK_MAX_RETRY_ATTEMPTS", 3)
 
@@ -425,3 +441,27 @@ def test_ingest_square_webhook_requeues_stale_processing_event(monkeypatch):
     assert result["is_duplicate"] is True
     assert result["should_process"] is True
     assert stored["status"] == "PENDING"
+
+
+def test_process_pending_events_dispatches_by_pos_type(monkeypatch):
+    monkeypatch.setattr(settings, "POS_WEBHOOK_PROCESSING_STALE_MINUTES", 5)
+
+    service = _build_service()
+    unsupported_event_id = service.event_repo.create_event(
+        pos_type="FAKEPOS",
+        provider_event_id="evt-fake",
+        event_type="catalog.version.updated",
+        external_account_id=None,
+        location_id=None,
+        payload={"event_id": "evt-fake", "type": "catalog.version.updated"},
+        last_retry_number=None,
+        last_retry_reason=None,
+    )
+
+    result = service.process_pending_events()
+
+    assert result["processed"] == 1
+    assert result["ignored"] == 1
+    stored = service.event_repo.get_by_id(unsupported_event_id)
+    assert stored["status"] == "IGNORED"
+    assert stored["last_error"] == "Unsupported POS webhook provider: FAKEPOS"

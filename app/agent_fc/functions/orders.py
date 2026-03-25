@@ -18,6 +18,7 @@ from app.agent_fc.functions.function_context import (
     context_restaurant_id,
     split_call_context,
 )
+from app.agent_fc.responses import AgentFunctionResult, AgentSideEffect
 from app.config import settings
 from app.models.order_models import OrderItemOptionGroupSelection
 from app.repositories.mysql_menu_repo import MySQLMenuRepository
@@ -28,6 +29,8 @@ from app.repositories.mysql_user_restaurant_metadata_repo import (
     MySQLUserRestaurantMetadataRepository,
 )
 from app.services.activity_history_service import ActivityHistoryService
+from app.services.call_service import CallService
+from app.services.escalation_service import EscalationService
 from app.services.notification_service import NotificationService
 from app.services.order_customization_service import OrderCustomizationService
 from app.services.pos_service import POSService
@@ -242,6 +245,157 @@ async def _send_voice_order_sms(
     except Exception as e:
         # Don't fail the voice call if SMS fails - just log
         logger.warning("Failed to send SMS for voice order %s: %s", order_id, e)
+
+
+async def _emit_pos_failure_escalation_event(
+    *,
+    restaurant_id: int,
+    call_id: Optional[int],
+    caller_phone: Optional[str],
+    error_message: str,
+    order_id: int,
+    escalation_id: Optional[int],
+) -> None:
+    try:
+        sse_service = _get_sse_service()
+        await sse_service.emit_escalation_server_error(
+            restaurant_id=restaurant_id,
+            call_id=str(call_id) if call_id is not None else None,
+            error_message=error_message,
+            error_code="POS_ORDER_CONFIRMATION_FAILED",
+            data={
+                "caller_phone": caller_phone,
+                "order_id": order_id,
+                "escalation_id": escalation_id,
+            },
+        )
+    except Exception as exc:  # noqa: BLE001 - defensive
+        logger.warning("Failed to emit POS failure escalation SSE event order_id=%s: %s", order_id, exc)
+
+    try:
+        from app.services.notification_persistence_service import NotificationPersistenceService
+
+        NotificationPersistenceService().create_notification(
+            restaurant_id=restaurant_id,
+            type="escalation",
+            subtype="internal_server_error",
+            data={
+                "caller_phone": caller_phone,
+                "order_id": order_id,
+                "error_message": error_message,
+                "escalation_id": escalation_id,
+            },
+            entity_id=escalation_id or order_id,
+        )
+    except Exception as exc:  # noqa: BLE001 - defensive
+        logger.warning("Failed to persist POS failure escalation notification order_id=%s: %s", order_id, exc)
+
+
+def _should_forward_escalation(restaurant: Optional[Dict[str, Any]]) -> tuple[bool, Optional[str]]:
+    if not restaurant:
+        return False, None
+
+    escalation_phone_number = restaurant.get("escalation_phone_number")
+    if not (_normalize_boolean(restaurant.get("forward_escalations")) and escalation_phone_number):
+        return False, escalation_phone_number
+
+    escalation_mode = str(restaurant.get("escalation_mode") or "always").strip().lower()
+    if escalation_mode == "open_hours_only" and not is_restaurant_open_now(restaurant):
+        return False, escalation_phone_number
+
+    return True, escalation_phone_number
+
+
+async def _handle_voice_pos_failure(
+    *,
+    order_id: int,
+    user_id: int,
+    restaurant_id: int,
+    restaurant: Dict[str, Any],
+    customer_contact: str,
+    call_sid: Optional[str],
+    call_id: Optional[int],
+    pos_result: Dict[str, Any],
+) -> Dict[str, Any] | AgentFunctionResult:
+    error_message = (
+        str(pos_result.get("error") or "").strip() or "The restaurant system could not confirm the order right now."
+    )
+
+    def _soft_delete_order() -> None:
+        _get_order_repo().soft_delete_order(order_id)
+
+    await _run_service_call(_soft_delete_order)
+
+    should_forward, escalation_phone_number = _should_forward_escalation(restaurant)
+    escalation_id: Optional[int] = None
+
+    def _create_escalation() -> Optional[int]:
+        return EscalationService().create_escalation(
+            {
+                "call_id": call_id,
+                "user_id": user_id,
+                "restaurant_id": str(restaurant_id),
+                "twilio_call_sid": call_sid,
+                "caller_phone": customer_contact,
+                "escalation_phone_number": escalation_phone_number,
+                "urgency": "high",
+                "reason": f"POS order confirmation failed after retry: {error_message}",
+                "status": "raised",
+            }
+        )
+
+    try:
+        created_escalation_id = await _run_service_call(_create_escalation)
+        escalation_id = int(created_escalation_id) if created_escalation_id is not None else None
+    except Exception as exc:  # noqa: BLE001 - defensive
+        logger.warning("Failed to create POS failure escalation call_sid=%s order_id=%s: %s", call_sid, order_id, exc)
+
+    if call_id:
+        try:
+            await _run_service_call(CallService().mark_escalated, call_id)
+        except Exception as exc:  # noqa: BLE001 - defensive
+            logger.warning("Failed to mark call escalated call_id=%s call_sid=%s: %s", call_id, call_sid, exc)
+
+    asyncio.create_task(
+        _emit_pos_failure_escalation_event(
+            restaurant_id=restaurant_id,
+            call_id=call_id,
+            caller_phone=customer_contact,
+            error_message=error_message,
+            order_id=order_id,
+            escalation_id=escalation_id,
+        )
+    )
+
+    content = {
+        "status": "FAILED",
+        "message": "I couldn't complete the order with the restaurant system right now.",
+        "order_id": order_id,
+        "user_id": user_id,
+        "restaurant_id": restaurant_id,
+        "forwarding": should_forward,
+        "escalated": True,
+        "error": error_message,
+    }
+    if should_forward:
+        content["instruction"] = "Already spoken via injected message. Do NOT repeat or rephrase it."
+        return AgentFunctionResult(
+            content=content,
+            side_effects=[
+                AgentSideEffect(
+                    {
+                        "type": "InjectAgentMessage",
+                        "message": (
+                            "I'm sorry, I couldn't confirm your order with the restaurant system right now, "
+                            "so I'll connect you to the restaurant directly."
+                        ),
+                    }
+                ),
+                AgentSideEffect({"type": "close"}, delay_seconds=0.5),
+            ],
+        )
+
+    return content
 
 
 def _normalize_boolean(value: Any) -> bool:
@@ -486,6 +640,7 @@ async def create_order(**kwargs) -> Dict[str, Any]:
     context, model_kwargs = split_call_context(kwargs, CreateOrderArgs)
     args = CreateOrderArgs.model_validate(model_kwargs)
     call_sid = context.get("call_sid")
+    call_id = _coerce_positive_int(context.get("call_id"))
     restaurant_id = context_restaurant_id(context)
     customer_contact = context_customer_contact(context)
     order_session_state = context_order_session_state(context)
@@ -744,29 +899,32 @@ async def create_order(**kwargs) -> Dict[str, Any]:
         def _submit_pos():
             logger.info("Submitting order %s to POS before returning create_order response", order_id)
             pos_service = _get_pos_service()
-            return pos_service.submit_order_to_pos(order_id, int(restaurant_id))
+            return pos_service.submit_order_to_pos(
+                order_id,
+                int(restaurant_id),
+                schedule_retry_on_failure=False,
+                immediate_retry_attempts=1,
+            )
 
         pos_result = await _run_service_call(_submit_pos)
         if pos_result.get("required") and not pos_result.get("success"):
             logger.warning(
-                "create_order POS submission failed call_sid=%s order_id=%s status=%s retry_scheduled=%s",
+                "create_order POS submission failed call_sid=%s order_id=%s status=%s retryable=%s",
                 call_sid,
                 order_id,
                 pos_result.get("status"),
-                pos_result.get("retry_scheduled"),
+                pos_result.get("retryable"),
             )
-            return {
-                "status": "TEMPORARY_FAILURE" if pos_result.get("retry_scheduled") else "FAILED",
-                "message": (
-                    "I couldn't confirm the order with the restaurant system right now. Please try again in a moment."
-                    if pos_result.get("retry_scheduled")
-                    else "I couldn't complete the order with the restaurant system right now."
-                ),
-                "order_id": order_id,
-                "user_id": user_id,
-                "restaurant_id": restaurant_id,
-                "retry_scheduled": bool(pos_result.get("retry_scheduled")),
-            }
+            return await _handle_voice_pos_failure(
+                order_id=order_id,
+                user_id=user_id,
+                restaurant_id=int(restaurant_id),
+                restaurant=restaurant,
+                customer_contact=customer_contact,
+                call_sid=call_sid,
+                call_id=call_id,
+                pos_result=pos_result,
+            )
 
     # Log activity history for voice agent order creation (run in thread since it's a DB operation)
     def _log_create_history():

@@ -27,6 +27,7 @@ class _FakeOrderRepo:
         self.orders: Dict[int, Dict[str, Any]] = {}
         self.create_calls = 0
         self.update_calls = 0
+        self.soft_delete_calls: List[int] = []
         self._next_id = 100
 
     def create_order(self, user_id: int, order_data: Dict[str, Any]) -> int:
@@ -49,6 +50,8 @@ class _FakeOrderRepo:
     def get_order_by_id_with_verification(self, order_id: int, restaurant_id: int, user_id: int) -> Dict[str, Any]:
         order = self.orders.get(order_id)
         if not order:
+            return {}
+        if order.get("deleted_at") is not None:
             return {}
         if order.get("restaurant_id") != restaurant_id or order.get("user_id") != user_id:
             return {}
@@ -83,6 +86,7 @@ class _FakeOrderRepo:
             for order in self.orders.values()
             if order.get("user_id") == user_id
             and (restaurant_id is None or order.get("restaurant_id") == restaurant_id)
+            and order.get("deleted_at") is None
         ]
         if not matching:
             return {}
@@ -92,6 +96,14 @@ class _FakeOrderRepo:
     def update_order_status(self, order_id: int, status: str) -> int:
         self.orders[order_id]["status"] = status
         return 1
+
+    def soft_delete_order(self, order_id: int) -> bool:
+        order = self.orders.get(order_id)
+        if not order:
+            return False
+        order["deleted_at"] = datetime.now(timezone.utc)
+        self.soft_delete_calls.append(order_id)
+        return True
 
 
 class _FakeOrderItemRepo:
@@ -124,6 +136,7 @@ class _FakePOSService:
             "success": True,
             "status": "SKIPPED",
             "retry_scheduled": False,
+            "retryable": False,
             "results": [],
         }
         self.calls: List[Dict[str, Any]] = []
@@ -147,8 +160,8 @@ class _FakePOSService:
             "results": [{"success": True, "status": "CANCELLED"}],
         }
 
-    def submit_order_to_pos(self, order_id: int, restaurant_id: int) -> Dict[str, Any]:
-        self.calls.append({"order_id": order_id, "restaurant_id": restaurant_id})
+    def submit_order_to_pos(self, order_id: int, restaurant_id: int, **kwargs) -> Dict[str, Any]:
+        self.calls.append({"order_id": order_id, "restaurant_id": restaurant_id, **kwargs})
         return dict(self.result)
 
     def attach_external_snapshot_ids(
@@ -241,13 +254,19 @@ class _FakeCustomizationService:
         )
 
 
-def _patch_common(monkeypatch, order_repo: _FakeOrderRepo):
+def _patch_common(monkeypatch, order_repo: _FakeOrderRepo, *, restaurant: Dict[str, Any] | None = None):
     emitted_events: List[Dict[str, Any]] = []
     sent_sms: List[Dict[str, Any]] = []
+    emitted_escalations: List[Dict[str, Any]] = []
+    created_escalations: List[Dict[str, Any]] = []
+    escalated_calls: List[int] = []
     fake_pos_service = _FakePOSService()
+    restaurant_payload = restaurant or {"id": 9, "name": "Test Resto"}
 
     async def _fake_load_restaurant(restaurant_id: int) -> Dict[str, Any]:
-        return {"id": restaurant_id, "name": "Test Resto"}
+        payload = dict(restaurant_payload)
+        payload.setdefault("id", restaurant_id)
+        return payload
 
     async def _fake_populate_missing_prices(restaurant_id: int, items: List[Any]) -> None:
         return None
@@ -266,6 +285,20 @@ def _patch_common(monkeypatch, order_repo: _FakeOrderRepo):
         sent_sms.append(kwargs)
         return None
 
+    async def _fake_emit_pos_failure_escalation_event(**kwargs) -> None:
+        emitted_escalations.append(kwargs)
+        return None
+
+    class _FakeEscalationService:
+        def create_escalation(self, payload: Dict[str, Any]) -> int:
+            created_escalations.append(payload)
+            return len(created_escalations)
+
+    class _FakeCallService:
+        def mark_escalated(self, call_id: int) -> bool:
+            escalated_calls.append(call_id)
+            return True
+
     order_item_repo = _FakeOrderItemRepo()
     monkeypatch.setattr(orders, "_get_user_repo", lambda: _FakeUserRepo())
     monkeypatch.setattr(orders, "_get_metadata_repo", lambda: _FakeMetadataRepo())
@@ -279,8 +312,19 @@ def _patch_common(monkeypatch, order_repo: _FakeOrderRepo):
     monkeypatch.setattr(orders, "_run_service_call", _run_direct)
     monkeypatch.setattr(orders, "_emit_order_sse_event", _fake_emit_order_sse_event)
     monkeypatch.setattr(orders, "_send_voice_order_sms", _fake_send_voice_order_sms)
+    monkeypatch.setattr(orders, "_emit_pos_failure_escalation_event", _fake_emit_pos_failure_escalation_event)
     monkeypatch.setattr(orders, "_get_pos_service", lambda: fake_pos_service)
-    return order_item_repo, fake_pos_service, emitted_events, sent_sms
+    monkeypatch.setattr(orders, "EscalationService", _FakeEscalationService)
+    monkeypatch.setattr(orders, "CallService", _FakeCallService)
+    return (
+        order_item_repo,
+        fake_pos_service,
+        emitted_events,
+        sent_sms,
+        emitted_escalations,
+        created_escalations,
+        escalated_calls,
+    )
 
 
 @pytest.mark.asyncio
@@ -315,7 +359,7 @@ async def test_create_order_updates_existing_active_order_in_same_call(monkeypat
 @pytest.mark.asyncio
 async def test_update_order_details_prefers_active_order_id_over_latest(monkeypatch) -> None:
     order_repo = _FakeOrderRepo()
-    _, fake_pos_service, _, _ = _patch_common(monkeypatch, order_repo)
+    _, fake_pos_service, _, _, _, _, _ = _patch_common(monkeypatch, order_repo)
     fake_pos_service.confirmed_sync = True
 
     order_repo.orders[200] = {
@@ -362,7 +406,7 @@ async def test_update_order_details_prefers_active_order_id_over_latest(monkeypa
 @pytest.mark.asyncio
 async def test_create_order_custom_item_snapshot_uses_null_menu_item_id(monkeypatch) -> None:
     order_repo = _FakeOrderRepo()
-    order_item_repo, _, _, _ = _patch_common(monkeypatch, order_repo)
+    order_item_repo, _, _, _, _, _, _ = _patch_common(monkeypatch, order_repo)
     order_session_state = {}
 
     response = await orders.create_order(
@@ -381,7 +425,7 @@ async def test_create_order_custom_item_snapshot_uses_null_menu_item_id(monkeypa
 @pytest.mark.asyncio
 async def test_create_order_returns_confirmed_for_pos_backed_restaurant(monkeypatch) -> None:
     order_repo = _FakeOrderRepo()
-    _, fake_pos_service, emitted_events, sent_sms = _patch_common(monkeypatch, order_repo)
+    _, fake_pos_service, emitted_events, sent_sms, _, _, _ = _patch_common(monkeypatch, order_repo)
     fake_pos_service.result = {
         "required": True,
         "success": True,
@@ -400,7 +444,14 @@ async def test_create_order_returns_confirmed_for_pos_backed_restaurant(monkeypa
     )
 
     assert response["status"] == "CONFIRMED"
-    assert fake_pos_service.calls == [{"order_id": response["order_id"], "restaurant_id": 9}]
+    assert fake_pos_service.calls == [
+        {
+            "order_id": response["order_id"],
+            "restaurant_id": 9,
+            "schedule_retry_on_failure": False,
+            "immediate_retry_attempts": 1,
+        }
+    ]
     assert order_session_state["active_order_id"] == response["order_id"]
     assert len(emitted_events) == 1
     assert len(sent_sms) == 1
@@ -409,7 +460,7 @@ async def test_create_order_returns_confirmed_for_pos_backed_restaurant(monkeypa
 @pytest.mark.asyncio
 async def test_update_order_details_cancels_pos_order_when_requested(monkeypatch) -> None:
     order_repo = _FakeOrderRepo()
-    _, fake_pos_service, _, _ = _patch_common(monkeypatch, order_repo)
+    _, fake_pos_service, _, _, _, _, _ = _patch_common(monkeypatch, order_repo)
     fake_pos_service.confirmed_sync = True
     order_repo.orders[200] = {
         "id": 200,
@@ -445,7 +496,7 @@ async def test_update_order_details_cancels_pos_order_when_requested(monkeypatch
 @pytest.mark.asyncio
 async def test_update_order_details_fails_when_pos_replace_fails(monkeypatch) -> None:
     order_repo = _FakeOrderRepo()
-    _, fake_pos_service, emitted_events, _ = _patch_common(monkeypatch, order_repo)
+    _, fake_pos_service, emitted_events, _, _, _, _ = _patch_common(monkeypatch, order_repo)
     fake_pos_service.confirmed_sync = True
     fake_pos_service.replace_result = {
         "required": True,
@@ -482,12 +533,15 @@ async def test_update_order_details_fails_when_pos_replace_fails(monkeypatch) ->
 @pytest.mark.asyncio
 async def test_create_order_does_not_confirm_when_pos_submission_fails(monkeypatch) -> None:
     order_repo = _FakeOrderRepo()
-    _, fake_pos_service, emitted_events, sent_sms = _patch_common(monkeypatch, order_repo)
+    _, fake_pos_service, emitted_events, sent_sms, emitted_escalations, created_escalations, _ = _patch_common(
+        monkeypatch, order_repo
+    )
     fake_pos_service.result = {
         "required": True,
         "success": False,
         "status": "FAILED",
         "retry_scheduled": False,
+        "retryable": False,
         "results": [{"success": False, "status": "FAILED"}],
         "error": "config error",
     }
@@ -502,21 +556,27 @@ async def test_create_order_does_not_confirm_when_pos_submission_fails(monkeypat
     )
 
     assert response["status"] == "FAILED"
+    assert response["forwarding"] is False
+    assert response["escalated"] is True
     assert "active_order_id" not in order_session_state
     assert emitted_events == []
     assert sent_sms == []
+    assert emitted_escalations and emitted_escalations[0]["order_id"] == response["order_id"]
+    assert created_escalations and "config error" in created_escalations[0]["reason"]
+    assert order_repo.soft_delete_calls == [response["order_id"]]
 
 
 @pytest.mark.asyncio
-async def test_create_order_returns_temporary_failure_for_retryable_pos_failure(monkeypatch) -> None:
+async def test_create_order_escalates_after_retryable_pos_failure(monkeypatch) -> None:
     order_repo = _FakeOrderRepo()
-    _, fake_pos_service, emitted_events, sent_sms = _patch_common(monkeypatch, order_repo)
+    _, fake_pos_service, emitted_events, sent_sms, _, created_escalations, _ = _patch_common(monkeypatch, order_repo)
     fake_pos_service.result = {
         "required": True,
         "success": False,
-        "status": "TEMPORARY_FAILURE",
-        "retry_scheduled": True,
-        "results": [{"success": False, "status": "PENDING", "retry_scheduled": True}],
+        "status": "FAILED",
+        "retry_scheduled": False,
+        "retryable": True,
+        "results": [{"success": False, "status": "FAILED", "retryable": True}],
         "error": "timeout",
     }
     order_session_state = {}
@@ -529,11 +589,57 @@ async def test_create_order_returns_temporary_failure_for_retryable_pos_failure(
         order_session_state=order_session_state,
     )
 
-    assert response["status"] == "TEMPORARY_FAILURE"
-    assert response["retry_scheduled"] is True
+    assert response["status"] == "FAILED"
+    assert response["forwarding"] is False
     assert "active_order_id" not in order_session_state
     assert emitted_events == []
     assert sent_sms == []
+    assert created_escalations and "timeout" in created_escalations[0]["reason"]
+    assert order_repo.soft_delete_calls == [response["order_id"]]
+
+
+@pytest.mark.asyncio
+async def test_create_order_forwards_call_when_pos_failure_escalation_allows_transfer(monkeypatch) -> None:
+    order_repo = _FakeOrderRepo()
+    _, fake_pos_service, emitted_events, sent_sms, _, created_escalations, escalated_calls = _patch_common(
+        monkeypatch,
+        order_repo,
+        restaurant={
+            "id": 9,
+            "name": "Test Resto",
+            "forward_escalations": 1,
+            "escalation_phone_number": "+15550001111",
+            "escalation_mode": "always",
+        },
+    )
+    fake_pos_service.result = {
+        "required": True,
+        "success": False,
+        "status": "FAILED",
+        "retry_scheduled": False,
+        "retryable": True,
+        "results": [{"success": False, "status": "FAILED", "retryable": True}],
+        "error": "timeout",
+    }
+
+    response = await orders.create_order(
+        items=_item_payload(),
+        restaurant_id=9,
+        customer_contact="+15555550123",
+        call_sid="CA-9",
+        call_id=501,
+        order_session_state={},
+    )
+
+    assert isinstance(response, orders.AgentFunctionResult)
+    assert response.content["status"] == "FAILED"
+    assert response.content["forwarding"] is True
+    assert response.side_effects[0].payload["type"] == "InjectAgentMessage"
+    assert response.side_effects[1].payload["type"] == "close"
+    assert emitted_events == []
+    assert sent_sms == []
+    assert created_escalations and created_escalations[0]["escalation_phone_number"] == "+15550001111"
+    assert escalated_calls == [501]
 
 
 @pytest.mark.asyncio

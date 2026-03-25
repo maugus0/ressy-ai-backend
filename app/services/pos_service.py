@@ -443,6 +443,24 @@ class POSService:
             pickup_datetime = pickup_datetime.astimezone(timezone.utc)
         return pickup_datetime.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
 
+    @staticmethod
+    def _compute_line_item_discount_amount(
+        order_item: Dict[str, Any],
+        option_snapshots: List[Dict[str, Any]],
+    ) -> float:
+        final_unit_price_raw = order_item.get("final_unit_price_snapshot")
+        if final_unit_price_raw is None:
+            return 0.0
+        base_price = float(order_item.get("base_price_snapshot") or 0.0)
+        final_unit_price = float(final_unit_price_raw or 0.0)
+        raw_modifier_total = 0.0
+        for option in option_snapshots:
+            raw_modifier_total += float(option.get("price_delta_snapshot") or 0.0) * max(
+                int(option.get("quantity") or 1), 1
+            )
+        per_unit_discount = max(round(base_price + raw_modifier_total - final_unit_price, 2), 0.0)
+        return round(per_unit_discount * max(int(order_item.get("quantity") or 1), 1), 2)
+
     def _build_provider_order_request(
         self,
         *,
@@ -488,7 +506,8 @@ class POSService:
                     )
 
                 modifiers = []
-                for option in options_by_order_item.get(int(order_item["id"]), []):
+                order_item_option_snapshots = options_by_order_item.get(int(order_item["id"]), [])
+                for option in order_item_option_snapshots:
                     free_text_value = option.get("free_text_value")
                     option_value_id = option.get("option_value_id")
                     option_group_id = option.get("option_group_id")
@@ -550,6 +569,10 @@ class POSService:
                         name=order_item.get("item_name_snapshot") or "Unknown Item",
                         quantity=int(order_item.get("quantity", 1) or 1),
                         price=float(order_item.get("base_price_snapshot") or 0),
+                        discount_amount=self._compute_line_item_discount_amount(
+                            order_item,
+                            order_item_option_snapshots,
+                        ),
                         note=order_item.get("instructions"),
                         modifiers=modifiers,
                     )
@@ -636,6 +659,7 @@ class POSService:
         restaurant_id: int,
         *,
         schedule_retry_on_failure: bool = True,
+        immediate_retry_attempts: int = 0,
     ) -> Dict[str, Any]:
         try:
             logger.info("Starting POS sync for order %s, restaurant %s", order_id, restaurant_id)
@@ -683,8 +707,31 @@ class POSService:
                 sync_id = self.order_sync_repo.create_sync_record(
                     order_id, restaurant_id, integration_id, idempotency_key
                 )
-                results.append(
-                    self._process_integration_submission(
+                attempt_count = 1
+                remaining_immediate_retries = max(int(immediate_retry_attempts), 0)
+                result = self._process_integration_submission(
+                    sync_id=sync_id,
+                    order_id=order_id,
+                    restaurant_id=restaurant_id,
+                    pos_integration=pos_integration,
+                    order=order,
+                    order_data=order_data,
+                    customization=customization,
+                    idempotency_key=idempotency_key,
+                    attempt_count=attempt_count,
+                    schedule_retry_on_failure=schedule_retry_on_failure and remaining_immediate_retries <= 0,
+                )
+                while not result.get("success") and result.get("retryable") and remaining_immediate_retries > 0:
+                    remaining_immediate_retries -= 1
+                    attempt_count += 1
+                    logger.warning(
+                        "[POS Sync] Immediate retry %s/%s for order %s integration_id=%s",
+                        attempt_count - 1,
+                        max(int(immediate_retry_attempts), 0),
+                        order_id,
+                        integration_id,
+                    )
+                    result = self._process_integration_submission(
                         sync_id=sync_id,
                         order_id=order_id,
                         restaurant_id=restaurant_id,
@@ -693,19 +740,21 @@ class POSService:
                         order_data=order_data,
                         customization=customization,
                         idempotency_key=idempotency_key,
-                        attempt_count=1,
-                        schedule_retry_on_failure=schedule_retry_on_failure,
+                        attempt_count=attempt_count,
+                        schedule_retry_on_failure=schedule_retry_on_failure and remaining_immediate_retries <= 0,
                     )
-                )
+                results.append(result)
 
             success = all(result.get("success") for result in results)
             retry_scheduled = any(result.get("retry_scheduled") for result in results)
+            retryable = any(result.get("retryable") for result in results)
             logger.info("[POS Sync] Completed POS sync processing for order %s", order_id)
             return {
                 "required": True,
                 "success": success,
                 "status": "CONFIRMED" if success else ("TEMPORARY_FAILURE" if retry_scheduled else "FAILED"),
                 "retry_scheduled": retry_scheduled,
+                "retryable": retryable,
                 "results": results,
                 "error": next(
                     (result.get("error") for result in results if result.get("error")),
@@ -722,6 +771,7 @@ class POSService:
                 "success": False,
                 "status": "FAILED",
                 "retry_scheduled": False,
+                "retryable": self._is_retryable_sync_error(e),
                 "results": [],
                 "error": str(e),
             }

@@ -64,7 +64,10 @@ class POSWebhookEventService:
         if not signature_key or not signature:
             return False
         notification_url = self._get_square_notification_url()
-        body_text = raw_body.decode("utf-8")
+        try:
+            body_text = raw_body.decode("utf-8")
+        except UnicodeDecodeError:
+            return False
         digest = hmac.new(
             signature_key.encode("utf-8"),
             f"{notification_url}{body_text}".encode("utf-8"),
@@ -341,7 +344,7 @@ class POSWebhookEventService:
         ignored = 0
 
         for event in pending_events:
-            result = self.process_square_event(int(event["id"]))
+            result = self._process_event_record(event)
             processed += 1
             status = result.get("status")
             if status == "PROCESSED":
@@ -357,4 +360,19 @@ class POSWebhookEventService:
             "failed": failed,
             "ignored": ignored,
             "total_pending": len(pending_events),
+        }
+
+    def _process_event_record(self, event: Dict[str, Any]) -> Dict[str, Any]:
+        webhook_event_id = int(event["id"])
+        pos_type = str(event.get("pos_type") or "").upper()
+        if pos_type == self.SQUARE_POS_TYPE:
+            return self.process_square_event(webhook_event_id)
+
+        self.event_repo.mark_ignored(
+            webhook_event_id, error=f"Unsupported POS webhook provider: {pos_type or 'UNKNOWN'}"
+        )
+        return {
+            "webhook_event_id": webhook_event_id,
+            "status": "IGNORED",
+            "error": f"Unsupported POS webhook provider: {pos_type or 'UNKNOWN'}",
         }

@@ -22,6 +22,7 @@ class POSRetryService:
         failed = 0
 
         for record in pending_records:
+            processed += 1
             if record["attempts"] >= settings.POS_MAX_RETRY_ATTEMPTS:
                 self.order_sync_repo.update_sync_status(record["id"], status="FAILED")
                 failed += 1
@@ -58,8 +59,6 @@ class POSRetryService:
                     succeeded += 1
                 elif not result.get("retry_scheduled"):
                     failed += 1
-
-                processed += 1
             except Exception as e:
                 error_msg = str(e)
                 logger.error(f"Retry failed for sync record {record['id']}: {error_msg}")
@@ -67,7 +66,6 @@ class POSRetryService:
                     record["id"], status="FAILED", error=error_msg, attempts=record["attempts"] + 1
                 )
                 failed += 1
-                processed += 1
 
         return {
             "processed": processed,

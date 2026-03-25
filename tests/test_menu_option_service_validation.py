@@ -56,7 +56,7 @@ class _FakeOptionRepo:
     def count_available_values(self, group_id: int) -> int:
         if self.available_count is not None:
             return self.available_count
-        return sum(1 for value in self.values if value.get("is_available"))
+        return sum(1 for value in self.values if value.get("is_available") and value.get("is_active", True))
 
     def has_order_usage_for_group(self, group_id: int) -> bool:
         return self.order_usage_group
@@ -236,6 +236,21 @@ def test_create_group_rejects_invalid_free_allowance_strategy():
     }
     with pytest.raises(HTTPException):
         service.create_option_group(restaurant_id=1, data=payload)
+
+
+def test_attach_group_to_item_rejects_inactive_available_values():
+    option_repo = _FakeOptionRepo(
+        group={"id": 5, "restaurant_id": 1},
+        values=[{"id": 11, "is_available": True, "is_active": False}],
+    )
+    service = MenuOptionService(
+        option_repo=option_repo,
+        item_option_repo=_FakeItemOptionRepo(),
+        menu_repo=_FakeMenuRepo({"id": 99, "restaurant_id": 1}),
+    )
+
+    with pytest.raises(HTTPException):
+        service.attach_group_to_item(menu_item_id=99, group_id=5, overrides={})
 
 
 def test_create_text_group_rejects_inline_values():

@@ -119,7 +119,7 @@ class _FakeSDKClient:
 
 
 class _FakeSquareWrapperClient:
-    def __init__(self, *, raise_already_paid: bool = False):
+    def __init__(self, *, raise_already_paid: bool = False, created_order_total_cents: int = 1299):
         self.create_order_calls: List[Dict[str, Any]] = []
         self.create_payment_calls: List[Dict[str, Any]] = []
         self.pay_order_calls: List[Dict[str, Any]] = []
@@ -128,6 +128,7 @@ class _FakeSquareWrapperClient:
         self.refund_payment_calls: List[Dict[str, Any]] = []
         self.search_catalog_objects_calls: List[Dict[str, Any]] = []
         self.raise_already_paid = raise_already_paid
+        self.created_order_total_cents = created_order_total_cents
 
     def create_order(self, location_id, order_data, idempotency_key):
         self.create_order_calls.append(
@@ -137,7 +138,13 @@ class _FakeSquareWrapperClient:
                 "idempotency_key": idempotency_key,
             }
         )
-        return {"order": {"id": "ord-1", "version": 4}}
+        return {
+            "order": {
+                "id": "ord-1",
+                "version": 4,
+                "total_money": {"amount": self.created_order_total_cents, "currency": "USD"},
+            }
+        }
 
     def create_payment(self, order_id, amount, currency, idempotency_key):
         self.create_payment_calls.append(
@@ -605,7 +612,7 @@ def test_square_provider_submit_pickup_order_supports_text_modifier(monkeypatch)
 
 def test_square_provider_submit_pickup_order_builds_catalog_order_and_cash_payment(monkeypatch):
     provider = SquarePOSProvider()
-    fake_client = _FakeSquareWrapperClient()
+    fake_client = _FakeSquareWrapperClient(created_order_total_cents=2598)
     monkeypatch.setattr(provider, "_get_client", lambda integration: fake_client)
 
     request = POSSubmitOrderRequest(
@@ -622,6 +629,7 @@ def test_square_provider_submit_pickup_order_builds_catalog_order_and_cash_payme
                 name="Burger",
                 quantity=2,
                 price=12.99,
+                discount_amount=3.0,
                 note="No onions",
                 modifiers=[
                     POSOrderModifierSelection(
@@ -655,7 +663,17 @@ def test_square_provider_submit_pickup_order_builds_catalog_order_and_cash_payme
             "catalog_object_id": "variation-1",
             "quantity": "2",
             "note": "No onions",
+            "applied_discounts": [{"discount_uid": "ressy-free-allowance-1"}],
             "modifiers": [{"catalog_object_id": "modifier-1", "quantity": "1"}],
+        }
+    ]
+    assert create_call["order_data"]["discounts"] == [
+        {
+            "uid": "ressy-free-allowance-1",
+            "name": "Ressy free option allowance",
+            "type": "FIXED_AMOUNT",
+            "scope": "LINE_ITEM",
+            "amount_money": {"amount": 300, "currency": "USD"},
         }
     ]
     assert create_call["order_data"]["fulfillments"] == [
@@ -673,7 +691,7 @@ def test_square_provider_submit_pickup_order_builds_catalog_order_and_cash_payme
 
     payment_call = fake_client.create_payment_calls[0]
     assert payment_call["order_id"] == "ord-1"
-    assert payment_call["amount"] == 28.98
+    assert payment_call["amount"] == 25.98
     assert payment_call["currency"] == "USD"
     assert payment_call["idempotency_key"] == "idem-1-payment"
 

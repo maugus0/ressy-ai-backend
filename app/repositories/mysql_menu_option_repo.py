@@ -182,7 +182,7 @@ class MySQLMenuOptionRepository(MySQLBaseRepository):
         query = """
             SELECT COUNT(*) AS count
             FROM Menu_Option_Values
-            WHERE group_id = %s AND is_available = TRUE
+            WHERE group_id = %s AND is_available = TRUE AND is_active = TRUE
         """
         results = self._execute_query(query, (group_id,))
         return int(results[0]["count"]) if results else 0

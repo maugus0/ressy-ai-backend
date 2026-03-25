@@ -560,19 +560,10 @@ class SquarePOSProvider(POSProvider):
             pickup_details["pickup_at"] = request.pickup_at
         return pickup_details
 
-    @staticmethod
-    def _compute_total_amount(request: POSSubmitOrderRequest) -> float:
-        total = 0.0
-        for line_item in request.line_items:
-            unit_total = float(line_item.price)
-            for modifier in line_item.modifiers:
-                unit_total += float(modifier.price_delta) * max(modifier.quantity, 1)
-            total += unit_total * max(line_item.quantity, 1)
-        return round(total, 2)
-
     def _build_order_payload(self, request: POSSubmitOrderRequest) -> Dict[str, Any]:
         line_items: List[Dict[str, Any]] = []
-        for line_item in request.line_items:
+        discounts: List[Dict[str, Any]] = []
+        for index, line_item in enumerate(request.line_items, start=1):
             square_line_item: Dict[str, Any] = {
                 "catalog_object_id": line_item.external_item_id,
                 "quantity": str(max(line_item.quantity, 1)),
@@ -598,13 +589,33 @@ class SquarePOSProvider(POSProvider):
 
             if modifiers:
                 square_line_item["modifiers"] = modifiers
+
+            discount_amount = round(float(line_item.discount_amount or 0.0), 2)
+            if discount_amount > 0:
+                discount_uid = f"ressy-free-allowance-{index}"
+                discounts.append(
+                    {
+                        "uid": discount_uid,
+                        "name": "Ressy free option allowance",
+                        "type": "FIXED_AMOUNT",
+                        "scope": "LINE_ITEM",
+                        "amount_money": {
+                            "amount": int(round(discount_amount * 100)),
+                            "currency": request.currency,
+                        },
+                    }
+                )
+                square_line_item["applied_discounts"] = [{"discount_uid": discount_uid}]
             line_items.append(square_line_item)
 
-        return {
+        payload = {
             "line_items": line_items,
             "fulfillments": [{"type": "PICKUP", "pickup_details": self._build_pickup_details(request)}],
             "reference_id": request.reference_id,
         }
+        if discounts:
+            payload["discounts"] = discounts
+        return payload
 
     @staticmethod
     def _is_square_error_like(error: ApiError, needle: str) -> bool:
@@ -639,10 +650,11 @@ class SquarePOSProvider(POSProvider):
 
         payment_id: Optional[str] = None
         if external_order_id:
+            amount_cents, payment_currency = self._extract_order_money(order_data, request.currency)
             payment_response = client.create_payment(
                 order_id=external_order_id,
-                amount=self._compute_total_amount(request),
-                currency=request.currency,
+                amount=amount_cents / 100,
+                currency=payment_currency,
                 idempotency_key=f"{idempotency_key}-payment",
             )
             payload["payment_response"] = payment_response
