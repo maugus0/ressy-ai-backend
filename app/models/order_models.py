@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from typing import List, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 IssueCode = Literal[
     "MISSING_REQUIRED_GROUP",
@@ -17,12 +17,30 @@ IssueCode = Literal[
     "UNAVAILABLE_OPTION",
     "QUANTITY_NOT_ALLOWED",
     "EXCEEDED_MAX_QUANTITY_PER_OPTION",
+    "MISSING_TEXT_VALUE",
+    "TEXT_NOT_ALLOWED",
+    "TEXT_TOO_LONG",
 ]
 
 
 class OrderOptionSelection(BaseModel):
-    value_id: int
+    value_id: Optional[int] = None
+    free_text_value: Optional[str] = None
     quantity: int = Field(1, ge=1)
+
+    @field_validator("free_text_value", mode="before")
+    @classmethod
+    def normalize_free_text_value(cls, value):
+        if value is None:
+            return None
+        text = str(value).strip()
+        return text or None
+
+    @model_validator(mode="after")
+    def validate_selection(self):
+        if self.value_id is not None and self.free_text_value:
+            raise ValueError("Provide either value_id or free_text_value, not both.")
+        return self
 
     model_config = ConfigDict(extra="ignore")
 
@@ -69,9 +87,14 @@ class OptionValidationResult(BaseModel):
 
 
 class OrderItemOptionSnapshot(BaseModel):
+    option_group_id: Optional[int] = None
     option_value_id: Optional[int] = None
     option_group_name: str
-    option_value_name: str
+    input_type: Optional[str] = None
+    option_value_name: Optional[str] = None
+    free_text_value: Optional[str] = None
+    external_group_id_snapshot: Optional[str] = None
+    external_value_id_snapshot: Optional[str] = None
     price_delta: float
     quantity: int
 
@@ -81,6 +104,7 @@ class OrderItemOptionSnapshot(BaseModel):
 class OrderItemSnapshot(BaseModel):
     order_item_id: int
     menu_item_id: Optional[int] = None
+    external_item_id_snapshot: Optional[str] = None
     item_name: str
     base_price: float
     quantity: int

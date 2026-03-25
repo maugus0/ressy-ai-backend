@@ -36,6 +36,8 @@ from app.api import (
     menu_options,
     menus,
     opentable,
+    pos_integrations,
+    pos_webhooks,
     reservations,
     restaurants,
     sse,
@@ -46,6 +48,7 @@ from app.repositories.db_pool import close_db_pool, get_db_pool
 from app.services.call_service import CallService
 from app.services.escalation_service import EscalationService
 from app.services.notification_persistence_service import NotificationPersistenceService
+from app.services.pos_catalog_background_sync import POSCatalogBackgroundSync
 from app.services.restaurant_service import RestaurantService
 from app.services.sse_service import SSEService
 from app.services.user_service import UserService
@@ -73,7 +76,23 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f"[Startup] Warning - Database pool initialization: {e}")
 
+    # Startup: Start POS catalog background sync scheduler
+    try:
+        pos_sync = POSCatalogBackgroundSync()
+        pos_sync.start()
+        print("[Startup] POS catalog background sync scheduler started")
+    except Exception as e:
+        print(f"[Startup] Warning - POS catalog sync scheduler initialization: {e}")
+
     yield
+
+    # Shutdown: Stop POS catalog background sync scheduler
+    try:
+        pos_sync = POSCatalogBackgroundSync()
+        pos_sync.stop()
+        print("[Shutdown] POS catalog background sync scheduler stopped")
+    except Exception as e:
+        print(f"[Shutdown] Warning - POS catalog sync scheduler cleanup: {e}")
 
     # Shutdown: cleanup SSE connections and heartbeat task
     sse_service = SSEService()
@@ -214,6 +233,8 @@ app.include_router(dashboard_reservations.router, prefix="/api/v1/dashboard", ta
 app.include_router(dashboard_orders.router, prefix="/api/v1/dashboard", tags=["Dashboard Orders"])
 app.include_router(dashboard_users.router, prefix="/api/v1/dashboard", tags=["Dashboard Users"])
 app.include_router(activity_history.router, prefix="/api/v1/dashboard", tags=["Activity History"])
+app.include_router(pos_integrations.router, prefix="/api/v1/dashboard", tags=["POS Integrations"])
+app.include_router(pos_webhooks.router)
 app.include_router(sse.router, prefix="/api/v1/sse", tags=["Server-Sent Events"])
 app.include_router(admin_users.router, tags=["Admin Users"])
 app.include_router(client_users.router, tags=["Client Users"])

@@ -18,6 +18,7 @@ from app.agent_fc.functions.function_context import (
     context_restaurant_id,
     split_call_context,
 )
+from app.agent_fc.responses import AgentFunctionResult, AgentSideEffect
 from app.config import settings
 from app.models.order_models import OrderItemOptionGroupSelection
 from app.repositories.mysql_menu_repo import MySQLMenuRepository
@@ -28,8 +29,11 @@ from app.repositories.mysql_user_restaurant_metadata_repo import (
     MySQLUserRestaurantMetadataRepository,
 )
 from app.services.activity_history_service import ActivityHistoryService
+from app.services.call_service import CallService
+from app.services.escalation_service import EscalationService
 from app.services.notification_service import NotificationService
 from app.services.order_customization_service import OrderCustomizationService
+from app.services.pos_service import POSService
 from app.services.sse_service import OrderEventSubtype, SSEService
 from app.utils.restaurant_hours import format_operating_window, is_restaurant_open_now
 from app.utils.timezone import coerce_datetime
@@ -136,6 +140,11 @@ def _get_history_service() -> ActivityHistoryService:
     return ActivityHistoryService()
 
 
+def _get_pos_service() -> POSService:
+    """Create fresh POS service instance per function call."""
+    return POSService()
+
+
 def _get_sse_service() -> SSEService:
     """Create fresh SSE service instance per function call."""
     return SSEService()
@@ -238,6 +247,157 @@ async def _send_voice_order_sms(
         logger.warning("Failed to send SMS for voice order %s: %s", order_id, e)
 
 
+async def _emit_pos_failure_escalation_event(
+    *,
+    restaurant_id: int,
+    call_id: Optional[int],
+    caller_phone: Optional[str],
+    error_message: str,
+    order_id: int,
+    escalation_id: Optional[int],
+) -> None:
+    try:
+        sse_service = _get_sse_service()
+        await sse_service.emit_escalation_server_error(
+            restaurant_id=restaurant_id,
+            call_id=str(call_id) if call_id is not None else None,
+            error_message=error_message,
+            error_code="POS_ORDER_CONFIRMATION_FAILED",
+            data={
+                "caller_phone": caller_phone,
+                "order_id": order_id,
+                "escalation_id": escalation_id,
+            },
+        )
+    except Exception as exc:  # noqa: BLE001 - defensive
+        logger.warning("Failed to emit POS failure escalation SSE event order_id=%s: %s", order_id, exc)
+
+    try:
+        from app.services.notification_persistence_service import NotificationPersistenceService
+
+        NotificationPersistenceService().create_notification(
+            restaurant_id=restaurant_id,
+            type="escalation",
+            subtype="internal_server_error",
+            data={
+                "caller_phone": caller_phone,
+                "order_id": order_id,
+                "error_message": error_message,
+                "escalation_id": escalation_id,
+            },
+            entity_id=escalation_id or order_id,
+        )
+    except Exception as exc:  # noqa: BLE001 - defensive
+        logger.warning("Failed to persist POS failure escalation notification order_id=%s: %s", order_id, exc)
+
+
+def _should_forward_escalation(restaurant: Optional[Dict[str, Any]]) -> tuple[bool, Optional[str]]:
+    if not restaurant:
+        return False, None
+
+    escalation_phone_number = restaurant.get("escalation_phone_number")
+    if not (_normalize_boolean(restaurant.get("forward_escalations")) and escalation_phone_number):
+        return False, escalation_phone_number
+
+    escalation_mode = str(restaurant.get("escalation_mode") or "always").strip().lower()
+    if escalation_mode == "open_hours_only" and not is_restaurant_open_now(restaurant):
+        return False, escalation_phone_number
+
+    return True, escalation_phone_number
+
+
+async def _handle_voice_pos_failure(
+    *,
+    order_id: int,
+    user_id: int,
+    restaurant_id: int,
+    restaurant: Dict[str, Any],
+    customer_contact: str,
+    call_sid: Optional[str],
+    call_id: Optional[int],
+    pos_result: Dict[str, Any],
+) -> Dict[str, Any] | AgentFunctionResult:
+    error_message = (
+        str(pos_result.get("error") or "").strip() or "The restaurant system could not confirm the order right now."
+    )
+
+    def _soft_delete_order() -> None:
+        _get_order_repo().soft_delete_order(order_id)
+
+    await _run_service_call(_soft_delete_order)
+
+    should_forward, escalation_phone_number = _should_forward_escalation(restaurant)
+    escalation_id: Optional[int] = None
+
+    def _create_escalation() -> Optional[int]:
+        return EscalationService().create_escalation(
+            {
+                "call_id": call_id,
+                "user_id": user_id,
+                "restaurant_id": str(restaurant_id),
+                "twilio_call_sid": call_sid,
+                "caller_phone": customer_contact,
+                "escalation_phone_number": escalation_phone_number,
+                "urgency": "high",
+                "reason": f"POS order confirmation failed after retry: {error_message}",
+                "status": "raised",
+            }
+        )
+
+    try:
+        created_escalation_id = await _run_service_call(_create_escalation)
+        escalation_id = int(created_escalation_id) if created_escalation_id is not None else None
+    except Exception as exc:  # noqa: BLE001 - defensive
+        logger.warning("Failed to create POS failure escalation call_sid=%s order_id=%s: %s", call_sid, order_id, exc)
+
+    if call_id:
+        try:
+            await _run_service_call(CallService().mark_escalated, call_id)
+        except Exception as exc:  # noqa: BLE001 - defensive
+            logger.warning("Failed to mark call escalated call_id=%s call_sid=%s: %s", call_id, call_sid, exc)
+
+    asyncio.create_task(
+        _emit_pos_failure_escalation_event(
+            restaurant_id=restaurant_id,
+            call_id=call_id,
+            caller_phone=customer_contact,
+            error_message=error_message,
+            order_id=order_id,
+            escalation_id=escalation_id,
+        )
+    )
+
+    content = {
+        "status": "FAILED",
+        "message": "I couldn't complete the order with the restaurant system right now.",
+        "order_id": order_id,
+        "user_id": user_id,
+        "restaurant_id": restaurant_id,
+        "forwarding": should_forward,
+        "escalated": True,
+        "error": error_message,
+    }
+    if should_forward:
+        content["instruction"] = "Already spoken via injected message. Do NOT repeat or rephrase it."
+        return AgentFunctionResult(
+            content=content,
+            side_effects=[
+                AgentSideEffect(
+                    {
+                        "type": "InjectAgentMessage",
+                        "message": (
+                            "I'm sorry, I couldn't confirm your order with the restaurant system right now, "
+                            "so I'll connect you to the restaurant directly."
+                        ),
+                    }
+                ),
+                AgentSideEffect({"type": "close"}, delay_seconds=0.5),
+            ],
+        )
+
+    return content
+
+
 def _normalize_boolean(value: Any) -> bool:
     """
     Normalize a value to a boolean, handling MySQL TINYINT (0/1) and Python booleans.
@@ -326,8 +486,13 @@ async def _validate_and_price_items(
     Validate customization selections and compute pricing snapshots.
     """
     customization_service = _get_customization_service()
+    menu_repo = _get_menu_repo()
     priced_items: List[Dict[str, Any]] = []
     issues: List[Dict[str, Any]] = []
+    menu_item_ids = sorted({int(item.item_id) for item in items if _has_menu_item_id(item.item_id)})
+    menu_items_by_id: Dict[int, Dict[str, Any]] = {}
+    if menu_item_ids:
+        menu_items_by_id = await _run_service_call(menu_repo.get_by_ids, menu_item_ids)
 
     for item in items:
         base_price = float(item.price or 0)
@@ -355,6 +520,37 @@ async def _validate_and_price_items(
                     "final_unit_price": final_unit_price,
                     "total_price": total_price,
                     "option_snapshots": [],
+                }
+            )
+            continue
+
+        menu_item = menu_items_by_id.get(int(item.item_id))
+        if not menu_item:
+            issues.append(
+                {
+                    "item_id": item.item_id,
+                    "item_name": item.name,
+                    "issues": [
+                        {
+                            "issue_code": "INVALID_ITEM",
+                            "message": "This item is no longer available.",
+                        }
+                    ],
+                }
+            )
+            continue
+
+        if not _normalize_boolean(menu_item.get("is_active")) or not _normalize_boolean(menu_item.get("is_available")):
+            issues.append(
+                {
+                    "item_id": item.item_id,
+                    "item_name": item.name,
+                    "issues": [
+                        {
+                            "issue_code": "UNAVAILABLE_ITEM",
+                            "message": "This item is currently unavailable.",
+                        }
+                    ],
                 }
             )
             continue
@@ -444,6 +640,7 @@ async def create_order(**kwargs) -> Dict[str, Any]:
     context, model_kwargs = split_call_context(kwargs, CreateOrderArgs)
     args = CreateOrderArgs.model_validate(model_kwargs)
     call_sid = context.get("call_sid")
+    call_id = _coerce_positive_int(context.get("call_id"))
     restaurant_id = context_restaurant_id(context)
     customer_contact = context_customer_contact(context)
     order_session_state = context_order_session_state(context)
@@ -489,6 +686,7 @@ async def create_order(**kwargs) -> Dict[str, Any]:
         metadata_repo = _get_metadata_repo()
         order_repo = _get_order_repo()
         order_item_repo = _get_order_item_repo()
+        pos_service = _get_pos_service()
 
         # Ensure user exists/updated
         user_id = user_repo.create_or_update_user(
@@ -517,6 +715,7 @@ async def create_order(**kwargs) -> Dict[str, Any]:
 
         order_details = [item.model_dump() for item in args.items]
         customization_payload = args.metadata.get("customization", {})
+        enriched_priced_items = pos_service.attach_external_snapshot_ids(restaurant_id, priced_items)
 
         # Guardrail: if this call already has an active order, update it in-place
         # instead of creating a duplicate order record.
@@ -524,6 +723,7 @@ async def create_order(**kwargs) -> Dict[str, Any]:
         if active_order_id is not None:
             active_order = order_repo.get_order_by_id_with_verification(active_order_id, restaurant_id, user_id)
             if active_order:
+                previous_pos_state = pos_service.capture_order_state(active_order_id)
                 previous_data = {
                     "status": active_order.get("status"),
                     "order_details": active_order.get("order_details"),
@@ -532,11 +732,12 @@ async def create_order(**kwargs) -> Dict[str, Any]:
                 }
                 order_repo.update_order_details(active_order_id, order_details, customization_payload, total_amount)
                 order_item_repo.delete_order_items_by_order(active_order_id)
-                for item, pricing in zip(args.items, priced_items):
+                for item, pricing in zip(args.items, enriched_priced_items):
                     order_item_id = order_item_repo.create_order_item(
                         active_order_id,
                         {
                             "menu_item_id": _snapshot_menu_item_id(item.item_id),
+                            "external_item_id_snapshot": pricing.get("external_item_id_snapshot"),
                             "item_name_snapshot": item.name,
                             "base_price_snapshot": float(item.price or 0),
                             "quantity": item.quantity,
@@ -554,6 +755,7 @@ async def create_order(**kwargs) -> Dict[str, Any]:
                     "user_id": user_id,
                     "updated_order": updated_order,
                     "previous_data": previous_data,
+                    "previous_pos_state": previous_pos_state,
                 }
 
         order_payload = {
@@ -571,11 +773,12 @@ async def create_order(**kwargs) -> Dict[str, Any]:
                 for _ in range(max(item.quantity, 1)):
                     order_repo.create_order_details(order_id, item_id)
         # Store order item snapshots and options
-        for item, pricing in zip(args.items, priced_items):
+        for item, pricing in zip(args.items, enriched_priced_items):
             order_item_id = order_item_repo.create_order_item(
                 order_id,
                 {
                     "menu_item_id": _snapshot_menu_item_id(item.item_id),
+                    "external_item_id_snapshot": pricing.get("external_item_id_snapshot"),
                     "item_name_snapshot": item.name,
                     "base_price_snapshot": float(item.price or 0),
                     "quantity": item.quantity,
@@ -592,9 +795,9 @@ async def create_order(**kwargs) -> Dict[str, Any]:
     mode = upsert_result["mode"]
     order_id = upsert_result["order_id"]
     user_id = upsert_result["user_id"]
-    order_session_state["active_order_id"] = order_id
 
     if mode == "updated":
+        order_session_state["active_order_id"] = order_id
         logger.warning(
             "create_order updated existing active order instead of creating a new one call_sid=%s order_id=%s",
             call_sid,
@@ -602,6 +805,36 @@ async def create_order(**kwargs) -> Dict[str, Any]:
         )
         updated_order = upsert_result["updated_order"]
         previous_data = upsert_result["previous_data"]
+        previous_pos_state = upsert_result.get("previous_pos_state")
+
+        pos_result = {"required": False, "success": True, "status": "SKIPPED", "retry_scheduled": False}
+        if restaurant_id and previous_pos_state:
+
+            def _replace_pos_after_guarded_update():
+                pos_service = _get_pos_service()
+                if not pos_service.has_confirmed_sync(order_id):
+                    return {
+                        "required": False,
+                        "success": True,
+                        "status": "SKIPPED",
+                        "retry_scheduled": False,
+                    }
+                return pos_service.replace_order_after_internal_update(
+                    order_id,
+                    int(restaurant_id),
+                    previous_state=previous_pos_state,
+                    reason="Voice caller updated an active order",
+                )
+
+            pos_result = await _run_service_call(_replace_pos_after_guarded_update)
+            if pos_result.get("required") and not pos_result.get("success"):
+                return {
+                    "status": "FAILED",
+                    "message": "I couldn't confirm the updated order with the restaurant system right now.",
+                    "order_id": order_id,
+                    "user_id": user_id,
+                    "restaurant_id": restaurant_id,
+                }
 
         def _log_update_history():
             try:
@@ -660,6 +893,39 @@ async def create_order(**kwargs) -> Dict[str, Any]:
             "order": updated_order,
         }
 
+    pos_result = {"required": False, "success": True, "status": "SKIPPED", "retry_scheduled": False}
+    if restaurant_id:
+
+        def _submit_pos():
+            logger.info("Submitting order %s to POS before returning create_order response", order_id)
+            pos_service = _get_pos_service()
+            return pos_service.submit_order_to_pos(
+                order_id,
+                int(restaurant_id),
+                schedule_retry_on_failure=False,
+                immediate_retry_attempts=1,
+            )
+
+        pos_result = await _run_service_call(_submit_pos)
+        if pos_result.get("required") and not pos_result.get("success"):
+            logger.warning(
+                "create_order POS submission failed call_sid=%s order_id=%s status=%s retryable=%s",
+                call_sid,
+                order_id,
+                pos_result.get("status"),
+                pos_result.get("retryable"),
+            )
+            return await _handle_voice_pos_failure(
+                order_id=order_id,
+                user_id=user_id,
+                restaurant_id=int(restaurant_id),
+                restaurant=restaurant,
+                customer_contact=customer_contact,
+                call_sid=call_sid,
+                call_id=call_id,
+                pos_result=pos_result,
+            )
+
     # Log activity history for voice agent order creation (run in thread since it's a DB operation)
     def _log_create_history():
         try:
@@ -694,8 +960,8 @@ async def create_order(**kwargs) -> Dict[str, Any]:
             )
 
     await _run_service_call(_log_create_history)
+    order_session_state["active_order_id"] = order_id
 
-    # Emit SSE event for new order (background task)
     if restaurant_id:
         asyncio.create_task(
             _emit_order_sse_event(
@@ -711,7 +977,6 @@ async def create_order(**kwargs) -> Dict[str, Any]:
             )
         )
 
-        # Send SMS notification for voice-created order (background task)
         if customer_contact:
             asyncio.create_task(
                 _send_voice_order_sms(
@@ -722,8 +987,8 @@ async def create_order(**kwargs) -> Dict[str, Any]:
             )
 
     return {
-        "status": "CREATED",
-        "message": "Order created",
+        "status": "CONFIRMED" if pos_result.get("required") else "CREATED",
+        "message": "Order confirmed" if pos_result.get("required") else "Order created",
         "order_id": order_id,
         "user_id": user_id,
         "restaurant_id": restaurant_id,
@@ -863,8 +1128,8 @@ async def check_items_availability(**kwargs) -> Dict[str, Any]:
             ),
         }
     menu_repo = _get_menu_repo()
-    # Get ALL items (both available and unavailable) to properly check status
-    all_menu_items = await _run_service_call(menu_repo.get_menus_by_restaurant, restaurant_id)
+    # Get all active items, then split matches by current availability.
+    all_menu_items = await _run_service_call(menu_repo.get_menus_by_restaurant, restaurant_id, True)
     all_menu_items = _flatten_menu_items(all_menu_items)
     available_items: List[Dict[str, Any]] = []
     unavailable_items: List[Dict[str, Any]] = []
@@ -962,10 +1227,11 @@ async def update_order_details(**kwargs) -> Dict[str, Any]:
         user_repo = _get_user_repo()
         order_repo = _get_order_repo()
         order_item_repo = _get_order_item_repo()
+        pos_service = _get_pos_service()
 
         user_id = user_repo.get_user_id_by_phone_or_email(customer_contact, None)
         if not user_id:
-            return None, None, None, None, None
+            return None, None, None, None, None, None
 
         order = None
         if active_order_id is not None:
@@ -973,15 +1239,15 @@ async def update_order_details(**kwargs) -> Dict[str, Any]:
         if not order:
             order = order_repo.get_latest_order_by_user(user_id, restaurant_id)
         if not order:
-            return None, None, None, None, None
+            return None, None, None, None, None, None
         order_id = order.get("id")
         if not order_id:
-            return None, None, None, None, None
+            return None, None, None, None, None, None
 
         # Check if order is within the allowed update window
         created_at = order.get("created_at")
         if not _is_within_update_window(created_at):
-            return "UPDATE_WINDOW_EXPIRED", None, None, order, order_id
+            return "UPDATE_WINDOW_EXPIRED", None, None, order, order_id, None
 
         # Update user's name if provided (consistent with create_order behavior)
         # Only update after validation to ensure it only executes when order update will succeed
@@ -1004,16 +1270,19 @@ async def update_order_details(**kwargs) -> Dict[str, Any]:
             "customization": order.get("customization"),
             "total_amount": order.get("total_amount"),
         }
+        previous_pos_state = pos_service.capture_order_state(order_id)
 
         order_details = [item.model_dump() for item in args.items]
         total_amount = round(sum(item["total_price"] for item in priced_items), 2)
+        enriched_priced_items = pos_service.attach_external_snapshot_ids(restaurant_id, priced_items)
         order_repo.update_order_details(order_id, order_details, args.customization, total_amount)
         order_item_repo.delete_order_items_by_order(order_id)
-        for item, pricing in zip(args.items, priced_items):
+        for item, pricing in zip(args.items, enriched_priced_items):
             order_item_id = order_item_repo.create_order_item(
                 order_id,
                 {
                     "menu_item_id": _snapshot_menu_item_id(item.item_id),
+                    "external_item_id_snapshot": pricing.get("external_item_id_snapshot"),
                     "item_name_snapshot": item.name,
                     "base_price_snapshot": float(item.price or 0),
                     "quantity": item.quantity,
@@ -1031,9 +1300,11 @@ async def update_order_details(**kwargs) -> Dict[str, Any]:
 
         updated = order_repo.get_order_by_id(order_id)
 
-        return updated, previous_data, order.get("restaurant_id"), order, order_id
+        return updated, previous_data, order.get("restaurant_id"), order, order_id, previous_pos_state
 
-    result, previous_data, restaurant_id, original_order, resolved_order_id = await _run_service_call(_update)
+    result, previous_data, restaurant_id, original_order, resolved_order_id, previous_pos_state = (
+        await _run_service_call(_update)
+    )
     restaurant_id = restaurant_id or context_restaurant_id(context)
 
     # Handle update window expired
@@ -1057,6 +1328,48 @@ async def update_order_details(**kwargs) -> Dict[str, Any]:
     updated_order = result
     if resolved_order_id:
         order_session_state["active_order_id"] = resolved_order_id
+
+    pos_result = {"required": False, "success": True, "status": "SKIPPED", "retry_scheduled": False}
+    if restaurant_id and resolved_order_id and previous_pos_state:
+
+        def _sync_updated_order_to_pos():
+            pos_service = _get_pos_service()
+            if not pos_service.has_confirmed_sync(resolved_order_id):
+                return {
+                    "required": False,
+                    "success": True,
+                    "status": "SKIPPED",
+                    "retry_scheduled": False,
+                }
+            if (args.status or "").strip().lower() == "cancelled":
+                pos_result_inner = pos_service.cancel_order_in_pos(
+                    resolved_order_id,
+                    int(restaurant_id),
+                    reason="Voice caller cancelled order",
+                )
+                if not pos_result_inner.get("success"):
+                    pos_service.restore_order_state(resolved_order_id, previous_pos_state)
+                return pos_result_inner
+            return pos_service.replace_order_after_internal_update(
+                resolved_order_id,
+                int(restaurant_id),
+                previous_state=previous_pos_state,
+                reason="Voice caller updated order",
+            )
+
+        pos_result = await _run_service_call(_sync_updated_order_to_pos)
+        if pos_result.get("required") and not pos_result.get("success"):
+            failed_status = "FAILED"
+            return {
+                "status": failed_status,
+                "message": (
+                    "I couldn't confirm the order cancellation with the restaurant system right now."
+                    if (args.status or "").strip().lower() == "cancelled"
+                    else "I couldn't confirm the updated order with the restaurant system right now."
+                ),
+                "order_id": resolved_order_id,
+                "restaurant_id": restaurant_id,
+            }
 
     # Log activity history for voice agent order update (run in thread since it's a DB operation)
     def _log_history():

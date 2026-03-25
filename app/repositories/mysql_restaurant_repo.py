@@ -185,7 +185,13 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
                     result["reservation_advance_days"] = 30
                 if "timezone" not in result:
                     result["timezone"] = None
-                # Build nested features dict for websocket service compatibility
+                if "orders_enabled" not in result:
+                    result["orders_enabled"] = True
+                if "reservations_enabled" not in result:
+                    result["reservations_enabled"] = True
+                if "faqs_enabled" not in result:
+                    result["faqs_enabled"] = True
+                # Build nested features dict for websocket service compatibility.
                 result["features"] = {
                     "orders_enabled": bool(result.get("orders_enabled", True)),
                     "reservations_enabled": bool(result.get("reservations_enabled", True)),
@@ -236,7 +242,6 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
                 result["orders_enabled"] = True
                 result["reservations_enabled"] = True
                 result["faqs_enabled"] = True
-                # Set default operating hours for all days
                 for day in ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]:
                     result[f"{day}_open"] = "09:00:00"
                     result[f"{day}_close"] = "22:00:00"
@@ -820,3 +825,19 @@ class MySQLRestaurantRepository(MySQLBaseRepository):
         stats["total_minute_usage"] = round(total_seconds / 60, 2) if total_seconds else 0
 
         return stats
+
+    def get_all_restaurants(self) -> List[Dict]:
+        """
+        Get all restaurants (for background sync operations).
+        Returns a list of all restaurants with basic info.
+        """
+        query = """
+            SELECT
+                id,
+                name,
+                created_at,
+                updated_at
+            FROM Restaurants
+            ORDER BY id
+        """
+        return self._execute_query(query)

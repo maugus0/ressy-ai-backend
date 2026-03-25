@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field
 SelectionType = Literal["single", "multiple"]
 PromptStyle = Literal["ASK_ALWAYS", "ASK_IF_MENTIONED", "SUGGEST_POPULAR"]
 FreeAllowanceStrategy = Literal["HIGHEST_PRICE_FIRST", "LOWEST_PRICE_FIRST"]
+InputType = Literal["SELECT", "TEXT"]
 
 
 class MenuOptionValueCreate(BaseModel):
@@ -44,6 +45,9 @@ class MenuOptionValueResponse(BaseModel):
     is_default: bool
     is_available: bool
     sort_order: int
+    is_active: bool = True
+    catalog_source: str = "INTERNAL"
+    source_name: Optional[str] = None
 
     model_config = ConfigDict(
         from_attributes=True,
@@ -65,6 +69,7 @@ class MenuOptionGroupCreate(BaseModel):
     name: str = Field(..., max_length=150)
     description: Optional[str] = None
     selection_type: SelectionType = Field("multiple")
+    input_type: InputType = Field("SELECT")
     min_select: int = Field(0, ge=0)
     max_select: Optional[int] = Field(None, ge=0)
     free_allowance: int = Field(0, ge=0)
@@ -74,6 +79,12 @@ class MenuOptionGroupCreate(BaseModel):
     prompt_style: PromptStyle = Field("ASK_IF_MENTIONED")
     is_required: bool = Field(False)
     is_available: bool = Field(True)
+    is_active: bool = Field(True)
+    catalog_source: str = Field("INTERNAL")
+    source_name: Optional[str] = None
+    source_description: Optional[str] = None
+    text_required: bool = Field(False)
+    max_text_length: Optional[int] = Field(None, ge=1)
     sort_order: int = Field(0, ge=0)
     values: Optional[List[MenuOptionValueCreate]] = None
 
@@ -84,6 +95,7 @@ class MenuOptionGroupCreate(BaseModel):
                 "name": "Toppings",
                 "description": "Choose your toppings",
                 "selection_type": "multiple",
+                "input_type": "SELECT",
                 "min_select": 0,
                 "max_select": 5,
                 "free_allowance": 2,
@@ -107,6 +119,7 @@ class MenuOptionGroupUpdate(BaseModel):
     name: Optional[str] = Field(None, max_length=150)
     description: Optional[str] = None
     selection_type: Optional[SelectionType] = None
+    input_type: Optional[InputType] = None
     min_select: Optional[int] = Field(None, ge=0)
     max_select: Optional[int] = Field(None, ge=0)
     free_allowance: Optional[int] = Field(None, ge=0)
@@ -116,6 +129,12 @@ class MenuOptionGroupUpdate(BaseModel):
     prompt_style: Optional[PromptStyle] = None
     is_required: Optional[bool] = None
     is_available: Optional[bool] = None
+    is_active: Optional[bool] = None
+    catalog_source: Optional[str] = None
+    source_name: Optional[str] = None
+    source_description: Optional[str] = None
+    text_required: Optional[bool] = None
+    max_text_length: Optional[int] = Field(None, ge=1)
     sort_order: Optional[int] = Field(None, ge=0)
 
     model_config = ConfigDict(extra="ignore", json_schema_extra={"example": {"max_select": 4, "free_allowance": 1}})
@@ -127,6 +146,7 @@ class MenuOptionGroupResponse(BaseModel):
     name: str
     description: Optional[str] = None
     selection_type: SelectionType
+    input_type: InputType = Field("SELECT")
     min_select: int
     max_select: Optional[int] = None
     free_allowance: int
@@ -136,6 +156,12 @@ class MenuOptionGroupResponse(BaseModel):
     prompt_style: PromptStyle
     is_required: bool
     is_available: bool
+    is_active: bool = True
+    catalog_source: str = "INTERNAL"
+    source_name: Optional[str] = None
+    source_description: Optional[str] = None
+    text_required: bool = False
+    max_text_length: Optional[int] = None
     sort_order: int
     values: List[MenuOptionValueResponse] = Field(default_factory=list)
 
@@ -148,6 +174,7 @@ class MenuOptionGroupResponse(BaseModel):
                 "name": "Toppings",
                 "description": "Choose your toppings",
                 "selection_type": "multiple",
+                "input_type": "SELECT",
                 "min_select": 0,
                 "max_select": 5,
                 "free_allowance": 2,
@@ -176,6 +203,7 @@ class MenuOptionGroupResponse(BaseModel):
 
 class MenuItemOptionGroupAttach(BaseModel):
     group_id: int
+    selection_type_override: Optional[SelectionType] = None
     min_select_override: Optional[int] = Field(None, ge=0)
     max_select_override: Optional[int] = Field(None, ge=0)
     free_allowance_override: Optional[int] = Field(None, ge=0)
@@ -189,6 +217,7 @@ class MenuItemOptionGroupAttach(BaseModel):
         json_schema_extra={
             "example": {
                 "group_id": 12,
+                "selection_type_override": "multiple",
                 "min_select_override": 0,
                 "max_select_override": 3,
                 "free_allowance_override": 1,
@@ -204,6 +233,7 @@ class MenuItemOptionGroupAttach(BaseModel):
 class MenuItemOptionGroupResponse(BaseModel):
     menu_item_id: int
     group_id: int
+    selection_type_override: Optional[SelectionType] = None
     min_select_override: Optional[int] = None
     max_select_override: Optional[int] = None
     free_allowance_override: Optional[int] = None

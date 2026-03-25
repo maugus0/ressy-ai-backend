@@ -155,3 +155,80 @@ def test_pricing_defaults_to_highest_strategy_when_strategy_is_invalid():
     # Invalid strategy falls back to highest-first, so 5 is free and 2 remains.
     assert priced.option_total == 2.0
     assert priced.final_unit_price == 12.0
+
+
+def test_validation_accepts_text_customization_and_pricing_snapshots_free_text():
+    groups = [
+        {
+            "id": 6,
+            "name": "Special Instructions",
+            "selection_type": "single",
+            "input_type": "TEXT",
+            "text_required": True,
+            "max_text_length": 40,
+            "min_select": 1,
+            "max_select": 1,
+            "free_allowance": 0,
+            "allows_quantity": False,
+            "max_quantity_per_option": None,
+            "is_required": True,
+            "is_available": True,
+            "values": [],
+        }
+    ]
+    service = OrderCustomizationService(menu_repo=FakeMenuRepo(groups))
+
+    result = service.validate_item_options(
+        menu_item_id=104,
+        raw_options=[{"group_id": 6, "selections": [{"free_text_value": "Light sauce", "quantity": 1}]}],
+    )
+
+    assert result.is_valid
+    assert result.normalized_options[0].selections[0].free_text_value == "Light sauce"
+
+    priced = service.price_item(
+        menu_item_id=104, base_price=10.0, quantity=1, normalized_options=result.normalized_options
+    )
+    assert priced.option_total == 0.0
+    assert priced.option_snapshots == [
+        {
+            "option_group_id": 6,
+            "option_value_id": None,
+            "option_group_name_snapshot": "Special Instructions",
+            "input_type_snapshot": "TEXT",
+            "option_value_name_snapshot": "Light sauce",
+            "free_text_value": "Light sauce",
+            "price_delta_snapshot": 0.0,
+            "quantity": 1,
+        }
+    ]
+
+
+def test_validation_rejects_text_customization_without_text_value():
+    groups = [
+        {
+            "id": 7,
+            "name": "Special Instructions",
+            "selection_type": "single",
+            "input_type": "TEXT",
+            "text_required": True,
+            "max_text_length": 20,
+            "min_select": 1,
+            "max_select": 1,
+            "free_allowance": 0,
+            "allows_quantity": False,
+            "max_quantity_per_option": None,
+            "is_required": True,
+            "is_available": True,
+            "values": [],
+        }
+    ]
+    service = OrderCustomizationService(menu_repo=FakeMenuRepo(groups))
+
+    result = service.validate_item_options(
+        menu_item_id=105,
+        raw_options=[{"group_id": 7, "selections": [{"free_text_value": "", "quantity": 1}]}],
+    )
+
+    assert not result.is_valid
+    assert any(issue.issue_code == "MISSING_TEXT_VALUE" for issue in result.issues)

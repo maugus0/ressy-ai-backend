@@ -17,6 +17,7 @@ class MySQLOrderItemRepository(MySQLBaseRepository):
             INSERT INTO Order_Item_Snapshots (
                 order_id,
                 menu_item_id,
+                external_item_id_snapshot,
                 item_name_snapshot,
                 base_price_snapshot,
                 quantity,
@@ -27,13 +28,14 @@ class MySQLOrderItemRepository(MySQLBaseRepository):
                 created_at,
                 updated_at
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
         """
         return self._execute_insert(
             query,
             (
                 order_id,
                 data.get("menu_item_id"),
+                data.get("external_item_id_snapshot"),
                 data.get("item_name_snapshot"),
                 data.get("base_price_snapshot", 0),
                 data.get("quantity", 1),
@@ -44,28 +46,47 @@ class MySQLOrderItemRepository(MySQLBaseRepository):
             ),
         )
 
+    def replace_order_item_snapshots(self, order_id: int, items: List[Dict[str, Any]]) -> int:
+        self.delete_order_items_by_order(order_id)
+        created = 0
+        for item in items:
+            order_item_id = self.create_order_item(order_id, item)
+            self.create_order_item_options(order_item_id, item.get("option_snapshots", []))
+            created += 1
+        return created
+
     def create_order_item_options(self, order_item_id: int, options: List[Dict[str, Any]]) -> int:
         if not options:
             return 0
         query = """
             INSERT INTO Order_Item_Options_Snapshots (
                 order_item_id,
+                option_group_id,
                 option_value_id,
                 option_group_name_snapshot,
+                input_type_snapshot,
                 option_value_name_snapshot,
+                free_text_value,
+                external_group_id_snapshot,
+                external_value_id_snapshot,
                 price_delta_snapshot,
                 quantity,
                 created_at,
                 updated_at
             )
-            VALUES (%s, %s, %s, %s, %s, %s, NOW(), NOW())
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
         """
         params_list = [
             (
                 order_item_id,
+                opt.get("option_group_id"),
                 opt.get("option_value_id"),
                 opt.get("option_group_name_snapshot"),
+                opt.get("input_type_snapshot", "SELECT"),
                 opt.get("option_value_name_snapshot"),
+                opt.get("free_text_value"),
+                opt.get("external_group_id_snapshot"),
+                opt.get("external_value_id_snapshot"),
                 opt.get("price_delta_snapshot", 0),
                 opt.get("quantity", 1),
             )

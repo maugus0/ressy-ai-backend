@@ -82,6 +82,7 @@ def _format_option_value(value: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _format_option_group(group: Dict[str, Any]) -> Dict[str, Any]:
+    input_type = str(group.get("input_type") or "SELECT").strip().upper()
     values = [
         _format_option_value(value)
         for value in sorted(group.get("values", []), key=lambda entry: entry.get("sort_order", 0))
@@ -92,6 +93,7 @@ def _format_option_group(group: Dict[str, Any]) -> Dict[str, Any]:
         "name": group.get("name"),
         "description": group.get("description"),
         "selection_type": group.get("selection_type"),
+        "input_type": input_type,
         "min_select": group.get("min_select"),
         "max_select": group.get("max_select"),
         "free_allowance": group.get("free_allowance"),
@@ -99,6 +101,8 @@ def _format_option_group(group: Dict[str, Any]) -> Dict[str, Any]:
         "max_quantity_per_option": group.get("max_quantity_per_option"),
         "prompt_style": group.get("prompt_style"),
         "is_required": _normalize_boolean(group.get("is_required")),
+        "text_required": _normalize_boolean(group.get("text_required")),
+        "max_text_length": group.get("max_text_length"),
         "values": values,
     }
 
@@ -141,11 +145,11 @@ def _summarize_menu_items(items: List[Dict[str, Any]]) -> Tuple[List[str], List[
 
 async def list_menu_items(**kwargs) -> Dict[str, Any]:
     """
-    Return the full menu for a restaurant with ALL items (available and unavailable) organized by categories.
+    Return the full active menu for a restaurant, split into available and unavailable items.
 
-    This allows the agent to inform customers about unavailable items when browsing the menu,
-    rather than hiding them completely. The agent should mention unavailable items but clearly
-    indicate they cannot be ordered right now.
+    Inactive catalog records are hidden from the voice agent. Among active items, unavailable
+    entries are still returned so the agent can explain that they exist but cannot be ordered
+    right now.
     """
     context, model_kwargs = split_call_context(kwargs, NoArgs)
     NoArgs.model_validate(model_kwargs)
@@ -157,8 +161,8 @@ async def list_menu_items(**kwargs) -> Dict[str, Any]:
 
     def _fetch():
         menu_repo = _get_menu_repo()
-        # Get ALL items (both available and unavailable) to show complete menu
-        return menu_repo.get_menus_by_restaurant(restaurant_id)
+        # Get all active items and then split them by current availability.
+        return menu_repo.get_menus_by_restaurant(restaurant_id, only_active=True)
 
     try:
         all_items = await _run_repo_call(_fetch)
@@ -227,8 +231,10 @@ async def get_menu_item_details(**kwargs) -> Dict[str, Any]:
     def _fetch_by_id():
         menu_repo = _get_menu_repo()
         found = menu_repo.get_menu_by_id(restaurant_id, args.item_id)
+        if found and not _normalize_boolean(found.get("is_active", True)):
+            return None
         if found:
-            found["option_groups"] = menu_repo.get_option_groups_for_item(found.get("id"))
+            found["option_groups"] = menu_repo.get_option_groups_for_item(found.get("id"), only_active=True)
         return found
 
     try:
@@ -256,7 +262,7 @@ async def get_menu_item_details(**kwargs) -> Dict[str, Any]:
         for group in sorted(item.get("option_groups", []), key=lambda entry: entry.get("sort_order", 0))
         if _is_available(group)
     ]
-    option_groups = [group for group in option_groups if group.get("values")]
+    option_groups = [group for group in option_groups if group.get("input_type") == "TEXT" or group.get("values")]
 
     return {
         "status": "FOUND",
@@ -305,9 +311,9 @@ async def get_menu_item_customizations(**kwargs) -> Dict[str, Any]:
     def _fetch_for_item(item_id: int) -> Tuple[List[Dict[str, Any]], bool]:
         menu_repo = _get_menu_repo()
         found = menu_repo.get_menu_by_id(int(restaurant_id), item_id)
-        if not found:
+        if not found or not _normalize_boolean(found.get("is_active", True)):
             return [], False
-        groups = menu_repo.get_option_groups_for_item(item_id)
+        groups = menu_repo.get_option_groups_for_item(item_id, only_active=True)
         return groups or [], True
 
     try:
@@ -373,7 +379,7 @@ async def get_menu_item_customizations(**kwargs) -> Dict[str, Any]:
         for group in sorted(groups, key=lambda entry: entry.get("sort_order", 0))
         if _is_available(group)
     ]
-    option_groups = [group for group in option_groups if group.get("values")]
+    option_groups = [group for group in option_groups if group.get("input_type") == "TEXT" or group.get("values")]
 
     all_group_ids = {_group_id(group) for group in option_groups}
     all_group_ids.discard(None)
