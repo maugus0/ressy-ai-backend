@@ -136,6 +136,13 @@ class CreateRestaurantRequest(BaseModel):
     twilio_phone_number: str | None = Field(
         None, max_length=20, description="Twilio phone number for routing calls (E.164 format)"
     )
+    voice_provider: str | None = Field(
+        "twilio",
+        description="Voice service provider: 'twilio' or 'plivo'. Default: twilio",
+    )
+    plivo_phone_number: str | None = Field(
+        None, max_length=20, description="Plivo phone number for routing calls (E.164 format)"
+    )
     forward_escalations: bool | None = Field(False, description="Forward escalations to a live phone number")
     escalation_phone_number: str | None = Field(
         None, max_length=20, description="Phone number to forward escalation calls (E.164 format)"
@@ -145,6 +152,7 @@ class CreateRestaurantRequest(BaseModel):
         description="When to allow transfer on escalate: 'always' or 'open_hours_only'. Default: always.",
     )
     twilio_details: dict | None = Field(None, description="Twilio configuration JSON")
+    plivo_details: dict | None = Field(None, description="Plivo configuration JSON (auth_id, auth_token, etc.)")
     deepgram_details: dict | None = Field(None, description="Deepgram configuration JSON")
     open_table_details: dict | None = Field(None, description="OpenTable integration details JSON")
     forward_minutes: int | None = Field(0, ge=0, description="Forward booking window in minutes")
@@ -180,13 +188,23 @@ class CreateRestaurantRequest(BaseModel):
         return cleaned
 
     @field_validator(
-        "address", "phone_number", "twilio_phone_number", "escalation_phone_number", "timezone", mode="before"
+        "address", "phone_number", "twilio_phone_number", "plivo_phone_number", "escalation_phone_number", "timezone", mode="before"
     )
     @classmethod
     def trim_strings(cls, value: Any) -> Any:  # noqa: ANN401 - pydantic hook allows Any
         if isinstance(value, str):
             return _strip_or_none(value)
         return value
+
+    @field_validator("voice_provider")
+    @classmethod
+    def validate_voice_provider(cls, value: str | None) -> str:
+        if value is None:
+            return "twilio"
+        value_lower = value.lower()
+        if value_lower not in ("twilio", "plivo"):
+            raise ValueError("voice_provider must be either 'twilio' or 'plivo'")
+        return value_lower
 
 
 class UpdateRestaurantRequest(BaseModel):
@@ -198,6 +216,13 @@ class UpdateRestaurantRequest(BaseModel):
     twilio_phone_number: str | None = Field(
         None, max_length=20, description="Twilio phone number for routing calls (E.164 format)"
     )
+    voice_provider: str | None = Field(
+        None,
+        description="Voice service provider: 'twilio' or 'plivo'",
+    )
+    plivo_phone_number: str | None = Field(
+        None, max_length=20, description="Plivo phone number for routing calls (E.164 format)"
+    )
     forward_escalations: bool | None = Field(None, description="Forward escalations to a live phone number")
     escalation_phone_number: str | None = Field(
         None, max_length=20, description="Phone number to forward escalation calls (E.164 format)"
@@ -207,6 +232,7 @@ class UpdateRestaurantRequest(BaseModel):
         description="When to allow transfer on escalate: 'always' (any time) or 'open_hours_only' (only during operating hours).",
     )
     twilio_details: dict | None = Field(None, description="Twilio configuration JSON")
+    plivo_details: dict | None = Field(None, description="Plivo configuration JSON (auth_id, auth_token, etc.)")
     deepgram_details: dict | None = Field(None, description="Deepgram configuration JSON")
     open_table_details: dict | None = Field(None, description="OpenTable integration details JSON")
     forward_minutes: int | None = Field(None, ge=0, description="Forward booking window in minutes")
@@ -242,13 +268,23 @@ class UpdateRestaurantRequest(BaseModel):
         return cleaned
 
     @field_validator(
-        "address", "phone_number", "twilio_phone_number", "escalation_phone_number", "timezone", mode="before"
+        "address", "phone_number", "twilio_phone_number", "plivo_phone_number", "escalation_phone_number", "timezone", mode="before"
     )
     @classmethod
-    def trim_optional_strings(cls, value: Any) -> Any:  # noqa: ANN401 - pydantic hook allows Any
-        if isinstance(value, str):
+def trim_optional_strings(cls, value: Any) -> Any:  # noqa: ANN401 - pydantic hook allows Any
+if isinstance(value, str):
             return _strip_or_none(value)
         return value
+
+    @field_validator("voice_provider")
+    @classmethod
+    def validate_voice_provider_update(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value_lower = value.lower()
+        if value_lower not in ("twilio", "plivo"):
+            raise ValueError("voice_provider must be either 'twilio' or 'plivo'")
+        return value_lower
 
 
 class RestaurantResponse(BaseModel):
@@ -259,6 +295,8 @@ class RestaurantResponse(BaseModel):
     address: str | None = None
     phone_number: str | None = None
     twilio_phone_number: str | None = None
+    voice_provider: str = "twilio"
+    plivo_phone_number: str | None = None
     forward_escalations: bool | None = None
     escalation_phone_number: str | None = None
     escalation_mode: str = "always"
@@ -266,6 +304,7 @@ class RestaurantResponse(BaseModel):
     kill_switch_can_redirect: bool = False
     kill_switch_blockers: list[str] = Field(default_factory=list)
     twilio_details: dict | None = None
+    plivo_details: dict | None = None
     deepgram_details: dict | None = None
     open_table_details: dict | None = None
     forward_minutes: int | None = None

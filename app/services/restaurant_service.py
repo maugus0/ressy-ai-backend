@@ -553,16 +553,37 @@ class RestaurantService:
                 detail="twilio_phone_number already in use by another restaurant",
             )
 
+    def _ensure_unique_plivo_number(
+        self, plivo_phone_number: Optional[str], restaurant_id: Optional[int] = None
+    ) -> None:
+        """Ensure Plivo phone number is unique when provided."""
+        if not plivo_phone_number:
+            return
+        existing = self.restaurant_repo.get_by_plivo_number(plivo_phone_number)
+        if existing and existing.get("id") != restaurant_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="plivo_phone_number already in use by another restaurant",
+            )
+
     # ---------- CRUD operations ----------
     def create_restaurant(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """Create a new restaurant with validation."""
         name = self._normalize_name(data.get("name"))
         self._validate_phone_number(data.get("phone_number"), "phone_number")
         self._validate_phone_number(data.get("twilio_phone_number"), "twilio_phone_number")
+        self._validate_phone_number(data.get("plivo_phone_number"), "plivo_phone_number")
         self._validate_phone_number(data.get("escalation_phone_number"), "escalation_phone_number")
         self._validate_escalation_forwarding(bool(data.get("forward_escalations")), data.get("escalation_phone_number"))
         escalation_mode = self._validate_escalation_mode(data.get("escalation_mode"))
+        voice_provider = data.get("voice_provider", "twilio").lower()
+        if voice_provider not in ("twilio", "plivo"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="voice_provider must be either 'twilio' or 'plivo'",
+            )
         self._validate_json_field("twilio_details", data.get("twilio_details"))
+        self._validate_json_field("plivo_details", data.get("plivo_details"))
         self._validate_json_field("deepgram_details", data.get("deepgram_details"))
         self._validate_json_field("open_table_details", data.get("open_table_details"))
         self._validate_minutes(data.get("forward_minutes"), "forward_minutes")
@@ -572,6 +593,7 @@ class RestaurantService:
         timezone_value = self._normalize_timezone(data.get("timezone"))
         self._ensure_unique_name(name)
         self._ensure_unique_twilio_number(data.get("twilio_phone_number"))
+        self._ensure_unique_plivo_number(data.get("plivo_phone_number"))
         feature_flags = self._merge_feature_flags({}, data.get("features"))
 
         # Validate SMS redirect business rules
@@ -589,6 +611,9 @@ class RestaurantService:
             "address": data.get("address"),
             "phone_number": data.get("phone_number"),
             "twilio_phone_number": data.get("twilio_phone_number"),
+            "voice_provider": voice_provider,
+            "plivo_phone_number": data.get("plivo_phone_number"),
+            "plivo_details": data.get("plivo_details"),
             "twilio_details": data.get("twilio_details"),
             "deepgram_details": data.get("deepgram_details"),
             "open_table_details": data.get("open_table_details"),
@@ -717,10 +742,24 @@ class RestaurantService:
             self._validate_phone_number(data.get("twilio_phone_number"), "twilio_phone_number")
             if data.get("twilio_phone_number") != current.get("twilio_phone_number"):
                 self._ensure_unique_twilio_number(data.get("twilio_phone_number"), restaurant_id=int(restaurant_id))
+        if "plivo_phone_number" in data:
+            self._validate_phone_number(data.get("plivo_phone_number"), "plivo_phone_number")
+            if data.get("plivo_phone_number") != current.get("plivo_phone_number"):
+                self._ensure_unique_plivo_number(data.get("plivo_phone_number"), restaurant_id=int(restaurant_id))
+        if "voice_provider" in data:
+            voice_provider = data.get("voice_provider", "twilio").lower()
+            if voice_provider not in ("twilio", "plivo"):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="voice_provider must be either 'twilio' or 'plivo'",
+                )
+            data["voice_provider"] = voice_provider
         if "escalation_phone_number" in data:
             self._validate_phone_number(data.get("escalation_phone_number"), "escalation_phone_number")
         if "twilio_details" in data:
             self._validate_json_field("twilio_details", data.get("twilio_details"))
+        if "plivo_details" in data:
+            self._validate_json_field("plivo_details", data.get("plivo_details"))
         if "deepgram_details" in data:
             self._validate_json_field("deepgram_details", data.get("deepgram_details"))
         if "open_table_details" in data:
@@ -971,6 +1010,10 @@ class RestaurantService:
     def get_restaurant_by_twilio(self, twilio_phone_number: str) -> Dict[str, Any]:
         """Lookup restaurant by Twilio phone number."""
         return self._parse_json_fields(self.restaurant_repo.get_by_twilio_number(twilio_phone_number)) or {}
+
+    def get_restaurant_by_plivo(self, plivo_phone_number: str) -> Dict[str, Any]:
+        """Lookup restaurant by Plivo phone number."""
+        return self._parse_json_fields(self.restaurant_repo.get_by_plivo_number(plivo_phone_number)) or {}
 
     def get_restaurant_statistics(self, restaurant_id: int) -> Dict[str, Any]:
         """Get aggregated statistics for a restaurant."""

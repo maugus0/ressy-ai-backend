@@ -397,62 +397,83 @@ async def _record_kill_switch_bypass_safe(
 
 @app.post(
     "/voice",
-    summary="Twilio Voice Webhook",
-    description="Twilio webhook endpoint that receives incoming call requests and returns TwiML. "
+    summary="Voice Webhook (Twilio/Plivo)",
+    description="Voice webhook endpoint that receives incoming call requests from Twilio or Plivo and returns XML. "
     "By default, calls are connected to the WebSocket stream. If the restaurant kill switch is enabled and forwarding is configured, the call is immediately redirected to escalation_phone_number.",
-    response_description="TwiML XML response instructing Twilio to either connect to the WebSocket stream or immediately dial escalation staff.",
+    response_description="TwiML/Plivo XML response instructing the provider to either connect to the WebSocket stream or immediately dial escalation staff.",
     tags=["Voice Agent"],
     include_in_schema=True,
 )
 async def voice(request: Request):
     """
-    Twilio voice webhook endpoint.
+    Voice webhook endpoint for Twilio and Plivo.
 
-    **Purpose**: Receives incoming call webhooks from Twilio and sets up WebSocket streaming.
+    **Purpose**: Receives incoming call webhooks from Twilio or Plivo and sets up WebSocket streaming.
 
-    **Request**: Form data from Twilio including:
+    **Request**: Form data from provider including:
     - From: Caller's phone number
-    - To: Restaurant's Twilio phone number
-    - CallSid: Twilio call session ID
+    - To: Restaurant's phone number (Twilio or Plivo)
+    - CallSid/CallUUID: Provider call session ID
 
-    **Response**: TwiML XML that instructs Twilio to:
-    - Connect the call to the WebSocket stream at /twilio for normal agent flow
+    **Response**: XML (TwiML or Plivo XML) that instructs the provider to:
+    - Connect the call to the WebSocket stream at /twilio or /plivo for normal agent flow
     - OR immediately forward to staff when kill switch is enabled and forwarding is configured
 
-    **Note**: This is a Twilio webhook endpoint, not a standard REST API endpoint.
+    **Note**: This endpoint handles both Twilio and Plivo webhooks.
     """
     try:
+        from app.services.voice_provider_service import VoiceProviderService
+
         background_tasks = BackgroundTasks()
         form = await request.form()
-        # Twilio provides these in POST form data.
-        twilio_from = form.get("From")
-        twilio_to = form.get("To")
-        call_sid = form.get("CallSid")
+        # Both Twilio and Plivo provide these in POST form data, but field names may differ
+        # Twilio uses "From", "To", "CallSid"
+        # Plivo uses "From", "To", "CallUUID" (or "CallSid" in some cases)
+        provider_from = form.get("From")
+        provider_to = form.get("To")
+        call_sid = form.get("CallSid") or form.get("CallUUID") or form.get("call_uuid")
 
-        # For outbound calls, Twilio flips To/From (To becomes the destination phone).
+        # For outbound calls, providers may flip To/From
         # Allow overriding toNumber/fromNumber via query params so we can keep websocket routing consistent:
-        # - toNumber should be the restaurant's Twilio number
+        # - toNumber should be the restaurant's phone number
         # - fromNumber should be the end-caller phone (developer/user)
         qp = request.query_params
-        from_number = qp.get("fromNumber") or twilio_from
-        to_number = qp.get("toNumber") or twilio_to
+        from_number = qp.get("fromNumber") or provider_from
+        to_number = qp.get("toNumber") or provider_to
 
         logger.info(
             "Incoming call call_sid=%s from=%s to=%s (ws from=%s to=%s)",
             call_sid,
-            twilio_from,
-            twilio_to,
+            provider_from,
+            provider_to,
             from_number,
             to_number,
         )
 
         restaurant = {}
+        restaurant_service = RestaurantService()
         if to_number:
             try:
-                restaurant = RestaurantService().get_restaurant_by_twilio(to_number) or {}
+                # Try Twilio first (for backward compatibility)
+                restaurant = restaurant_service.get_restaurant_by_twilio(to_number) or {}
+                # If not found, try Plivo
+                if not restaurant or not restaurant.get("id"):
+                    restaurant = restaurant_service.get_restaurant_by_plivo(to_number) or {}
             except Exception as exc:  # noqa: BLE001 - defensive
-                logger.warning("Kill-switch check failed for to=%s call_sid=%s: %s", to_number, call_sid, exc)
+                logger.warning("Restaurant lookup failed for to=%s call_sid=%s: %s", to_number, call_sid, exc)
                 restaurant = {}
+
+        if not restaurant or not restaurant.get("id"):
+            logger.warning("No restaurant found for phone number: %s", to_number)
+            error_xml = """<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Speak>We're sorry, but we couldn't find your restaurant. Please contact support.</Speak>
+    <Hangup/>
+</Response>"""
+            return Response(content=error_xml.strip(), media_type="application/xml", status_code=404)
+
+        # Use VoiceProviderService to handle provider-specific logic
+        voice_provider = VoiceProviderService(restaurant)
 
         if restaurant and _as_bool(restaurant.get("kill_switch_enabled")):
             forward_escalations = _as_bool(restaurant.get("forward_escalations"))
@@ -469,15 +490,11 @@ async def voice(request: Request):
                     caller_phone=from_number,
                     call_sid=call_sid,
                 )
-                dial_number = escape(escalation_phone)
-                caller_id = escape(str(to_number))
-                xml = f"""
-                <Response>
-                    <Dial callerId="{caller_id}" timeout="25">
-                        <Number>{dial_number}</Number>
-                    </Dial>
-                </Response>
-                """
+                xml = voice_provider.generate_webhook_xml(
+                    stream_url="",  # Not needed for kill switch
+                    kill_switch_redirect=escalation_phone,
+                    to_number=to_number,
+                )
                 return Response(content=xml.strip(), media_type="application/xml", background=background_tasks)
             logger.warning(
                 "Kill switch active but forwarding misconfigured for restaurant_id=%s call_sid=%s. "
@@ -494,66 +511,63 @@ async def voice(request: Request):
         query = urllib.parse.urlencode(filtered_params)
         url = request.url
         host = url.hostname
-        stream_url = f"wss://{host}/twilio"
+        # Use provider-specific WebSocket endpoint
+        provider = voice_provider.provider
+        ws_endpoint = "/plivo" if provider == "plivo" else "/twilio"
+        stream_url = f"wss://{host}{ws_endpoint}"
         if query:
             stream_url = f"{stream_url}?{query}"
 
-        stream_url = escape(stream_url)
         redirect_url = f"https://{host}/redirect"
-        # Escape user-controlled values before embedding into TwiML XML.
-        from_number_xml = escape(from_number) if from_number is not None else ""
-        to_number_xml = escape(to_number) if to_number is not None else ""
-        xml = f"""
-        <Response>
-            <Say language="en">"This call may be monitored or recorded."</Say>
-            <Connect>
-                <Stream url="{stream_url}">
-                    <Parameter name="fromNumber" value="{from_number_xml}"/>
-                    <Parameter name="toNumber" value="{to_number_xml}"/>
-                </Stream>
-            </Connect>
-            <Redirect method="POST">{redirect_url}</Redirect>
-        </Response>
-        """
+        xml = voice_provider.generate_webhook_xml(
+            stream_url=stream_url,
+            from_number=from_number,
+            to_number=to_number,
+            redirect_url=redirect_url,
+        )
         return Response(content=xml.strip(), media_type="application/xml")
     except Exception as exc:
         logger.exception("[ERROR] voice endpoint failed: %s", exc)
-        error_xml = """
-        <Response>
-            <Say>We are experiencing technical difficulties. Please try again shortly.</Say>
-        </Response>
-        """
+        error_xml = """<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Speak>We are experiencing technical difficulties. Please try again shortly.</Speak>
+</Response>"""
         return Response(content=error_xml.strip(), media_type="application/xml", status_code=500)
 
 
 @app.post(
     "/redirect",
-    summary="Twilio Call Redirection Endpoint",
-    description="Twilio webhook endpoint that, if required, redirects twilio calls for escalations using TwiML. "
-    "This endpoint is called by Twilio after the websocket stream from our /twilio endpoint has closed. ",
-    response_description="TwiML XML response instructing Twilio to either forward an escalated call or do nothing.",
+    summary="Call Redirection Endpoint (Twilio/Plivo)",
+    description="Voice webhook endpoint that, if required, redirects calls for escalations using XML. "
+    "This endpoint is called by the provider after the websocket stream from our /twilio or /plivo endpoint has closed. ",
+    response_description="TwiML/Plivo XML response instructing the provider to either forward an escalated call or do nothing.",
     tags=["Voice Agent"],
     include_in_schema=True,
 )
 async def redirect(request: Request):
     escalation_id = None
     try:
+        from app.services.voice_provider_service import VoiceProviderService
+
         form = await request.form()
-        call_sid = form.get("CallSid")
-        twilio_to = form.get("To")
-        twilio_from = form.get("From")
+        call_sid = form.get("CallSid") or form.get("CallUUID") or form.get("call_uuid")
+        provider_to = form.get("To")
+        provider_from = form.get("From")
 
-        logger.info("Redirect webhook received call_sid=%s from=%s to=%s", call_sid, twilio_from, twilio_to)
+        logger.info("Redirect webhook received call_sid=%s from=%s to=%s", call_sid, provider_from, provider_to)
 
-        if not call_sid or not twilio_to:
-            logger.warning("Redirect webhook missing CallSid or To; hanging up")
+        if not call_sid or not provider_to:
+            logger.warning("Redirect webhook missing CallSid/CallUUID or To; hanging up")
             return Response(content="<Response><Hangup/></Response>", media_type="application/xml")
 
         restaurant_service = RestaurantService()
         escalation_service = EscalationService()
-        restaurant = restaurant_service.get_restaurant_by_twilio(twilio_to)
-        if not restaurant:
-            logger.warning("Redirect webhook no restaurant matched to=%s call_sid=%s", twilio_to, call_sid)
+        # Try Twilio first, then Plivo
+        restaurant = restaurant_service.get_restaurant_by_twilio(provider_to)
+        if not restaurant or not restaurant.get("id"):
+            restaurant = restaurant_service.get_restaurant_by_plivo(provider_to)
+        if not restaurant or not restaurant.get("id"):
+            logger.warning("Redirect webhook no restaurant matched to=%s call_sid=%s", provider_to, call_sid)
             return Response(content="<Response><Hangup/></Response>", media_type="application/xml")
 
         restaurant_id = str(restaurant.get("id"))
@@ -572,14 +586,12 @@ async def redirect(request: Request):
                 call_sid,
             )
             escalation_service.mark_forwarded(escalation_id)
-            dial_number = escape(str(escalation_phone))
-            xml = f"""
-            <Response>
-                <Dial callerId="{twilio_to}" timeout="25">
-                    <Number>{dial_number}</Number>
-                </Dial>
-            </Response>
-            """
+            voice_provider = VoiceProviderService(restaurant)
+            xml = voice_provider.generate_webhook_xml(
+                stream_url="",  # Not needed for redirect
+                kill_switch_redirect=escalation_phone,
+                caller_id=provider_to,
+            )
             return Response(content=xml.strip(), media_type="application/xml")
 
         return Response(content="<Response><Hangup/></Response>", media_type="application/xml")
